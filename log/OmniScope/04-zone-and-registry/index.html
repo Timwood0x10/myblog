@@ -87,6 +87,11 @@
   <div class="post-content">
             <h1 id="zone-classification-and-semantic-registry-avoiding-blacklist-style-reporting">Zone Classification and Semantic Registry: Avoiding Blacklist-Style Reporting</h1>
 <p>A static analyzer without semantic layers can easily become a dangerous-function list. OmniScope separates region classification from function semantics before deciding whether a path should be analyzed in depth.</p>
+<h2 id="start-with-the-problem-the-same-function-name-means-different-things-in-context">Start with the problem: the same function name means different things in context</h2>
+<p>Reporting whenever <code>free</code>, <code>strcpy</code>, or <code>dlopen</code> appears is simple, but it becomes noisy in cross-language auditing. An allocator inside runtime glue may be expected; the same allocator in a user-written FFI wrapper may indicate ownership crossing a language boundary.</p>
+<p>The question is not only “is this function dangerous?” It is also: which code region is it in, runtime/internal or user boundary code? Does the function represent allocation, deallocation, borrow escape, or ordinary library behavior in an FFI context?</p>
+<h2 id="omniscope-s-entry-point-zone-answers-where-registry-answers-what">OmniScope’s entry point: Zone answers where, Registry answers what</h2>
+<p><code>ZoneClassifier</code> classifies the region first. <code>SemanticRegistry</code> then explains function meaning in cross-language context. Together they provide context to later danger-path checks: the same call can receive different priority depending on its zone and semantic kind.</p>
 <h2 id="zonekind-classifies-code-by-risk-region">ZoneKind classifies code by risk region</h2>
 <p><code>ZoneKind</code> is defined at <code>src/semantics/zone_classifier.zig:24</code>. It includes <code>safe</code>, <code>unsafe</code>, <code>ffi</code>, <code>runtime_internal</code>, and <code>unknown</code>. The file-level comment states the operating principle: focus where language guarantees stop.</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
@@ -149,6 +154,64 @@
 <span class="giallo-l"><span>    G --&gt;|Yes| H[Issue]</span></span>
 <span class="giallo-l"><span>    G --&gt;|No| I[Filter or lower priority]</span></span></code></pre><h2 id="summary">Summary</h2>
 <p>OmniScope avoids pure blacklist reporting by splitting a finding into three questions: where is the code located, what does the function mean at an FFI boundary, and does the pointer or function participate in a relevant risk path?</p>
+<h2 id="source-breakdown-zoneclassifier-is-a-priority-decision-tree">Source breakdown: ZoneClassifier is a priority decision tree</h2>
+<p>The latter half of <code>classifyFunction</code> lives around <code>src/semantics/zone_classifier.zig:640</code>. It is not a simple lookup table. The order is C++ unsafe patterns, C++ safe patterns, C escape patterns, extern C, and only then the <code>SemanticRegistry</code> fallback.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> (CPP_ESCAPE_PATTERNS) </span><span style="color: #94E2D5;">|</span><span>pattern</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">indexOf</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> func_name</span><span style="color: #9399B2;">,</span><span> pattern) </span><span style="color: #94E2D5;">!=</span><span style="color: #CBA6F7;"> null</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #94E2D5;"> .</span><span>unsafe</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> (CPP_SAFE_PATTERNS) </span><span style="color: #94E2D5;">|</span><span>pattern</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">indexOf</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> func_name</span><span style="color: #9399B2;">,</span><span> pattern) </span><span style="color: #94E2D5;">!=</span><span style="color: #CBA6F7;"> null</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #94E2D5;"> .</span><span>safe</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> (SemanticRegistry</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">lookup</span><span>(func_name)) </span><span style="color: #94E2D5;">|</span><span>sem</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> (sem</span><span style="color: #94E2D5;">.</span><span>kind) {</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>allocator</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>deallocator</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>rust_ownership</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>borrow_escaped</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>zig_allocator</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>cpp_allocator</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        =&gt;</span><span style="color: #CBA6F7;"> return</span><span style="color: #94E2D5;"> .</span><span>ffi</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        else</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> return</span><span style="color: #94E2D5;"> .</span><span>ffi</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>The important part is ordering. One function name can match multiple weak signals, such as a runtime helper that also contains allocator semantics. Without priority, Zone classification becomes noisy. OmniScope lets strong context decide the zone first and weak semantics fill in the explanation later.</p>
+<h2 id="source-breakdown-semanticregistry-is-a-layered-semantic-library">Source breakdown: SemanticRegistry is a layered semantic library</h2>
+<p><code>SemanticRegistry.lookup</code> in <code>src/registry/semantic_registry.zig:90</code> walks layer1 through layer6, then JNI, Python C API, file I/O, network I/O, signal, thread, process, dynamic loading, and static buffer groups.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> lookup</span><span>(func_name</span><span style="color: #94E2D5;">:</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span>) </span><span style="color: #94E2D5;">?</span><span>FunctionSemantics {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> (layer1) </span><span style="color: #94E2D5;">|</span><span>sem</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> (</span><span style="color: #89B4FA;font-style: italic;">matchesPattern</span><span>(func_name</span><span style="color: #9399B2;">,</span><span> sem</span><span style="color: #94E2D5;">.</span><span>pattern</span><span style="color: #9399B2;">,</span><span> sem</span><span style="color: #94E2D5;">.</span><span>match_type)) </span><span style="color: #CBA6F7;">return</span><span> sem</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> (layer2) </span><span style="color: #94E2D5;">|</span><span>sem</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> (</span><span style="color: #89B4FA;font-style: italic;">matchesPattern</span><span>(func_name</span><span style="color: #9399B2;">,</span><span> sem</span><span style="color: #94E2D5;">.</span><span>pattern</span><span style="color: #9399B2;">,</span><span> sem</span><span style="color: #94E2D5;">.</span><span>match_type)) </span><span style="color: #CBA6F7;">return</span><span> sem</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... ecosystem-specific layers ...</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> (dynamic_loading) </span><span style="color: #94E2D5;">|</span><span>sem</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> (</span><span style="color: #89B4FA;font-style: italic;">matchesPattern</span><span>(func_name</span><span style="color: #9399B2;">,</span><span> sem</span><span style="color: #94E2D5;">.</span><span>pattern</span><span style="color: #9399B2;">,</span><span> sem</span><span style="color: #94E2D5;">.</span><span>match_type)) </span><span style="color: #CBA6F7;">return</span><span> sem</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return null</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> matchesPattern</span><span>(func_name</span><span style="color: #94E2D5;">:</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span style="color: #9399B2;">,</span><span> pattern</span><span style="color: #94E2D5;">:</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span style="color: #9399B2;">,</span><span> match_type</span><span style="color: #94E2D5;">:</span><span> MatchType) </span><span style="color: #CBA6F7;">bool</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return switch</span><span> (match_type) {</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>exact</span><span style="color: #94E2D5;"> =&gt;</span><span> std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">eql</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> func_name</span><span style="color: #9399B2;">,</span><span> pattern)</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>contains</span><span style="color: #94E2D5;"> =&gt;</span><span> std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">indexOf</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> func_name</span><span style="color: #9399B2;">,</span><span> pattern) </span><span style="color: #94E2D5;">!=</span><span style="color: #CBA6F7;"> null</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>suffix</span><span style="color: #94E2D5;"> =&gt;</span><span> std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">endsWith</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> func_name</span><span style="color: #9399B2;">,</span><span> pattern)</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    }</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>This is more expressive than a dangerous-function list. The registry stores semantic source and match strength. <code>exact</code> evidence is stronger than <code>contains</code>, and ecosystem-specific meaning is different from a generic libc helper. That difference is what later turns into confidence and reason.</p>
+<h2 id="how-it-works-zone-reduces-noise-registry-explains-meaning">How it works: Zone reduces noise, Registry explains meaning</h2>
+<p>Keeping Zone and Registry separate avoids two common mistakes:</p>
+<ul>
+<li>Zone alone tells you where code lives, but not what the function means.</li>
+<li>Registry alone tells you a function looks like an allocator or deallocator, but not whether it sits on a local path or a cross-language path.</li>
+</ul>
+<p>OmniScope lets Zone answer “where”, Registry answer “what”, and MemoryGraph/DangerSurface answer “does it flow into a dangerous path”. Once those questions are separated, false-positive control becomes actionable.</p>
 
         </div>
 

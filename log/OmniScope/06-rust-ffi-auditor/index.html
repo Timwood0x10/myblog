@@ -87,6 +87,11 @@
   <div class="post-content">
             <h1 id="rust-ffi-auditor-reconstructing-and-checking-cross-language-ownership-protocols">Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols</h1>
 <p>Rust FFI risk often appears when Rust’s ownership and borrowing protocols cross an ABI boundary. <code>RustFfiAuditor</code> maps those protocols back onto LLVM IR patterns that can be inspected statically.</p>
+<h2 id="start-with-the-problem-rust-cannot-verify-what-c-does-later">Start with the problem: Rust cannot verify what C does later</h2>
+<p>Inside Rust, <code>Box</code>, borrow, and drop have clear semantics. Once <code>extern "C"</code> exposes a raw pointer, those semantics become a protocol between two sides. C can store the pointer, release it later, call <code>free</code>, or pass it back through a callback. The Rust compiler no longer verifies those actions.</p>
+<p>Rust FFI auditing therefore looks past “is there unsafe?” and asks whether the ownership protocol closes: who reclaims an <code>into_raw</code> pointer, whether an <code>as_ptr</code> borrow escapes, whether a stack address outlives the function, and whether allocation and deallocation use the same protocol.</p>
+<h2 id="omniscope-s-entry-point-rust-specific-rules-plus-universal-ffi-rules">OmniScope’s entry point: Rust-specific rules plus universal FFI rules</h2>
+<p><code>RustFfiAuditor</code> splits its rules into two layers. Rust-specific rules run on Rust modules and recover <code>into_raw/from_raw</code>, <code>as_ptr</code>, and borrow-dangling semantics. Universal FFI rules run on all modules and catch stack escape or unsafe boundary calls.</p>
 <h2 id="rule-surface">Rule surface</h2>
 <p><code>RustFfiAuditor</code> is defined at <code>src/pass/analysis/rust_ffi_auditor.zig:63</code>. Its function-level logic covers Rust-specific patterns and general FFI boundary checks:</p>
 <ul>
@@ -158,6 +163,49 @@
 <span class="giallo-l"><span>    D --&gt;|Yes| E[Dangling after return]</span></span>
 <span class="giallo-l"><span>    D --&gt;|No| F[Depends on call-duration use]</span></span></code></pre><h2 id="summary">Summary</h2>
 <p><code>RustFfiAuditor</code> maps Rust ownership and borrowing concepts onto IR-level call and pointer patterns. It should be described as static protocol recovery and checking, with accuracy bounded by available IR information.</p>
+<h2 id="source-breakdown-rust-rules-and-universal-ffi-rules-are-intentionally-separated">Source breakdown: Rust rules and universal FFI rules are intentionally separated</h2>
+<p><code>RustFfiAuditor.auditFunction</code> around <code>src/pass/analysis/rust_ffi_auditor.zig:120</code> splits rules into Rust-specific and universal FFI boundary checks.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> auditFunction</span><span>(self</span><span style="color: #94E2D5;">: *</span><span>RustFfiAuditor</span><span style="color: #9399B2;">,</span><span> func</span><span style="color: #94E2D5;">:</span><span> c</span><span style="color: #94E2D5;">.</span><span>LLVMValueRef</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #94E2D5;">: *</span><span>PassContext</span><span style="color: #9399B2;">,</span><span> diag</span><span style="color: #94E2D5;">: *</span><span>DiagnosticWriter) </span><span style="color: #94E2D5;">!</span><span style="color: #CBA6F7;">void</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> func_name</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> getFunctionName</span><span>(func)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> is_rust</span><span style="color: #94E2D5;"> =</span><span> ctx</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">isRustModule</span><span>()</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (is_rust) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> (ctx</span><span style="color: #94E2D5;">.</span><span>rust_into_raw_set</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span>(</span><span style="color: #F38BA8;font-style: italic;">@intFromPtr</span><span>(c</span><span style="color: #94E2D5;">.</span><span style="color: #F9E2AF;font-style: italic;">LLVMGetValueName</span><span>(func)))) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> (ctx</span><span style="color: #94E2D5;">.</span><span>rust_from_raw_set</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count</span><span>() </span><span style="color: #94E2D5;">==</span><span style="color: #FAB387;"> 0</span><span>) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                try</span><span> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">addFinding</span><span>(</span><span style="color: #94E2D5;">.</span><span>{</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                    .</span><span>issue_type</span><span style="color: #94E2D5;"> = .</span><span>unpaired_into_raw</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                    .</span><span>severity</span><span style="color: #94E2D5;"> = .</span><span>high</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                    .</span><span>confidence</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.75</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                    .</span><span>reason</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;into_raw() called but no matching from_raw() in module&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                    .</span><span>location</span><span style="color: #94E2D5;"> =</span><span> Location</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">init</span><span>(func_name)</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                })</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>            }</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        try</span><span> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">detectAsPtrEscape</span><span>(func</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #9399B2;">,</span><span> diag)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        try</span><span> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">detectCrossLangMismatch</span><span>(func</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #9399B2;">,</span><span> diag)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        try</span><span> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">detectOwnershipTransferViolations</span><span>(func</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #9399B2;">,</span><span> diag)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        try</span><span> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">detectAsPtrDangling</span><span>(func</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #9399B2;">,</span><span> diag)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    try</span><span> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">detectUnsafeFfiCalls</span><span>(func)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    try</span><span> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">detectStackEscapeToFFI</span><span>(func</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #9399B2;">,</span><span> diag)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>This split matters. <code>as_ptr</code>, <code>into_raw</code>, and <code>from_raw</code> are Rust semantics. Forcing those rules onto C or Zig modules would create noise. By contrast, stack-address escape and unsafe FFI calls are cross-language risks and should run on every module.</p>
+<h2 id="how-it-works-language-gating-is-precision-not-conservatism">How it works: language gating is precision, not conservatism</h2>
+<p>At LLVM level many values become pointers, but the source-level semantics still differ. OmniScope uses <code>ctx.isRustModule()</code> to match rules with semantic origin:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Rust module</span></span>
+<span class="giallo-l"><span>  -&gt; ownership transfer / borrow escape / from_raw pairing</span></span>
+<span class="giallo-l"><span>Any module</span></span>
+<span class="giallo-l"><span>  -&gt; FFI boundary / stack escape / unsafe call surface</span></span></code></pre>
+<p>That is also why <code>PassContext</code> stores <code>module_language</code>, and why the Pipeline calls <code>ctx.initModuleLanguage(self.module)</code> before any pass runs. Language detection is not a UI label; it is a rule selector.</p>
+<h2 id="evidence-chain-a-finding-is-not-the-final-report">Evidence chain: a finding is not the final report</h2>
+<p><code>RustFfiAuditor</code> first produces <code>RustFfiFinding</code> records with <code>func_name</code>, <code>issue_type</code>, <code>severity</code>, <code>confidence</code>, <code>reason</code>, and <code>location</code>. That is an internal semantic layer, not the final output. Only later does the unified issue path convert it into the shared <code>Issue</code> schema.</p>
+<p>That two-stage structure matters because the auditor can keep Rust-specific meaning such as unpaired <code>into_raw</code>, borrow escape, or stack escape, while the output layer preserves a consistent schema shared with the rest of OmniScope.</p>
+<h2 id="one-concrete-rule-unpaired-into-raw">One concrete rule: unpaired <code>into_raw</code></h2>
+<p>The problem with <code>Box::into_raw</code> is not “raw pointers are dangerous” in the abstract. It is that Rust intentionally gives up automatic drop and transfers release responsibility into an external protocol. A safe recovery path requires a matching <code>from_raw</code> or equivalent reclamation.</p>
+<p>That is why the code checks for module-level pairing: if <code>into_raw</code> semantics exist but no <code>from_raw</code> semantics exist anywhere in the module, OmniScope emits <code>unpaired_into_raw</code>. It is a protocol-completeness check, not a function blacklist.</p>
+<p>The rule still has limits: if the release path lives in another shared library, another module, or a wrapper function, a static module-local check must lower confidence. That is why the code uses <code>0.75</code> instead of <code>1.0</code>.</p>
 
         </div>
 

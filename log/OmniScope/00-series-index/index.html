@@ -13,15 +13,15 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
 
-    <meta name="description" content="This series is a source-level technical walkthrough, not a product pitch. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.">
+    <meta name="description" content="This series explains what OmniScope does, how data moves through the project, and which modules make which decisions. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.">
 
-    <meta property="og:description" content="This series is a source-level technical walkthrough, not a product pitch. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.">
+    <meta property="og:description" content="This series explains what OmniScope does, how data moves through the project, and which modules make which decisions. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.">
     <meta property="og:title" content="OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing | Timwood0x10">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/">
 
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:description" content="This series is a source-level technical walkthrough, not a product pitch. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.">
+    <meta name="twitter:description" content="This series explains what OmniScope does, how data moves through the project, and which modules make which decisions. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.">
     <meta name="twitter:title" content="OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing | Timwood0x10">
     <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
     <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/">
@@ -86,8 +86,9 @@
 
   <div class="post-content">
             <h1 id="omniscope-deep-dive-series-from-llvm-ir-to-cross-language-ownership-auditing">OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing</h1>
-<p>This series is a source-level technical walkthrough, not a product pitch. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.</p>
+<p>This series explains what OmniScope does, how data moves through the project, and which modules make which decisions. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.</p>
 <p>OmniScope focuses on one concrete question: <strong>after ownership, lifetime, and deallocation protocols cross a language boundary, can a static analyzer recover enough semantics to produce reviewable findings?</strong></p>
+<p>In one sentence: OmniScope reads LLVM IR (<code>.ll</code> / <code>.bc</code>), turns calls, pointer flows, allocation/free events, language boundaries, and unsafe regions into queryable facts, then reports high-risk paths related to FFI, ownership, and lifetime through text, JSON, or SARIF.</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
 <span class="giallo-l"><span>    A[LLVM IR input] --&gt; B[Module loading]</span></span>
 <span class="giallo-l"><span>    B --&gt; C[PassContext]</span></span>
@@ -118,7 +119,31 @@
 <li>Rust FFI: <code>src/pass/analysis/rust_ffi_auditor.zig:63</code>, <code>src/pass/analysis/rust_ffi_auditor.zig:180</code></li>
 </ul>
 <h2 id="how-to-read">How to Read</h2>
-<p>Read this as a mechanism-by-mechanism walkthrough. Each article follows one implementation path: how input becomes analysis context, how passes exchange facts, how Zone and Registry reduce noise, how MemoryGraph models pointer flow, and how Rust FFI ownership rules are checked.</p>
+<p>Read this as a problem chain: first identify where cross-language security auditing gets difficult, then look at why common approaches fall short, and finally see how OmniScope turns those constraints into LLVM IR input, passes, MemoryGraph, Zone, Registry, Rust FFI auditing, and structured output.</p>
+<p>Each article follows one implementation path: how input becomes analysis context, how passes exchange facts, how Zone and Registry reduce noise, how MemoryGraph models pointer flow, and how Rust FFI ownership rules are checked.</p>
+<p>This series is written as technical explainer content. It starts from implementation constraints, data flow, and module boundaries instead of abstract definitions. Each article follows the same pattern:</p>
+<ol>
+<li>State the engineering problem first.</li>
+<li>Show the source entry points, not just the abstraction.</li>
+<li>Break down the data structures that hold analysis facts.</li>
+<li>Explain why the design exists and where it breaks down.</li>
+</ol>
+<p>If you want to read the code first, start here:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>main.zig</span></span>
+<span class="giallo-l"><span>  └─ runSingleFileAnalysis / runModulePipeline / emitOutput</span></span>
+<span class="giallo-l"><span>pipeline.zig</span></span>
+<span class="giallo-l"><span>  └─ Pipeline.init / Pipeline.run</span></span>
+<span class="giallo-l"><span>pass.zig</span></span>
+<span class="giallo-l"><span>  └─ PassContext / addIssue / isOnDangerPathFull</span></span>
+<span class="giallo-l"><span>manager.zig</span></span>
+<span class="giallo-l"><span>  └─ resolveDependencies / run</span></span>
+<span class="giallo-l"><span>semantics/memory_graph.zig</span></span>
+<span class="giallo-l"><span>  └─ MemoryGraph / isOnDangerPath</span></span>
+<span class="giallo-l"><span>pass/analysis/danger_surface.zig</span></span>
+<span class="giallo-l"><span>  └─ DangerSurfacePass.run</span></span>
+<span class="giallo-l"><span>pass/analysis/rust_ffi_auditor.zig</span></span>
+<span class="giallo-l"><span>  └─ auditFunction / Rust-specific rules / universal FFI rules</span></span></code></pre>
+<p>The real architecture is not just “uses LLVM IR”. It is the way OmniScope turns low-level IR facts into three reusable semantic layers: <code>PassContext</code>, <code>MemoryGraph</code>, and <code>DangerSurface</code>.</p>
 
         </div>
 
