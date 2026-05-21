@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{%- import 'macros/seo.html' as macros_seo %}
+{%- import "macros/macros.html" as macros %}
+{%- set i18n = load_data(path="i18n/" ~ lang ~ '.toml', required=false) -%}
+{%- if not i18n -%}{%- set i18n = load_data(path="themes/abridge/i18n/" ~ lang ~ ".toml", required=false) -%}{%- endif %}
+
+{%- block seo %}
+  {{- super() }}
+  {%- set title_addition = "" %}
+
+  {%- if page.title and config.title %}
+    {%- set title = page.title %}
+    {%- set title_addition = title_separator ~ config.title %}
+  {%- elif section.title and config.title %}
+    {%- set title = section.title %}
+    {%- set title_addition = title_separator ~ config.title %}
+  {%- elif page.title %}
+    {%- set title = page.title %}
+  {%- elif section.title %}
+    {%- set title = section.title %}
+  {%- else %}
+    {%- set title = config.title %}
+  {%- endif %}
+
+  {%- if page.description %}
+    {%- set description = page.description %}
+  {%- elif section.description %}
+    {%- set description = section.description %}
+  {%- else %}
+    {%- set description = config.description %}
+  {%- endif %}
+
+  {{- macros_seo::seo(config=config, title=title, title_addition=title_addition, description=description) }}
+{%- endblock seo %}
+
+{%- block content %}
+    <div>
+
+{%- if page.content %}
+{{ page.content | safe }}
+{%- elif section.content %}
+{{ section.content | safe }}
+{%- endif %}
+
+    </div>
+
+    {%- set log_section = get_section(path="log/_index.md", lang=lang) %}
+    <div class="sblock">
+      <div class="blockdiv">
+        <span class="b s150">Recent Posts</span>
+        {%- for page in log_section.pages | slice(end=5) %}
+        <div class="tpad">
+          <a href="{{ page.permalink | safe }}">{{ page.title | markdown(inline=true) | safe }}</a>
+          <br><span class="s90">{{ page.date | date(format="%B %d, %Y") }}</span>
+        </div>
+        {%- endfor %}
+        <div class="tpad">
+          <a href="{{ get_url(path="log", lang=lang) }}/">{{ macros::translate(key="more", default="more", i18n=i18n) }}...</a>
+        </div>
+      </div>
+    </div>
+{%- endblock content %}
