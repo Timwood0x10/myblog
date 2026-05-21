@@ -53,7 +53,7 @@ pub struct MemScope {
 
 The facade exists to provide a unified entry point, but the internals remain modular.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[MemScope Facade] --> B[CaptureEngine]
     A --> C[EventStore]
@@ -69,7 +69,7 @@ flowchart TD
     D --> F
     D --> G
     D --> H
-```
+{% end %}
 
 This architecture is useful because it separates event collection from analysis and presentation.
 
@@ -172,13 +172,13 @@ This is important architecturally:
 
 > snapshots are derived from events; they are not the primary source of truth.
 
-```mermaid
-flowchart LR
+{% mermaid() %}
+graph LR
     A[MemoryEvent Queue] --> B[EventStore Snapshot]
-    B --> C[build_snapshot_from_events]
+    B --> C[build snapshot from events]
     C --> D[MemorySnapshot]
     D --> E[Analysis / Query / Render]
-```
+{% end %}
 
 ---
 

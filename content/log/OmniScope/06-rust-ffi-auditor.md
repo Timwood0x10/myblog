@@ -36,7 +36,7 @@ Rust FFI auditing therefore looks past “is there unsafe?” and asks whether t
 - unsafe FFI calls;
 - stack address escape to `extern C`.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[RustFfiAuditor] --> B[Box::into_raw / from_raw]
     A --> C[as_ptr borrow escape]
@@ -45,13 +45,13 @@ flowchart TD
     A --> F[dangling as_ptr]
     A --> G[unsafe FFI call]
     A --> H[stack escape]
-```
+{% end %}
 
 ## `as_ptr` borrow escape: recovering a lifetime risk from IR calls
 
 `detectAsPtrEscape` is implemented at `src/pass/analysis/rust_ffi_auditor.zig:180`. It iterates LLVM functions, basic blocks, and instructions; handles only `LLVMCall` and `LLVMInvoke`; retrieves the callee from the final operand; reads the callee name; and matches Rust `as_ptr` patterns.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[LLVM Function] --> B[BasicBlock iterator]
     B --> C[Instruction iterator]
@@ -62,11 +62,11 @@ flowchart TD
     F --> G{isRustAsPtrCall?}
     G -->|No| C
     G -->|Yes| H[addFinding + ctx.addIssue]
-```
+{% end %}
 
 The risk is that `String` or `Vec` `as_ptr` returns a borrowed pointer. If C stores it, the Rust object may be dropped while C still holds the address.
 
-```mermaid
+{% mermaid() %}
 sequenceDiagram
     participant R as Rust local Vec/String
     participant P as raw pointer from as_ptr
@@ -76,7 +76,7 @@ sequenceDiagram
     R->>R: local value dropped
     C->>P: later use
     P-->>C: dangling pointer risk
-```
+{% end %}
 
 At `src/pass/analysis/rust_ffi_auditor.zig:212`, the rule creates a `borrow_escape` issue through `Issue.initWithReason`, with a reason explaining that a local `String/Vec` pointer passed to extern C may dangle.
 
@@ -84,7 +84,7 @@ At `src/pass/analysis/rust_ffi_auditor.zig:212`, the rule creates a `borrow_esca
 
 `Box::into_raw` converts Rust-managed heap ownership into a raw pointer. The caller must ensure the later deallocation protocol is correct. Missing restoration can leak; double restoration can double free; C-side release can produce allocator mismatch depending on allocation protocol.
 
-```mermaid
+{% mermaid() %}
 flowchart LR
     A[Box<T>] --> B[Box::into_raw]
     B --> C[*mut T]
@@ -92,7 +92,7 @@ flowchart LR
     D -->|from_raw exactly once| E[Ownership restored]
     D -->|Never restored| F[Leak risk]
     D -->|C free + Rust drop| G[Double free / allocator mismatch]
-```
+{% end %}
 
 `into_raw` alone is not a vulnerability. The finding depends on the surrounding protocol and subsequent pointer flow.
 
@@ -100,7 +100,7 @@ flowchart LR
 
 `detectCrossLangMismatch` starts at `src/pass/analysis/rust_ffi_auditor.zig:230`. It iterates call/invoke instructions and attempts to identify Rust allocation paired with C deallocation.
 
-```mermaid
+{% mermaid() %}
 sequenceDiagram
     participant RA as Rust allocator
     participant IR as LLVM IR pointer
@@ -109,7 +109,7 @@ sequenceDiagram
     IR->>CF: pointer crosses ABI
     CF->>CF: free(pointer)
     CF-->>RA: allocator ownership contract may be violated
-```
+{% end %}
 
 The accuracy of this kind of check depends on symbol names, preserved call relationships, wrappers, inlining, and custom allocators.
 
@@ -117,14 +117,14 @@ The accuracy of this kind of check depends on symbol names, preserved call relat
 
 The auditor also runs checks that are not Rust-only, such as unsafe FFI call scanning and stack address escape. Stack escape is relevant when a pointer to a local object is passed to C and then stored beyond the call.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[alloca / local stack object] --> B[Take address]
     B --> C[Pass to extern C]
     C --> D{Does C store it?}
     D -->|Yes| E[Dangling after return]
     D -->|No| F[Depends on call-duration use]
-```
+{% end %}
 
 ## Summary
 

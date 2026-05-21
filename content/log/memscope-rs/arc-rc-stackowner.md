@@ -35,7 +35,7 @@ let worker_b = Arc::clone(&root);
 
 Allocator-level tracking may only see the original heap allocation. But logically there are now three smart pointer values sharing the same data.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[Arc::new T] --> H[Heap Data]
     B[Arc::clone] --> C[New Stack Owner]
@@ -43,7 +43,7 @@ flowchart TD
 
     G[GlobalAlloc] --> H
     G -. cannot directly see .-> B
-```
+{% end %}
 
 The question is not just “where was memory allocated?” but:
 
@@ -167,7 +167,7 @@ worker_a  stack_ptr = S2, heap_ptr = H
 worker_b  stack_ptr = S3, heap_ptr = H
 ```
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[root: Arc<T>] --> S1[stack_ptr S1]
     B[worker_a: Arc<T>] --> S2[stack_ptr S2]
@@ -179,7 +179,7 @@ flowchart TD
 
     H --> G[Same heap_ptr]
     G --> R[Shared Ownership Group]
-```
+{% end %}
 
 ---
 
@@ -221,7 +221,7 @@ for (_heap_ptr, record_ids) in heap_to_records {
 }
 ```
 
-```mermaid
+{% mermaid() %}
 flowchart LR
     A[Memory Events] --> B[Filter stack_ptr != None]
     B --> C[Use event.ptr as heap_ptr]
@@ -229,7 +229,7 @@ flowchart LR
     D --> E{group size >= 2?}
     E -->|yes| F[Emit ArcClone relation]
     E -->|no| G[No shared clone relation]
-```
+{% end %}
 
 ---
 
@@ -331,7 +331,7 @@ shared heap object  -> heap_ptr
 multiple stack_ptrs -> same heap_ptr
 ```
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[track! arc_var] --> B[Trackable for Arc/Rc]
     B --> C[TrackKind::StackOwner]
@@ -342,7 +342,7 @@ flowchart TD
     F --> G
     G --> H[Group by heap_ptr]
     H --> I[ArcClone relation]
-```
+{% end %}
 
 This is not perfect ownership tracing. It is a clear, explainable, and useful model for observing shared ownership in Rust programs.
 

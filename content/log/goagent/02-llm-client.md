@@ -59,7 +59,7 @@ GoAgent uses a two-layer architecture:
 
 Two layers isn't redundancy — it's division of labor: the bottom handles "how to send requests," the top handles "how to use the model."
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     subgraph "Top: How to use the model"
         Adapter[LLMAdapter Interface]
@@ -79,7 +79,7 @@ flowchart TD
     Factory --> Client
     Client --> OpenRouter
     Client --> Ollama
-```
+{% end %}
 
 ## Architecture Naturally Emerges
 
@@ -168,7 +168,7 @@ Registry pattern: `adapters` maps `provider -> constructor`. Instantiation happe
 3. Extract JSON from response.
 4. Validate against Schema.
 
-```mermaid
+{% mermaid() %}
 sequenceDiagram
     participant Agent
     participant Adapter as LLMAdapter
@@ -184,7 +184,7 @@ sequenceDiagram
     Adapter->>Parser: Extract + validate JSON
     Parser-->>Adapter: RecommendResult
     Adapter-->>Agent: (*RecommendResult, error)
-```
+{% end %}
 
 ## Three Adapters Compared
 

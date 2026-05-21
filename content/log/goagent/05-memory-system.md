@@ -36,7 +36,7 @@ Three memory tiers for three time scales:
 | Task | Current task | Task input/output | Track execution |
 | Distilled | Long-term | Extracted experience | Retrieve for similar tasks |
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     Input[User Input] --> Session[Session Memory<br/>Short-term]
     Input --> Task[Task Memory<br/>Mid-term]
@@ -46,7 +46,7 @@ flowchart TD
     Distill --> Search[SearchSimilarTasks]
     Search --> BuildCtx
     BuildCtx --> Agent[Agent Execution]
-```
+{% end %}
 
 ## Architecture Naturally Emerges
 
@@ -58,7 +58,7 @@ flowchart TD
 
 Not simple caching — a full pipeline:
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     Conv[Conversation] --> Extract[ExperienceExtractor]
     Extract --> Classify[MemoryClassifier]
@@ -67,7 +67,7 @@ flowchart TD
     Filter --> TopN[Top-N Selection]
     TopN --> Conflict[ConflictResolver]
     Conflict --> Store[(Repository)]
-```
+{% end %}
 
 **Classifier**: Knowledge, Preference, Interaction, Profile.
 **Noise filter**: Code blocks, stack traces, logs, markdown tables.

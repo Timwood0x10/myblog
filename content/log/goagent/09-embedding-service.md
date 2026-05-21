@@ -33,7 +33,7 @@ Deploy embedding as an independent HTTP service:
 - Supports Ollama and SentenceTransformers backends, switchable via environment variable.
 - Optional Redis cache, L2 normalization for retrieval consistency.
 
-```mermaid
+{% mermaid() %}
 flowchart LR
     subgraph "Go Main Program"
         Retrieval[RetrievalService]
@@ -55,7 +55,7 @@ flowchart LR
     FastAPI --> Cache
     FastAPI --> Ollama
     FastAPI --> ST
-```
+{% end %}
 
 ## Architecture Naturally Emerges
 

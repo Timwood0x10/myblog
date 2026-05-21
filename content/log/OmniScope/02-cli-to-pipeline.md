@@ -28,7 +28,7 @@ The CLI describes how the user wants to run. IRLoader turns input into a module.
 
 `Config` is defined at `src/main.zig:24`. It stores input files, output format, output path, visualization flag, user-code focus, FFI-only mode, and stdlib inclusion. Argument parsing starts at `src/main.zig:73`.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[argv] --> B[parseArgs]
     B --> C[Config]
@@ -36,7 +36,7 @@ flowchart TD
     C --> E[output_format: text/json/sarif]
     C --> F[visualize]
     C --> G[focus_user_code / ffi_only / include_stdlib]
-```
+{% end %}
 
 One implementation detail matters: the CLI parses analysis intent, but the exact effect depends on individual pass implementations. For example, some noise-reduction options are instantiated inside specific passes.
 
@@ -44,7 +44,7 @@ One implementation detail matters: the CLI parses analysis intent, but the exact
 
 `runModulePipeline` is located at `src/main.zig:171`. It initializes the Pipeline, attaches the LLVM module, registers passes, runs static analysis, and collects issues.
 
-```mermaid
+{% mermaid() %}
 sequenceDiagram
     participant Main as main.zig
     participant Loader as IRLoader
@@ -59,7 +59,7 @@ sequenceDiagram
     Pipe->>PM: run(ctx, diag)
     PM-->>Pipe: shared facts and issues
     Pipe-->>Main: PipelineResult
-```
+{% end %}
 
 Source anchors:
 
@@ -73,7 +73,7 @@ Source anchors:
 
 `registerAllPasses` is at `src/main.zig:153`. It registers CallGraph, TaintPropagation, FFI Boundary, FFI Type Mismatch, FFI Body Check, FFI Unsafe, PtrLifetime, DangerSurface, PointerOwnership, CallbackEscape, RustFfiAuditor, ReturnCheck, MemorySafety, FreeValidation, and BufferOverflow.
 
-```mermaid
+{% mermaid() %}
 flowchart LR
     A[CallGraph] --> B[FFI Boundary]
     B --> C[Type / Body / Unsafe]
@@ -82,7 +82,7 @@ flowchart LR
     E --> F[PointerOwnership]
     F --> G[CallbackEscape / RustFfiAuditor]
     G --> H[MemorySafety / FreeValidation / BufferOverflow]
-```
+{% end %}
 
 The registration order is not necessarily the final execution order. The final order is resolved by `PassManager`, with execution starting at `src/pass/manager.zig:193`.
 
@@ -101,7 +101,7 @@ The registration order is not necessarily the final execution order. The final o
 - `memory_graph`;
 - `danger_surface_relevant`, `ffi_auto_relevant`, and `relevant_functions`.
 
-```mermaid
+{% mermaid() %}
 flowchart TB
     subgraph Pipeline.run
         A[Clear DataFlowGraph] --> B[Create PassContext]
@@ -111,13 +111,13 @@ flowchart TB
         B --> F[Initialize CrossLangEdges]
         F --> G[PassManager.run]
     end
-```
+{% end %}
 
 ## Output is part of the design
 
 `emitOutput` is at `src/main.zig:207`. It branches into JSON, SARIF, or text output. JSON is produced by `formatIssuesAsJson`; SARIF is produced by `SarifOutput`.
 
-```mermaid
+{% mermaid() %}
 flowchart LR
     A[Issue list] --> B[emitOutput]
     B --> C[JSON: formatIssuesAsJson]
@@ -126,7 +126,7 @@ flowchart LR
     C --> F[stdout / file]
     D --> F
     E --> G[terminal]
-```
+{% end %}
 
 ## Summary
 

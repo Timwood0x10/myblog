@@ -37,14 +37,14 @@ This is important:
 
 > export does not only use a live allocation map; it rebuilds report data from the event stream.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[EventStore] --> B[snapshot]
     B --> C[rebuild_allocations_from_events]
     C --> D[MemorySnapshot]
     D --> E[JSON Reports]
     D --> F[Dashboard Context]
-```
+{% end %}
 
 ---
 
@@ -206,14 +206,14 @@ match template {
 
 The dashboard is therefore a rendered view over the same reconstructed data used by JSON export.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[Tracker + EventStore] --> B[Dashboard Context]
     C[Passport Tracker] --> B
     D[Async Tracker] --> B
     B --> E[Handlebars Renderer]
     E --> F[Unified Dashboard HTML]
-```
+{% end %}
 
 ---
 

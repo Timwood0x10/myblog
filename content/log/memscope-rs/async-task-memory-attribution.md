@@ -31,7 +31,7 @@ In a synchronous multithreaded program, a thread often maps reasonably well to a
 
 In async Rust, that assumption breaks down:
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     R[Tokio Runtime] --> T1[Worker Thread 1]
     R --> T2[Worker Thread 2]
@@ -48,7 +48,7 @@ flowchart TD
     M1 --> Q[Need task attribution]
     M2 --> Q
     M3 --> Q
-```
+{% end %}
 
 Thread ID tells us where an allocation ran. Task attribution tells us which logical async unit it belongs to.
 
@@ -155,7 +155,7 @@ stats.active_tasks = stats.active_tasks.saturating_sub(1);
 Self::clear_current_task();
 ```
 
-```mermaid
+{% mermaid() %}
 stateDiagram-v2
     [*] --> Started
     Started --> Running
@@ -163,7 +163,7 @@ stateDiagram-v2
     Completed --> [*]
 
     Running --> ZombieCandidate: started but not completed
-```
+{% end %}
 
 ---
 
@@ -409,7 +409,7 @@ The best description is:
 
 Async attribution matters because Rust services are increasingly task-oriented rather than thread-oriented.
 
-```mermaid
+{% mermaid() %}
 flowchart LR
     A[task_scope / tracked future] --> B[Task Context]
     B --> C[task_id]
@@ -417,7 +417,7 @@ flowchart LR
     D --> E[AsyncTracker]
     E --> F[TaskMemoryProfile]
     F --> G[async_analysis.json]
-```
+{% end %}
 
 `memscope-rs` does not magically understand all async execution. It gives developers a way to attach memory events to logical tasks when context is available.
 

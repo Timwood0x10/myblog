@@ -39,7 +39,7 @@ The Leader/Sub-agent pattern:
 
 This division isn't a "designed architecture" — it naturally emerges from the task decomposition requirement: decomposition implies separation of planner and executor.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     Input[User Input] --> Leader[Leader Agent<br/>Orchestrator]
     Leader --> Parse[Parse User Profile]
@@ -56,7 +56,7 @@ flowchart TD
 
     Results --> Aggregate[Aggregate]
     Aggregate --> Output[Final Output]
-```
+{% end %}
 
 ## Architecture Naturally Emerges
 

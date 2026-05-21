@@ -54,7 +54,7 @@ GoAgent uses three-layer Client + service interface isolation:
 
 This isn't a "designed architecture" — it's a layering that naturally emerges from the isolation requirement:
 
-```mermaid
+{% mermaid() %}
 flowchart TB
     subgraph "Callers only see these"
         SimpleClient[SimpleClient<br/>One Execute call]
@@ -85,7 +85,7 @@ flowchart TB
     AgentService -.->|impl| Agents
     MemoryService -.->|impl| Memory
     RetrievalService -.->|impl| Storage
-```
+{% end %}
 
 Key point: **callers never see any implementation under `internal/`**. Dashed lines mean "implementation relationships are completed inside the api package, invisible to the outside."
 

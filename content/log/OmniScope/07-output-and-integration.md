@@ -26,7 +26,7 @@ OmniScope makes passes produce structured `Issue` values first, then lets the ou
 
 `Issue` is defined in `src/diag/issue.zig`, and issue kinds are exposed from `src/common/types.zig:151`. The structure carries kind, message, location, severity, confidence, confidence level, reason, FFI boundary, trace, and classification.
 
-```mermaid
+{% mermaid() %}
 classDiagram
     class Issue {
         kind
@@ -40,7 +40,7 @@ classDiagram
         trace
         classification
     }
-```
+{% end %}
 
 These fields support different review needs:
 
@@ -55,7 +55,7 @@ These fields support different review needs:
 
 When a pass finds something reportable, it creates an `Issue` with constructors such as `Issue.init` or `Issue.initWithReason`, then calls `ctx.addIssue`. The entry point is `src/pass/pass.zig:458`.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[Analysis Pass] --> B[Rule match]
     B --> C[Construct Issue]
@@ -63,7 +63,7 @@ flowchart TD
     D --> E[DataFlowGraph / Issue store]
     E --> F[Pipeline.getIssues]
     F --> G[emitOutput]
-```
+{% end %}
 
 This decouples rule logic from output format. Passes produce structured findings; the main program decides how to serialize them.
 
@@ -71,7 +71,7 @@ This decouples rule logic from output format. Passes produce structured findings
 
 `emitOutput` is implemented at `src/main.zig:207`. The JSON branch calls `formatIssuesAsJson` at `src/main.zig:494`; the SARIF branch uses `SarifOutput`, initialized at `src/main.zig:232`; file output is controlled by `config.output_file`.
 
-```mermaid
+{% mermaid() %}
 flowchart LR
     A[issues + func_count + time_ms] --> B[emitOutput]
     B --> C{OutputFormat}
@@ -81,20 +81,20 @@ flowchart LR
     D --> G[stdout or file]
     E --> G
     F --> H[developer console]
-```
+{% end %}
 
 ## SARIF integration
 
 `SarifOutput` is defined at `src/output/sarif.zig:36`, with file writing at `src/output/sarif.zig:167`. SARIF lets results be consumed by GitHub Code Scanning, CI systems, and security dashboards.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[OmniScope Issue] --> B[SARIF Result]
     B --> C[sarif.json]
     C --> D[CI Artifact]
     C --> E[GitHub Code Scanning]
     C --> F[Security Dashboard]
-```
+{% end %}
 
 ## Example commands
 

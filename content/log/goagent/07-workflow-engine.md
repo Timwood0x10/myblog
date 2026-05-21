@@ -37,13 +37,13 @@ Not duplicate implementations: YAML DAG for "known processes," dynamic graph for
 
 ### YAML DAG Engine
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[collect] --> B[analyze]
     A --> C[retrieve]
     B --> D[synthesize]
     C --> D
-```
+{% end %}
 
 Executor follows topological order, semaphore controls concurrency, supports retry and template variable substitution.
 
@@ -51,14 +51,14 @@ Executor follows topological order, semaphore controls concurrency, supports ret
 
 Three node types: AgentNode, ToolNode, FuncNode. Conditional edges for dynamic routing. Three schedulers: FIFO, Priority, Shortest-Job-First.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     Start --> Analyze
     Analyze -->|confidence > 0.8| Fast[Fast Path]
     Analyze -->|confidence <= 0.8| Deep[Deep Analysis]
     Fast --> End
     Deep --> End
-```
+{% end %}
 
 ## Design Trade-offs
 

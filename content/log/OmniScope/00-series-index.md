@@ -18,7 +18,7 @@ OmniScope focuses on one concrete question: **after ownership, lifetime, and dea
 
 In one sentence: OmniScope reads LLVM IR (`.ll` / `.bc`), turns calls, pointer flows, allocation/free events, language boundaries, and unsafe regions into queryable facts, then reports high-risk paths related to FFI, ownership, and lifetime through text, JSON, or SARIF.
 
-```mermaid
+{% mermaid() %}
 flowchart LR
     A[LLVM IR input] --> B[Module loading]
     B --> C[PassContext]
@@ -30,7 +30,7 @@ flowchart LR
     F --> G
     G --> H[Ownership / Lifetime / FFI rules]
     H --> I[Issue / JSON / SARIF]
-```
+{% end %}
 
 ## Articles
 

@@ -47,7 +47,7 @@ For unsafe and FFI memory, that is not enough. We also want to know:
 - is it still in foreign custody?
 - does its lifecycle look suspicious?
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     A[Safe Rust] --> B[Unsafe Block]
     B --> C[Raw Pointer]
@@ -62,7 +62,7 @@ flowchart TD
     P --> V[Validity Status]
     P --> S[Safety Violations]
     P --> R[JSON / Dashboard]
-```
+{% end %}
 
 ---
 

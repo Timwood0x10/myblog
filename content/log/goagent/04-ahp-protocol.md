@@ -32,7 +32,7 @@ AHP (Agent Handshake Protocol) solves three problems:
 2. **Message queue**: Channel-based in-memory queue with enqueue, dequeue, peek.
 3. **Heartbeat**: Periodic heartbeat signals so Leader can detect Sub Agent liveness.
 
-```mermaid
+{% mermaid() %}
 flowchart LR
     Leader[Leader Agent] -->|TASK| Queue[MessageQueue]
     Queue -->|TASK| Sub[Sub Agent]
@@ -40,7 +40,7 @@ flowchart LR
     Queue -->|RESULT| Leader
     Sub -->|HEARTBEAT| HB[HeartbeatMonitor]
     HB -->|IsAlive?| Leader
-```
+{% end %}
 
 ## Architecture Naturally Emerges
 
@@ -62,7 +62,7 @@ Message ID: `timestamp.atomic_counter.random_suffix` — three dimensions ensure
 
 The key design: **Peek never loses messages**. When Peek takes a message out to inspect, if it can't put it back (queue full), the message goes into a backup buffer. Next Dequeue consumes backup first.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     Peek[Peek] --> Check{backup has data?}
     Check -->|Yes| ReturnB[Return backup[0]]
@@ -72,14 +72,14 @@ flowchart TD
     PutBack -->|Full| Save[Save to backup]
     Save --> Return
     Receive -->|Empty| Nil[Return nil]
-```
+{% end %}
 
 Enqueue: `select` with three paths — success, context cancelled, queue full (never blocks).
 Dequeue: prioritizes backup buffer, then main channel.
 
 ### Heartbeat
 
-```mermaid
+{% mermaid() %}
 sequenceDiagram
     participant Sub as Sub Agent
     participant Monitor as HeartbeatMonitor
@@ -92,7 +92,7 @@ sequenceDiagram
 
     Leader->>Monitor: IsAlive(agentID)
     Monitor-->>Leader: true / false
-```
+{% end %}
 
 ## Design Trade-offs
 

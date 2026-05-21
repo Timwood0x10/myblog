@@ -31,7 +31,7 @@ PostgreSQL + pgvector as unified storage, with four capability layers:
 3. **EmbeddingQueue**: Async vectorization, idempotent dedup, dead letter queue.
 4. **RetrievalService**: Hybrid search (vector + BM25), query rewriting, time decay, multi-source fusion.
 
-```mermaid
+{% mermaid() %}
 flowchart TD
     Write[Write Text] --> Buffer[WriteBuffer<br/>Batch Write]
     Buffer --> DB[(PostgreSQL<br/>pending)]
@@ -45,7 +45,7 @@ flowchart TD
     Vector --> Merge[Fuse & Rank]
     BM25 --> Merge
     Merge --> Results[SearchResult]
-```
+{% end %}
 
 ## Architecture Naturally Emerges
 
@@ -59,7 +59,7 @@ Async vectorization pipeline: text → DB (pending) → EmbeddingQueue → Embed
 
 ### RetrievalService: Hybrid Search
 
-```mermaid
+{% mermaid() %}
 sequenceDiagram
     participant User
     participant RS as RetrievalService
@@ -76,7 +76,7 @@ sequenceDiagram
 
     RS->>RS: Weight, merge, rank
     RS-->>User: SearchResult list
-```
+{% end %}
 
 ## Design Trade-offs
 
