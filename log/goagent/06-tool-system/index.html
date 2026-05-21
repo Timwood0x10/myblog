@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>GoAgent Source Deep Dive 06: Tool System — Registration, Capability Matching, and Execution | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="## The Problem: How Do Agents "Do Things" Instead of Just "Talking"">
+
+    <meta property="og:description" content="## The Problem: How Do Agents "Do Things" Instead of Just "Talking"">
+    <meta property="og:title" content="GoAgent Source Deep Dive 06: Tool System — Registration, Capability Matching, and Execution | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/goagent/06-tool-system/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="## The Problem: How Do Agents "Do Things" Instead of Just "Talking"">
+    <meta name="twitter:title" content="GoAgent Source Deep Dive 06: Tool System — Registration, Capability Matching, and Execution | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/goagent/06-tool-system/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/06-tool-system/">GoAgent Source Deep Dive 06: Tool System — Registration, Capability Matching, and Execution</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="goagent-source-deep-dive-06-tool-system-registration-capability-matching-and-execution">GoAgent Source Deep Dive 06: Tool System — Registration, Capability Matching, and Execution</h1>
+<h2 id="the-problem-how-do-agents-do-things-instead-of-just-talking">The Problem: How Do Agents "Do Things" Instead of Just "Talking"</h2>
+<p>LLMs excel at understanding and generating text, but when a user says "calculate a 15% tip" or "check today's weather," the agent needs to call external capabilities. The question: how does an agent discover, select, and call these capabilities?</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>Approach A: Hardcode tool logic in prompts</strong> — Tool list changes require prompt changes, LLM selection is unpredictable, no parameter validation.</p>
+<p><strong>Approach B: Direct function calls inside agents</strong> — Agent couples with tool implementations, adding tools requires modifying agent code, no tool discovery mechanism.</p>
+<p>Both lack a <strong>unified tool abstraction layer</strong>: tools should be registerable, discoverable, and callable without coupling to agent code.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>Three layers:</p>
+<ol>
+<li><strong>Unified interface</strong>: All tools implement the same <code>Tool</code> interface.</li>
+<li><strong>Registry</strong>: Tools register via <code>Registry</code>, accessed by name.</li>
+<li><strong>Capability matching</strong>: <code>CapabilityEngine</code> detects needed capabilities from user input, automatically filters relevant tools.</li>
+</ol>
+<h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="tool-interface">Tool Interface</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Tool</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Name</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Description</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Category</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> ToolCategory</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Capabilities</span><span style="color: #9399B2;">() []</span><span style="color: #F9E2AF;font-style: italic;">Capability</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}) (</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Parameters</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ParameterSchema</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>6 categories, 8 capabilities. Every tool provides name, description, category, capabilities, parameter schema, and execute method.</p>
+<h3 id="registry">Registry</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Registry</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">    sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span>    tools</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">Tool</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Prevents nil tools and duplicate names on registration; retrieves by name on execution.</p>
+<h3 id="capability-engine-keyword-routing">Capability Engine: Keyword Routing</h3>
+<p>Not LLM reasoning — keyword matching:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> capabilityKeywords</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Capability</span><span style="color: #9399B2;">][]</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>    CapabilityMath</span><span style="color: #9399B2;">: {</span><span style="color: #A6E3A1;">&quot;calculate&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;sum&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;compute&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;aggregate&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    CapabilityNetwork</span><span style="color: #9399B2;">: {</span><span style="color: #A6E3A1;">&quot;api&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;request&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;fetch&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;download&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Flow: user input → keyword detection → matched capabilities → filter tools from registry → execute. Bilingual (English + Chinese), multi-capability matching, simple and predictable.</p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<ul>
+<li><strong>Keywords vs LLM reasoning</strong>: Fast, predictable, zero cost. Complex scenarios left to LLM tool selection in prompts.</li>
+<li><strong>Global registry vs per-agent</strong>: Simpler; AgentTools filters per agent on top of global registry.</li>
+<li><strong>map vs generics</strong>: Simple interface, sacrifices type safety. Practical for tools with wildly varying parameter types.</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>The Tool system is the agent's "action layer." Unified interface makes tools pluggable, registry manages lifecycle, capability engine auto-routes. Architecture naturally emerged from "how do agents do things": first the interface (decoupling), then the registry (management), then capability matching (discovery).</p>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/07-workflow-engine/">
+                                <span class="button__icon">←</span>&nbsp;
+                                <span class="button__text">GoAgent Source Deep Dive 07: Workflow Engine — DAG-Based Agent Orchestration</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/05-memory-system/">
+                                <span class="button__text">GoAgent Source Deep Dive 05: Memory System — Sessions, Tasks, and Distilled Memories</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<style>
+.mermaid svg { background: transparent !important; }
+.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
+.mermaid .node .label { color: #fff !important; }
+.mermaid .node .label span { color: #fff !important; }
+.mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
+.mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
+.mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
+.mermaid .edgeLabel rect { fill: transparent !important; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>

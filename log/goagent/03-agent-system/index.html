@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>GoAgent Source Deep Dive 03: Agent System — The Leader&#x2F;Sub-Agent Collaboration Skeleton | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="## The Problem: One Agent Can't Handle Everything">
+
+    <meta property="og:description" content="## The Problem: One Agent Can't Handle Everything">
+    <meta property="og:title" content="GoAgent Source Deep Dive 03: Agent System — The Leader/Sub-Agent Collaboration Skeleton | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/goagent/03-agent-system/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="## The Problem: One Agent Can't Handle Everything">
+    <meta name="twitter:title" content="GoAgent Source Deep Dive 03: Agent System — The Leader/Sub-Agent Collaboration Skeleton | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/goagent/03-agent-system/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/03-agent-system/">GoAgent Source Deep Dive 03: Agent System — The Leader&#x2F;Sub-Agent Collaboration Skeleton</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="goagent-source-deep-dive-03-agent-system-the-leader-sub-agent-collaboration-skeleton">GoAgent Source Deep Dive 03: Agent System — The Leader/Sub-Agent Collaboration Skeleton</h1>
+<h2 id="the-problem-one-agent-can-t-handle-everything">The Problem: One Agent Can't Handle Everything</h2>
+<p>You've built an agent with an LLM that understands user input, calls tools, and returns results. But you quickly discover — when a user says "plan a trip to Tokyo, budget 5000, and recommend some restaurants," a single agent trying to do itinerary planning, budget calculation, restaurant recommendation, and information retrieval all at once either becomes impossibly complex or does each task poorly.</p>
+<p>You need to split tasks across different agents. But who splits them? Who coordinates the results?</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>Approach A: One giant agent with if-else</strong></p>
+<p>A monolithic agent with branching logic. Problems: hard to test, tasks run serially, adding capabilities requires modifying core agent code.</p>
+<p><strong>Approach B: Let the LLM decide everything via function calling</strong></p>
+<p>Let the LLM dynamically choose tools. Problems: LLM decisions are unpredictable, no task decomposition, result aggregation depends entirely on the LLM with no engineering guarantees.</p>
+<p>Both approaches lack an <strong>orchestration layer</strong> — a component responsible for understanding input, decomposing tasks, dispatching execution, and aggregating results.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>The Leader/Sub-agent pattern:</p>
+<ul>
+<li><strong>Leader Agent</strong> is the orchestrator, not the executor. It understands input, plans tasks, dispatches to Sub Agents, aggregates results.</li>
+<li><strong>Sub Agent</strong> is the execution unit, not the decision maker. It receives a concrete task, calls LLM and tools to complete it.</li>
+</ul>
+<p>This division isn't a "designed architecture" — it naturally emerges from the task decomposition requirement: decomposition implies separation of planner and executor.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    Input[User Input] --&gt; Leader[Leader Agent&lt;br/&gt;Orchestrator]</span></span>
+<span class="giallo-l"><span>    Leader --&gt; Parse[Parse User Profile]</span></span>
+<span class="giallo-l"><span>    Parse --&gt; Plan[Plan Task List]</span></span>
+<span class="giallo-l"><span>    Plan --&gt; Dispatch[Parallel Dispatch]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Dispatch --&gt; SubA[Sub Agent A&lt;br/&gt;Itinerary]</span></span>
+<span class="giallo-l"><span>    Dispatch --&gt; SubB[Sub Agent B&lt;br/&gt;Restaurants]</span></span>
+<span class="giallo-l"><span>    Dispatch --&gt; SubC[Sub Agent C&lt;br/&gt;Budget]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SubA --&gt; Results[TaskResults]</span></span>
+<span class="giallo-l"><span>    SubB --&gt; Results</span></span>
+<span class="giallo-l"><span>    SubC --&gt; Results</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Results --&gt; Aggregate[Aggregate]</span></span>
+<span class="giallo-l"><span>    Aggregate --&gt; Output[Final Output]</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="interface-hierarchy">Interface Hierarchy</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// base.Agent — foundation for all agents</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Agent</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ID</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Type</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AgentType</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Status</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AgentStatus</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Start</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Stop</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Process</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> input</span><span style="color: #F9E2AF;font-style: italic;"> any</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// sub.Agent — adds Execute</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Agent</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Agent</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> task</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">TaskResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="leader-s-four-replaceable-components">Leader's Four Replaceable Components</h3>
+<p>Leader isn't an "all-powerful LLM object" — it's an orchestrator depending on four strategy interfaces:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ProfileParser</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Parse</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> input</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">UserProfile</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> TaskPlanner</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Plan</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> profile</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">UserProfile</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> inputText</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> TaskDispatcher</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Dispatch</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tasks</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">TaskResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    RegisterExecutor</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agentType</span><span style="color: #F9E2AF;font-style: italic;"> models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AgentType</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> fn</span><span style="color: #F9E2AF;font-style: italic;"> TaskExecutorFunc</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ResultAggregator</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Aggregate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> results</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">TaskResult</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tasks</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RecommendResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="dispatcher-the-concurrency-core">Dispatcher: The Concurrency Core</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">d </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">taskDispatcher</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Dispatch</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tasks</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">TaskResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    g</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #94E2D5;"> :=</span><span> errgroup</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithContext</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    sem</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">chan struct</span><span style="color: #9399B2;">{},</span><span> d</span><span style="color: #9399B2;">.</span><span>maxParallel</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> resultsMu</span><span style="color: #F9E2AF;font-style: italic;"> sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span></span>
+<span class="giallo-l"><span>    results</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">TaskResult</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>tasks</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> i</span><span style="color: #9399B2;">,</span><span> task</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> tasks</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        task</span><span style="color: #94E2D5;"> :=</span><span> task</span></span>
+<span class="giallo-l"><span>        g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            case</span><span> sem</span><span style="color: #94E2D5;"> &lt;-</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;">{}{}:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            case</span><span style="color: #94E2D5;"> &lt;-</span><span>ctx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Done</span><span style="color: #9399B2;">():</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                return</span><span> ctx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Err</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            defer func</span><span style="color: #9399B2;">() {</span><span style="color: #94E2D5;"> &lt;-</span><span>sem</span><span style="color: #9399B2;"> }()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>            execResult</span><span style="color: #94E2D5;"> :=</span><span> d</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">executeTask</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> task</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            resultsMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>            results</span><span style="color: #9399B2;">[</span><span>i</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> execResult</span></span>
+<span class="giallo-l"><span>            resultsMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Three concurrency decisions: errgroup for cancellation propagation, semaphore for bounded parallelism, mutex for safe result collection.</p>
+<h3 id="task-planning-pragmatics">Task Planning Pragmatics</h3>
+<p>The planner matches trigger keywords to sub-agents. If no match and fallback is enabled, all sub-agents are dispatched. <strong>Better to over-dispatch than leave input with no response.</strong></p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<ul>
+<li><strong>Strategy pattern vs inheritance</strong>: Composition + interfaces, replaceable at runtime.</li>
+<li><strong>errgroup vs worker pool</strong>: errgroup has built-in context cancellation; semaphore limits concurrency on-demand.</li>
+<li><strong>Local execution vs message queue</strong>: Both supported, auto-selected based on whether <code>executorFuncs</code> or <code>messageSender</code> exists.</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>The Agent system isn't "mysterious intelligent agents" — it's an engineering-driven task orchestration pipeline. Leader plans and orchestrates, Sub Agent executes, Dispatcher handles concurrency. Architecture wasn't pre-designed — it naturally emerged from the task decomposition requirement.</p>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/04-ahp-protocol/">
+                                <span class="button__icon">←</span>&nbsp;
+                                <span class="button__text">GoAgent Source Deep Dive 04: AHP Protocol — Messages, Queues, and Heartbeats</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/02-llm-client/">
+                                <span class="button__text">GoAgent Source Deep Dive 02: LLM Client — Unifying Multi-Model Call Boundaries</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<style>
+.mermaid svg { background: transparent !important; }
+.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
+.mermaid .node .label { color: #fff !important; }
+.mermaid .node .label span { color: #fff !important; }
+.mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
+.mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
+.mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
+.mermaid .edgeLabel rect { fill: transparent !important; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>

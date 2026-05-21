@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>GoAgent Source Deep Dive 08: Storage and Retrieval — PostgreSQL, pgvector, and Hybrid Search | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="## The Problem: Where Do Agent Memories and Knowledge Live">
+
+    <meta property="og:description" content="## The Problem: Where Do Agent Memories and Knowledge Live">
+    <meta property="og:title" content="GoAgent Source Deep Dive 08: Storage and Retrieval — PostgreSQL, pgvector, and Hybrid Search | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/goagent/08-storage-retrieval/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="## The Problem: Where Do Agent Memories and Knowledge Live">
+    <meta name="twitter:title" content="GoAgent Source Deep Dive 08: Storage and Retrieval — PostgreSQL, pgvector, and Hybrid Search | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/goagent/08-storage-retrieval/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/08-storage-retrieval/">GoAgent Source Deep Dive 08: Storage and Retrieval — PostgreSQL, pgvector, and Hybrid Search</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="goagent-source-deep-dive-08-storage-and-retrieval-postgresql-pgvector-and-hybrid-search">GoAgent Source Deep Dive 08: Storage and Retrieval — PostgreSQL, pgvector, and Hybrid Search</h1>
+<h2 id="the-problem-where-do-agent-memories-and-knowledge-live">The Problem: Where Do Agent Memories and Knowledge Live</h2>
+<p>Agent conversation history, knowledge base, and distilled experience need persistence. In-memory storage is lost on process restart. You need a database — but storage alone isn't enough. You also need efficient retrieval: "how was a similar problem solved last time" requires vector similarity search; "knowledge containing a keyword" requires full-text search.</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>SQLite + file storage</strong> — No vector retrieval, no concurrent writes, not production-ready.
+<strong>Direct PostgreSQL writes</strong> — High-frequency writes perform poorly; no vectorization pipeline.
+<strong>Pure vector databases (Pinecone, Weaviate)</strong> — External dependency, no relational queries, can't do structured + semantic retrieval simultaneously.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>PostgreSQL + pgvector as unified storage, with four capability layers:</p>
+<ol>
+<li><strong>Connection pool</strong>: Connection management with timeout and reuse.</li>
+<li><strong>WriteBuffer</strong>: Batch writes, content-hash dedup, graceful shutdown.</li>
+<li><strong>EmbeddingQueue</strong>: Async vectorization, idempotent dedup, dead letter queue.</li>
+<li><strong>RetrievalService</strong>: Hybrid search (vector + BM25), query rewriting, time decay, multi-source fusion.</li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    Write[Write Text] --&gt; Buffer[WriteBuffer&lt;br/&gt;Batch Write]</span></span>
+<span class="giallo-l"><span>    Buffer --&gt; DB[(PostgreSQL&lt;br/&gt;pending)]</span></span>
+<span class="giallo-l"><span>    DB --&gt; Queue[EmbeddingQueue&lt;br/&gt;Async Vectorize]</span></span>
+<span class="giallo-l"><span>    Queue --&gt; Embed[Embedding Service]</span></span>
+<span class="giallo-l"><span>    Embed --&gt; DB2[(PostgreSQL&lt;br/&gt;completed)]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Search[Search Request] --&gt; RS[RetrievalService]</span></span>
+<span class="giallo-l"><span>    RS --&gt; Vector[Vector Search&lt;br/&gt;pgvector]</span></span>
+<span class="giallo-l"><span>    RS --&gt; BM25[Keyword Search&lt;br/&gt;BM25]</span></span>
+<span class="giallo-l"><span>    Vector --&gt; Merge[Fuse &amp; Rank]</span></span>
+<span class="giallo-l"><span>    BM25 --&gt; Merge</span></span>
+<span class="giallo-l"><span>    Merge --&gt; Results[SearchResult]</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="writebuffer">WriteBuffer</h3>
+<p>Buffers high-frequency writes, flushes on batchSize or flushInterval. Content-hash dedup prevents duplicate entries. <code>safeSend</code> uses <code>recover()</code> to handle write-on-closed-channel races.</p>
+<h3 id="embeddingqueue">EmbeddingQueue</h3>
+<p>Async vectorization pipeline: text → DB (pending) → EmbeddingQueue → Embedding Service → DB (completed). Dedupe key ensures idempotency, dead letter queue handles repeated failures, reconciliation periodically retries pending records.</p>
+<h3 id="retrievalservice-hybrid-search">RetrievalService: Hybrid Search</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant User</span></span>
+<span class="giallo-l"><span>    participant RS as RetrievalService</span></span>
+<span class="giallo-l"><span>    participant PG as PostgreSQL</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    User-&gt;&gt;RS: Search(ctx, request)</span></span>
+<span class="giallo-l"><span>    RS-&gt;&gt;RS: Build RetrievalPlan</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    par Vector Search</span></span>
+<span class="giallo-l"><span>        RS-&gt;&gt;PG: ORDER BY vector &lt;-&gt; query_vector</span></span>
+<span class="giallo-l"><span>    and Keyword Search</span></span>
+<span class="giallo-l"><span>        RS-&gt;&gt;PG: WHERE content LIKE &#39;%keyword%&#39;</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RS-&gt;&gt;RS: Weight, merge, rank</span></span>
+<span class="giallo-l"><span>    RS--&gt;&gt;User: SearchResult list</span></span></code></pre><h2 id="design-trade-offs">Design Trade-offs</h2>
+<ul>
+<li><strong>WriteBuffer vs direct write</strong>: Batch + timer flush balances throughput and latency.</li>
+<li><strong>Hybrid vs pure vector</strong>: Semantic + exact match, but more complexity. RetrievalPlan lets callers choose.</li>
+<li><strong>Async vs sync vectorization</strong>: Writes don't wait; retrieval degrades to keyword search if vectors aren't ready.</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>Storage and Retrieval isn't "just connect to a database." Connection pool, repository, batch writes, async vectorization, hybrid search, multi-tenant isolation — together they form the agent's knowledge infrastructure. Architecture naturally emerged from "where do memories live and how are they retrieved."</p>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/09-embedding-service/">
+                                <span class="button__icon">←</span>&nbsp;
+                                <span class="button__text">GoAgent Source Deep Dive 09: Embedding Service — The Engineering Boundary of Vector Generation</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/07-workflow-engine/">
+                                <span class="button__text">GoAgent Source Deep Dive 07: Workflow Engine — DAG-Based Agent Orchestration</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<style>
+.mermaid svg { background: transparent !important; }
+.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
+.mermaid .node .label { color: #fff !important; }
+.mermaid .node .label span { color: #fff !important; }
+.mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
+.mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
+.mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
+.mermaid .edgeLabel rect { fill: transparent !important; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>

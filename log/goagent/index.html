@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
+
+    <meta property="og:description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
+    <meta property="og:title" content="goagent | Timwood0x10">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/goagent/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
+    <meta name="twitter:title" content="goagent | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/goagent/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+        <div class="posts">
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/01-api-client/">GoAgent Source Deep Dive 01: API Client — Converging Framework Capabilities Into a Usable Entry Point</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="goagent-source-deep-dive-01-api-client-converging-framework-capabilities-into-a-usable-entry-point">GoAgent Source Deep Dive 01: API Client — Converging Framework Capabilities Into a Usable Entry Point</h1>
+<h2 id="the-problem-how-should-a-framework-s-internal-modules-be-called-externally">The Problem: How Should a Framework's Internal Modules Be Called Externally</h2>
+<p>You've built a multi-agent framework with LLM adapters, task orchestrators, memory managers, vector retrieval, workflow engines — a dozen packages, dozens of interfaces. Now someone wants to use your framework. How do you let them?</p>
+<p>The most intuitive approach: let callers directly <code>import</code> your internal packages. But problems appear immediately.</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>Approach A: Expose internal packages directly</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">import</span><span style="color: #A6E3A1;"> &quot;github.com/Timwood0x10/goagent/internal/llm/output&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">import</span><span style="color: #A6E3A1;"> &quot;github.com/Timwood0x10/goagent/internal/agents/leader&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">import</span><span style="color: #A6E3A1;"> &quot;github.com/Timwood0x10/goagent/internal/memory&quot;</span></span></code></pre>
+<p>Problems:</p>
+<ul>
+<li>Rename an internal variable and every caller has to change.</li>
+<li>Callers need to understand internal module topology to assemble a working Agent.</li>
+<li>Can't mock anything in tests — you have to boot the entire internal dependency chain.</li>
+</ul>
+<p><strong>Approach B: Build a massive Facade package</strong></p>
+<p>Cram everything into one package, expose one giant struct.</p>
+<p>Problems:</p>
+<ul>
+<li>The struct balloons to hundreds of methods.</li>
+<li>Callers who only need LLM capabilities are forced to depend on Agent, Memory, and Workflow types.</li>
+<li>No layering; changing one service's interface ripples through everything.</li>
+</ul>
+<p>Neither approach is a good answer. What GoAgent needs is: <strong>a thin isolation boundary that keeps internal complexity outside, while letting callers depend only on the capabilities they need</strong>.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>GoAgent uses three-layer Client + service interface isolation:</p>
+<ol>
+<li><strong>Service interface layer</strong> (<code>api/core/</code>): Defines <code>LLMService</code>, <code>AgentService</code>, <code>MemoryService</code>, <code>RetrievalService</code> interfaces. Callers depend on interfaces, not implementations.</li>
+<li><strong>Capability layer</strong> (<code>api.Client</code>): Holds all service instances, exposes service access through methods.</li>
+<li><strong>Entry layer</strong> (<code>SimpleClient</code>, <code>WorkflowClient</code>): Minimal encapsulation for specific scenarios.</li>
+</ol>
+<p>This isn't a "designed architecture" — it's a layering that naturally emerges from the isolation requirement:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TB</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Callers only see these&quot;</span></span>
+<span class="giallo-l"><span>        SimpleClient[SimpleClient&lt;br/&gt;One Execute call]</span></span>
+<span class="giallo-l"><span>        Client[api.Client&lt;br/&gt;Access all services]</span></span>
+<span class="giallo-l"><span>        WorkflowClient[WorkflowClient&lt;br/&gt;Run workflows]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Callers only depend on these interfaces&quot;</span></span>
+<span class="giallo-l"><span>        LLMService[LLMService]</span></span>
+<span class="giallo-l"><span>        AgentService[AgentService]</span></span>
+<span class="giallo-l"><span>        MemoryService[MemoryService]</span></span>
+<span class="giallo-l"><span>        RetrievalService[RetrievalService]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Callers never see these&quot;</span></span>
+<span class="giallo-l"><span>        LLM[llm/output]</span></span>
+<span class="giallo-l"><span>        Agents[agents/leader+sub]</span></span>
+<span class="giallo-l"><span>        Memory[memory/]</span></span>
+<span class="giallo-l"><span>        Storage[storage/postgres]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SimpleClient --&gt; Client</span></span>
+<span class="giallo-l"><span>    Client --&gt; LLMService</span></span>
+<span class="giallo-l"><span>    Client --&gt; AgentService</span></span>
+<span class="giallo-l"><span>    Client --&gt; MemoryService</span></span>
+<span class="giallo-l"><span>    Client --&gt; RetrievalService</span></span>
+<span class="giallo-l"><span>    LLMService -.-&gt;|impl| LLM</span></span>
+<span class="giallo-l"><span>    AgentService -.-&gt;|impl| Agents</span></span>
+<span class="giallo-l"><span>    MemoryService -.-&gt;|impl| Memory</span></span>
+<span class="giallo-l"><span>    RetrievalService -.-&gt;|impl| Storage</span></span></code></pre>
+<p>Key point: <strong>callers never see any implementation under <code>internal/</code></strong>. Dashed lines mean "implementation relationships are completed inside the api package, invisible to the outside."</p>
+<h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="service-interfaces-the-core-of-isolation">Service Interfaces: The Core of Isolation</h3>
+<p>Interfaces defined in <code>api/core/</code> are the linchpin:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// api/core/llm.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> LLMService</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Generate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> prompt</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> opts</span><span style="color: #94E2D5;"> ...</span><span style="color: #F9E2AF;font-style: italic;">GenerateOption</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GenerateSimple</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> prompt</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GenerateEmbedding</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> text</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) ([]</span><span style="color: #CBA6F7;">float64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetConfig</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">LLMConfig</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    IsEnabled</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> bool</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetProvider</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetModel</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Callers don't know whether it's OpenRouter, Ollama, or OpenAI underneath. This isn't just "wrapping" — it's <strong>dependency inversion</strong>: callers depend on abstract interfaces, implementation details are isolated inside the api package.</p>
+<h3 id="api-client-the-convergence-point">api.Client: The Convergence Point</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// api/client.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Client</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    config</span><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">Config</span></span>
+<span class="giallo-l"><span>    llm</span><span style="color: #F9E2AF;font-style: italic;">       LLMService</span></span>
+<span class="giallo-l"><span>    agent</span><span style="color: #F9E2AF;font-style: italic;">     AgentService</span></span>
+<span class="giallo-l"><span>    memory</span><span style="color: #F9E2AF;font-style: italic;">    MemoryService</span></span>
+<span class="giallo-l"><span>    retrieval</span><span style="color: #F9E2AF;font-style: italic;"> RetrievalService</span></span>
+<span class="giallo-l"><span>    closed</span><span style="color: #CBA6F7;">    bool</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>Client</code> does no business logic — only two things:</p>
+<ol>
+<li>Hold service instances.</li>
+<li>Expose service access through methods.</li>
+</ol>
+<h3 id="simpleclient-the-minimal-entry">SimpleClient: The Minimal Entry</h3>
+<p><code>SimpleClient</code> solves the "I just want to call an LLM, not understand the whole framework" need:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// api/client/simple.go:73</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">SimpleClient</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> query</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> query</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;query cannot be empty&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    llm</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>client</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">LLM</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> llm</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;LLM service not available&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    prompt</span><span style="color: #94E2D5;"> :=</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Please help with: %s&quot;</span><span style="color: #9399B2;">,</span><span> query</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> llm</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">GenerateSimple</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Important clarification</strong>: <code>SimpleClient.Execute</code> does NOT enter multi-agent orchestration — it wraps the query into a prompt and calls the LLM directly. This isn't a deficiency, it's design: lowering the barrier and providing full capabilities are two different entry points.</p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<h3 id="trade-off-1-manual-di-vs-framework-di">Trade-off 1: Manual DI vs Framework DI</h3>
+<p>GoAgent manually assembles services, no Wire or dig. Cost: slightly more initialization code. Benefit: dependencies are explicitly visible in code, no DI framework magic to understand.</p>
+<h3 id="trade-off-2-simpleclient-doesn-t-go-through-agent-orchestration">Trade-off 2: SimpleClient Doesn't Go Through Agent Orchestration</h3>
+<p>Intentional. Lowering the barrier and providing full capabilities are two different needs that shouldn't be crammed into one entry point.</p>
+<h3 id="trade-off-3-no-caching-at-api-layer">Trade-off 3: No Caching at API Layer</h3>
+<p>Caching strategies are decided by individual internal services. The API layer stays thin and simple, avoiding cache consistency issues spreading across layers.</p>
+<h2 id="summary">Summary</h2>
+<p>API Client isn't "wrapping HTTP." It's GoAgent's isolation boundary: callers depend on interfaces, not implementations; internal refactoring doesn't affect external integration. Three Client types target different scenarios, enabling progressive adoption. The architecture wasn't pre-designed — it naturally emerged from the isolation requirement.</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/02-llm-client/">GoAgent Source Deep Dive 02: LLM Client — Unifying Multi-Model Call Boundaries</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="goagent-source-deep-dive-02-llm-client-unifying-multi-model-call-boundaries">GoAgent Source Deep Dive 02: LLM Client — Unifying Multi-Model Call Boundaries</h1>
+<h2 id="the-problem-how-to-keep-an-agent-from-being-tied-to-one-model-provider">The Problem: How to Keep an Agent From Being Tied to One Model Provider</h2>
+<p>You've built an agent that needs to call an LLM to understand user input, generate task plans, and perform reasoning. The most intuitive approach is to hardcode HTTP requests to the OpenAI API directly in agent code.</p>
+<p>But problems appear immediately.</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>Approach A: Hardcode one provider</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>resp</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> http</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Post</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;https://api.openai.com/v1/chat/completions&quot;</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>Problems:</p>
+<ul>
+<li>Switch models (e.g., local Ollama deployment), and every call site needs changing.</li>
+<li>Can't mock in tests — you have to actually call the OpenAI API.</li>
+<li>Different providers have different request formats, auth methods, and response structures.</li>
+</ul>
+<p><strong>Approach B: Provider switching inside each agent</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">a </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Agent</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> callLLM</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">prompt</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> a</span><span style="color: #9399B2;">.</span><span>config</span><span style="color: #9399B2;">.</span><span>Provider</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;openai&quot;</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;"> return</span><span style="color: #89B4FA;font-style: italic;"> callOpenAI</span><span style="color: #9399B2;">(</span><span>prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;ollama&quot;</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;"> return</span><span style="color: #89B4FA;font-style: italic;"> callOllama</span><span style="color: #9399B2;">(</span><span>prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;openrouter&quot;</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;"> return</span><span style="color: #89B4FA;font-style: italic;"> callOpenRouter</span><span style="color: #9399B2;">(</span><span>prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Problems:</p>
+<ul>
+<li>Every agent repeats this switch.</li>
+<li>Agent code couples with provider details.</li>
+<li>Adding a new provider requires modifying every agent.</li>
+</ul>
+<p>Both approaches tie the agent to model invocation details. What GoAgent needs is: <strong>a unified model call boundary where upper layers only depend on <code>Generate</code> capability, without caring which provider is underneath</strong>.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>GoAgent uses a two-layer architecture:</p>
+<ul>
+<li><strong>Bottom layer</strong>: A lightweight HTTP client that communicates directly with providers.</li>
+<li><strong>Top layer</strong>: <code>LLMAdapter</code> interface + Factory pattern, unifying behavior and supporting structured output.</li>
+</ul>
+<p>Two layers isn't redundancy — it's division of labor: the bottom handles "how to send requests," the top handles "how to use the model."</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Top: How to use the model&quot;</span></span>
+<span class="giallo-l"><span>        Adapter[LLMAdapter Interface]</span></span>
+<span class="giallo-l"><span>        Factory[Factory Dispatch]</span></span>
+<span class="giallo-l"><span>        Template[Prompt Template]</span></span>
+<span class="giallo-l"><span>        Parser[Response Parser]</span></span>
+<span class="giallo-l"><span>        Validator[Output Validator]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Bottom: How to send requests&quot;</span></span>
+<span class="giallo-l"><span>        Client[llm.Client]</span></span>
+<span class="giallo-l"><span>        OpenRouter[OpenRouter HTTP]</span></span>
+<span class="giallo-l"><span>        Ollama[Ollama HTTP]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Adapter --&gt; Factory</span></span>
+<span class="giallo-l"><span>    Factory --&gt; Client</span></span>
+<span class="giallo-l"><span>    Client --&gt; OpenRouter</span></span>
+<span class="giallo-l"><span>    Client --&gt; Ollama</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="bottom-layer-http-direct-connect">Bottom Layer: HTTP Direct-Connect</h3>
+<p><code>internal/llm/client.go</code>'s <code>Client</code> is the most primitive call layer — direct HTTP requests, no abstraction:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/llm/client.go:89</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Client</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Generate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> prompt</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> prompt</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> ErrEmptyPrompt</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>prompt</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span> MaxPromptLength</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> ErrPromptTooLong</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> c</span><span style="color: #9399B2;">.</span><span>config</span><span style="color: #9399B2;">.</span><span>Provider</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;openrouter&quot;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">generateOpenRouter</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;ollama&quot;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">generateOllama</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    default</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> ErrUnsupportedProvider</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The value isn't "supports OpenRouter and Ollama" — it's <strong>converging all provider HTTP details into a single <code>Generate</code> method</strong>. Input validation happens upfront — empty and over-length prompts are intercepted before dispatch.</p>
+<h3 id="top-layer-llmadapter-interface">Top Layer: LLMAdapter Interface</h3>
+<p>The bottom solves "how to send requests," but agents need more — structured output, prompt templates, response validation. These shouldn't live in the bottom Client (that would bloat it) or in agents (that would couple agents to provider details).</p>
+<p>The answer is a new abstraction: <code>LLMAdapter</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/llm/output/adapter.go:10</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> LLMAdapter</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Generate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> prompt</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GenerateStructured</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> prompt</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> schema</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RecommendResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetModel</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>What does <code>LLMAdapter</code> add over the bottom <code>Client</code>?</p>
+<ul>
+<li><strong><code>GenerateStructured</code></strong>: Not just text — structured results conforming to JSON Schema. This is key for agent capabilities: agents need to extract structured task plans from LLM output, not receive free-form text.</li>
+<li><strong><code>GetModel()</code></strong>: Lets upper layers know which model is in use.</li>
+</ul>
+<h3 id="factory-the-provider-dispatch-point">Factory: The Provider Dispatch Point</h3>
+<p>With the interface defined, you need a way to create the right adapter at runtime based on configuration. The Factory pattern emerges naturally:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/llm/output/factory.go:17</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Factory</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    adapters</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">)</span><span style="color: #F9E2AF;font-style: italic;"> LLMAdapter</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewFactory</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Factory</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    f</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">Factory</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        adapters</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">)</span><span style="color: #F9E2AF;font-style: italic;"> LLMAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    f</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">register</span><span style="color: #9399B2;">(</span><span>ProviderOpenAI</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">cfg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">)</span><span style="color: #F9E2AF;font-style: italic;"> LLMAdapter</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #89B4FA;font-style: italic;"> NewOpenAIAdapter</span><span style="color: #9399B2;">(</span><span>cfg</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span>    f</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">register</span><span style="color: #9399B2;">(</span><span>ProviderOllama</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">cfg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">)</span><span style="color: #F9E2AF;font-style: italic;"> LLMAdapter</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #89B4FA;font-style: italic;"> NewOllamaAdapter</span><span style="color: #9399B2;">(</span><span>cfg</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span>    f</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">register</span><span style="color: #9399B2;">(</span><span>ProviderOpenRouter</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">cfg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">)</span><span style="color: #F9E2AF;font-style: italic;"> LLMAdapter</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #89B4FA;font-style: italic;"> NewOpenRouterAdapter</span><span style="color: #9399B2;">(</span><span>cfg</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> f</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Registry pattern: <code>adapters</code> maps <code>provider -&gt; constructor</code>. Instantiation happens on <code>Create</code>, supporting runtime registration of new providers.</p>
+<h3 id="structured-output-from-free-text-to-structured-results">Structured Output: From Free Text to Structured Results</h3>
+<p><code>GenerateStructured</code>'s workflow illustrates the top-layer adapter's value:</p>
+<ol>
+<li>Inject JSON Schema into prompt, telling the model "return in this format."</li>
+<li>Call <code>Generate</code> for raw response.</li>
+<li>Extract JSON from response.</li>
+<li>Validate against Schema.</li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant Agent</span></span>
+<span class="giallo-l"><span>    participant Adapter as LLMAdapter</span></span>
+<span class="giallo-l"><span>    participant Template as Prompt Template</span></span>
+<span class="giallo-l"><span>    participant LLM as LLM Provider</span></span>
+<span class="giallo-l"><span>    participant Parser as Response Parser</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Agent-&gt;&gt;Adapter: GenerateStructured(ctx, prompt, schema)</span></span>
+<span class="giallo-l"><span>    Adapter-&gt;&gt;Template: Inject schema into prompt</span></span>
+<span class="giallo-l"><span>    Template--&gt;&gt;Adapter: Complete prompt</span></span>
+<span class="giallo-l"><span>    Adapter-&gt;&gt;LLM: Generate(ctx, fullPrompt)</span></span>
+<span class="giallo-l"><span>    LLM--&gt;&gt;Adapter: Raw response</span></span>
+<span class="giallo-l"><span>    Adapter-&gt;&gt;Parser: Extract + validate JSON</span></span>
+<span class="giallo-l"><span>    Parser--&gt;&gt;Adapter: RecommendResult</span></span>
+<span class="giallo-l"><span>    Adapter--&gt;&gt;Agent: (*RecommendResult, error)</span></span></code></pre><h2 id="three-adapters-compared">Three Adapters Compared</h2>
+<table><thead><tr><th>Feature</th><th>OpenAI</th><th>Ollama</th><th>OpenRouter</th></tr></thead><tbody>
+<tr><td>API format</td><td>Chat Completions</td><td>Generate</td><td>Chat Completions</td></tr>
+<tr><td>Auth</td><td>Bearer Token</td><td>None (local)</td><td>Bearer Token</td></tr>
+<tr><td>Structured output</td><td>Native function calling</td><td>Prompt injection</td><td>OpenAI-compatible</td></tr>
+</tbody></table>
+<p>Adding a new provider only requires implementing <code>LLMAdapter</code> and registering via <code>RegisterProvider</code> — no changes to agents, factory, or config parsing.</p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<h3 id="trade-off-1-are-two-layers-redundant">Trade-off 1: Are Two Layers Redundant</h3>
+<p>Bottom Client sends HTTP; top adapter also sends HTTP. Looks redundant, but different responsibilities: bottom is a minimal-dependency communication layer for internal modules; top is an agent-facing capability layer with templates, parsing, and validation.</p>
+<h3 id="trade-off-2-switch-vs-registry">Trade-off 2: Switch vs Registry</h3>
+<p>Bottom uses switch dispatch (2-3 providers, clear and direct); top uses registry (extensible, supports runtime registration). Different layers, different trade-offs.</p>
+<h3 id="trade-off-3-no-native-function-calling">Trade-off 3: No Native Function Calling</h3>
+<p>Structured output via prompt injection, not provider-native capabilities. This trades off native optimization for cross-provider compatibility — Ollama has no function calling, but prompt injection works everywhere.</p>
+<h2 id="summary">Summary</h2>
+<p>LLM Client is GoAgent's model boundary. The two-layer architecture has each layer doing its job: bottom converges HTTP details, top unifies interfaces and structured output. The Factory pattern minimizes new provider onboarding cost. Agent code depends only on the <code>LLMAdapter</code> interface, never caring which provider is underneath — this is the engineering realization of "not tied to one provider."</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/03-agent-system/">GoAgent Source Deep Dive 03: Agent System — The Leader&#x2F;Sub-Agent Collaboration Skeleton</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="goagent-source-deep-dive-03-agent-system-the-leader-sub-agent-collaboration-skeleton">GoAgent Source Deep Dive 03: Agent System — The Leader/Sub-Agent Collaboration Skeleton</h1>
+<h2 id="the-problem-one-agent-can-t-handle-everything">The Problem: One Agent Can't Handle Everything</h2>
+<p>You've built an agent with an LLM that understands user input, calls tools, and returns results. But you quickly discover — when a user says "plan a trip to Tokyo, budget 5000, and recommend some restaurants," a single agent trying to do itinerary planning, budget calculation, restaurant recommendation, and information retrieval all at once either becomes impossibly complex or does each task poorly.</p>
+<p>You need to split tasks across different agents. But who splits them? Who coordinates the results?</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>Approach A: One giant agent with if-else</strong></p>
+<p>A monolithic agent with branching logic. Problems: hard to test, tasks run serially, adding capabilities requires modifying core agent code.</p>
+<p><strong>Approach B: Let the LLM decide everything via function calling</strong></p>
+<p>Let the LLM dynamically choose tools. Problems: LLM decisions are unpredictable, no task decomposition, result aggregation depends entirely on the LLM with no engineering guarantees.</p>
+<p>Both approaches lack an <strong>orchestration layer</strong> — a component responsible for understanding input, decomposing tasks, dispatching execution, and aggregating results.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>The Leader/Sub-agent pattern:</p>
+<ul>
+<li><strong>Leader Agent</strong> is the orchestrator, not the executor. It understands input, plans tasks, dispatches to Sub Agents, aggregates results.</li>
+<li><strong>Sub Agent</strong> is the execution unit, not the decision maker. It receives a concrete task, calls LLM and tools to complete it.</li>
+</ul>
+<p>This division isn't a "designed architecture" — it naturally emerges from the task decomposition requirement: decomposition implies separation of planner and executor.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    Input[User Input] --&gt; Leader[Leader Agent&lt;br/&gt;Orchestrator]</span></span>
+<span class="giallo-l"><span>    Leader --&gt; Parse[Parse User Profile]</span></span>
+<span class="giallo-l"><span>    Parse --&gt; Plan[Plan Task List]</span></span>
+<span class="giallo-l"><span>    Plan --&gt; Dispatch[Parallel Dispatch]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Dispatch --&gt; SubA[Sub Agent A&lt;br/&gt;Itinerary]</span></span>
+<span class="giallo-l"><span>    Dispatch --&gt; SubB[Sub Agent B&lt;br/&gt;Restaurants]</span></span>
+<span class="giallo-l"><span>    Dispatch --&gt; SubC[Sub Agent C&lt;br/&gt;Budget]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SubA --&gt; Results[TaskResults]</span></span>
+<span class="giallo-l"><span>    SubB --&gt; Results</span></span>
+<span class="giallo-l"><span>    SubC --&gt; Results</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Results --&gt; Aggregate[Aggregate]</span></span>
+<span class="giallo-l"><span>    Aggregate --&gt; Output[Final Output]</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="interface-hierarchy">Interface Hierarchy</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// base.Agent — foundation for all agents</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Agent</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ID</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Type</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AgentType</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Status</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AgentStatus</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Start</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Stop</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Process</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> input</span><span style="color: #F9E2AF;font-style: italic;"> any</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// sub.Agent — adds Execute</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Agent</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Agent</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> task</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">TaskResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="leader-s-four-replaceable-components">Leader's Four Replaceable Components</h3>
+<p>Leader isn't an "all-powerful LLM object" — it's an orchestrator depending on four strategy interfaces:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ProfileParser</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Parse</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> input</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">UserProfile</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> TaskPlanner</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Plan</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> profile</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">UserProfile</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> inputText</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> TaskDispatcher</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Dispatch</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tasks</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">TaskResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    RegisterExecutor</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agentType</span><span style="color: #F9E2AF;font-style: italic;"> models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AgentType</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> fn</span><span style="color: #F9E2AF;font-style: italic;"> TaskExecutorFunc</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ResultAggregator</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Aggregate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> results</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">TaskResult</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tasks</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RecommendResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="dispatcher-the-concurrency-core">Dispatcher: The Concurrency Core</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">d </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">taskDispatcher</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Dispatch</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tasks</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">TaskResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    g</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #94E2D5;"> :=</span><span> errgroup</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithContext</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    sem</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">chan struct</span><span style="color: #9399B2;">{},</span><span> d</span><span style="color: #9399B2;">.</span><span>maxParallel</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> resultsMu</span><span style="color: #F9E2AF;font-style: italic;"> sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span></span>
+<span class="giallo-l"><span>    results</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">TaskResult</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>tasks</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> i</span><span style="color: #9399B2;">,</span><span> task</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> tasks</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        task</span><span style="color: #94E2D5;"> :=</span><span> task</span></span>
+<span class="giallo-l"><span>        g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            case</span><span> sem</span><span style="color: #94E2D5;"> &lt;-</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;">{}{}:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            case</span><span style="color: #94E2D5;"> &lt;-</span><span>ctx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Done</span><span style="color: #9399B2;">():</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                return</span><span> ctx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Err</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            defer func</span><span style="color: #9399B2;">() {</span><span style="color: #94E2D5;"> &lt;-</span><span>sem</span><span style="color: #9399B2;"> }()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>            execResult</span><span style="color: #94E2D5;"> :=</span><span> d</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">executeTask</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> task</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            resultsMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>            results</span><span style="color: #9399B2;">[</span><span>i</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> execResult</span></span>
+<span class="giallo-l"><span>            resultsMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Three concurrency decisions: errgroup for cancellation propagation, semaphore for bounded parallelism, mutex for safe result collection.</p>
+<h3 id="task-planning-pragmatics">Task Planning Pragmatics</h3>
+<p>The planner matches trigger keywords to sub-agents. If no match and fallback is enabled, all sub-agents are dispatched. <strong>Better to over-dispatch than leave input with no response.</strong></p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<ul>
+<li><strong>Strategy pattern vs inheritance</strong>: Composition + interfaces, replaceable at runtime.</li>
+<li><strong>errgroup vs worker pool</strong>: errgroup has built-in context cancellation; semaphore limits concurrency on-demand.</li>
+<li><strong>Local execution vs message queue</strong>: Both supported, auto-selected based on whether <code>executorFuncs</code> or <code>messageSender</code> exists.</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>The Agent system isn't "mysterious intelligent agents" — it's an engineering-driven task orchestration pipeline. Leader plans and orchestrates, Sub Agent executes, Dispatcher handles concurrency. Architecture wasn't pre-designed — it naturally emerged from the task decomposition requirement.</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/04-ahp-protocol/">GoAgent Source Deep Dive 04: AHP Protocol — Messages, Queues, and Heartbeats</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="goagent-source-deep-dive-04-ahp-protocol-messages-queues-and-heartbeats">GoAgent Source Deep Dive 04: AHP Protocol — Messages, Queues, and Heartbeats</h1>
+<h2 id="the-problem-how-do-agents-communicate">The Problem: How Do Agents Communicate</h2>
+<p>Leader dispatches tasks to Sub Agents, Sub Agents return results — sounds like function calls. But when you want to run agents across processes or machines, function calls become network calls.</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>Approach A: Direct function calls</strong> — Ties agents to the same process, no buffering, no retry/timeout.</p>
+<p><strong>Approach B: Direct gRPC/HTTP</strong> — Every agent defines its own API routes, no unified message format, no protocol semantics, no heartbeat.</p>
+<p>Both lack a <strong>protocol layer</strong>: unified message format, reliable queue mechanism, health monitoring.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>AHP (Agent Handshake Protocol) solves three problems:</p>
+<ol>
+<li><strong>Message format</strong>: Unified <code>AHPMessage</code> structure with method type, sender, receiver, task ID, payload.</li>
+<li><strong>Message queue</strong>: Channel-based in-memory queue with enqueue, dequeue, peek.</li>
+<li><strong>Heartbeat</strong>: Periodic heartbeat signals so Leader can detect Sub Agent liveness.</li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    Leader[Leader Agent] --&gt;|TASK| Queue[MessageQueue]</span></span>
+<span class="giallo-l"><span>    Queue --&gt;|TASK| Sub[Sub Agent]</span></span>
+<span class="giallo-l"><span>    Sub --&gt;|RESULT| Queue</span></span>
+<span class="giallo-l"><span>    Queue --&gt;|RESULT| Leader</span></span>
+<span class="giallo-l"><span>    Sub --&gt;|HEARTBEAT| HB[HeartbeatMonitor]</span></span>
+<span class="giallo-l"><span>    HB --&gt;|IsAlive?| Leader</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="five-message-types">Five Message Types</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    AHPMethodTask</span><span style="color: #F9E2AF;font-style: italic;">      AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;TASK&quot;</span><span style="color: #9399B2;font-style: italic;">      // Leader dispatches task</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    AHPMethodResult</span><span style="color: #F9E2AF;font-style: italic;">    AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;RESULT&quot;</span><span style="color: #9399B2;font-style: italic;">     // Sub Agent returns result</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    AHPMethodProgress</span><span style="color: #F9E2AF;font-style: italic;">  AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;PROGRESS&quot;</span><span style="color: #9399B2;font-style: italic;">   // Sub Agent reports progress</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    AHPMethodACK</span><span style="color: #F9E2AF;font-style: italic;">       AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ACK&quot;</span><span style="color: #9399B2;font-style: italic;">        // Acknowledgment</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    AHPMethodHeartbeat</span><span style="color: #F9E2AF;font-style: italic;"> AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;HEARTBEAT&quot;</span><span style="color: #9399B2;font-style: italic;">  // Heartbeat signal</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p>Message ID: <code>timestamp.atomic_counter.random_suffix</code> — three dimensions ensure uniqueness.</p>
+<h3 id="messagequeue-backup-buffer-prevents-lost-messages">MessageQueue: Backup Buffer Prevents Lost Messages</h3>
+<p>The key design: <strong>Peek never loses messages</strong>. When Peek takes a message out to inspect, if it can't put it back (queue full), the message goes into a backup buffer. Next Dequeue consumes backup first.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    Peek[Peek] --&gt; Check{backup has data?}</span></span>
+<span class="giallo-l"><span>    Check --&gt;|Yes| ReturnB[Return backup[0]]</span></span>
+<span class="giallo-l"><span>    Check --&gt;|No| Receive{Receive from channel}</span></span>
+<span class="giallo-l"><span>    Receive --&gt;|Got msg| PutBack{Try put back}</span></span>
+<span class="giallo-l"><span>    PutBack --&gt;|OK| Return[Return msg]</span></span>
+<span class="giallo-l"><span>    PutBack --&gt;|Full| Save[Save to backup]</span></span>
+<span class="giallo-l"><span>    Save --&gt; Return</span></span>
+<span class="giallo-l"><span>    Receive --&gt;|Empty| Nil[Return nil]</span></span></code></pre>
+<p>Enqueue: <code>select</code> with three paths — success, context cancelled, queue full (never blocks).
+Dequeue: prioritizes backup buffer, then main channel.</p>
+<h3 id="heartbeat">Heartbeat</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant Sub as Sub Agent</span></span>
+<span class="giallo-l"><span>    participant Monitor as HeartbeatMonitor</span></span>
+<span class="giallo-l"><span>    participant Leader as Leader Agent</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    loop Every HeartbeatInterval</span></span>
+<span class="giallo-l"><span>        Sub-&gt;&gt;Monitor: Heartbeat(agentID)</span></span>
+<span class="giallo-l"><span>        Monitor-&gt;&gt;Monitor: Update lastSeen</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Leader-&gt;&gt;Monitor: IsAlive(agentID)</span></span>
+<span class="giallo-l"><span>    Monitor--&gt;&gt;Leader: true / false</span></span></code></pre><h2 id="design-trade-offs">Design Trade-offs</h2>
+<ul>
+<li><strong>In-memory queue vs external middleware</strong>: Zero dependencies, low latency. No persistence — sufficient for single-process, extend MessageSender for distributed.</li>
+<li><strong>Backup buffer vs unbounded queue</strong>: Bounded channel + backup buffer controls memory while ensuring Peek doesn't lose messages.</li>
+<li><strong>JSON vs Protobuf</strong>: Readable, debuggable. Agent message volume is modest, JSON overhead acceptable.</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>AHP moves agent collaboration from "local function calls" to "message semantics." It's not distributed middleware — it's the protocol skeleton for inter-agent communication, naturally derived from the question "how do agents talk to each other."</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/05-memory-system/">GoAgent Source Deep Dive 05: Memory System — Sessions, Tasks, and Distilled Memories</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="goagent-source-deep-dive-05-memory-system-sessions-tasks-and-distilled-memories">GoAgent Source Deep Dive 05: Memory System — Sessions, Tasks, and Distilled Memories</h1>
+<h2 id="the-problem-agents-start-from-scratch-every-conversation">The Problem: Agents Start From Scratch Every Conversation</h2>
+<p>You've built an agent with LLM calls. A user asks "recommend a Go book," and the agent recommends "The Go Programming Language." The user follows up with "is there a Chinese edition?" — the agent has no idea what "Chinese edition" refers to.</p>
+<p>LLM calls are stateless. Each request is independent. This means: no conversation context, no task tracking, no experience reuse.</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>Approach A: Stuff all history into the prompt</strong> — Token cost grows linearly, exceeds context window, doesn't extract reusable knowledge.</p>
+<p><strong>Approach B: Simple key-value cache</strong> — Semantic matches miss, no classification, noise (code blocks, stack traces) gets stored too.</p>
+<p>Both lack a <strong>tiered memory architecture</strong>: information at different lifecycles needs different storage and retrieval strategies.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>Three memory tiers for three time scales:</p>
+<table><thead><tr><th>Tier</th><th>Lifecycle</th><th>What</th><th>How Used</th></tr></thead><tbody>
+<tr><td>Session</td><td>Current conversation</td><td>Multi-turn message history</td><td>Build context</td></tr>
+<tr><td>Task</td><td>Current task</td><td>Task input/output</td><td>Track execution</td></tr>
+<tr><td>Distilled</td><td>Long-term</td><td>Extracted experience</td><td>Retrieve for similar tasks</td></tr>
+</tbody></table>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    Input[User Input] --&gt; Session[Session Memory&lt;br/&gt;Short-term]</span></span>
+<span class="giallo-l"><span>    Input --&gt; Task[Task Memory&lt;br/&gt;Mid-term]</span></span>
+<span class="giallo-l"><span>    Task --&gt; Distill[Distilled Memory&lt;br/&gt;Long-term]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Session --&gt; BuildCtx[BuildContext]</span></span>
+<span class="giallo-l"><span>    Distill --&gt; Search[SearchSimilarTasks]</span></span>
+<span class="giallo-l"><span>    Search --&gt; BuildCtx</span></span>
+<span class="giallo-l"><span>    BuildCtx --&gt; Agent[Agent Execution]</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="session-memory">Session Memory</h3>
+<p><code>BuildContext</code> combines current input with message history. Key designs: TTL cleanup, max history limit, fault tolerance (returns original input on error).</p>
+<h3 id="distilled-memory-pipeline">Distilled Memory Pipeline</h3>
+<p>Not simple caching — a full pipeline:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    Conv[Conversation] --&gt; Extract[ExperienceExtractor]</span></span>
+<span class="giallo-l"><span>    Extract --&gt; Classify[MemoryClassifier]</span></span>
+<span class="giallo-l"><span>    Classify --&gt; Score[ImportanceScorer]</span></span>
+<span class="giallo-l"><span>    Score --&gt; Filter[NoiseFilter]</span></span>
+<span class="giallo-l"><span>    Filter --&gt; TopN[Top-N Selection]</span></span>
+<span class="giallo-l"><span>    TopN --&gt; Conflict[ConflictResolver]</span></span>
+<span class="giallo-l"><span>    Conflict --&gt; Store[(Repository)]</span></span></code></pre>
+<p><strong>Classifier</strong>: Knowledge, Preference, Interaction, Profile.
+<strong>Noise filter</strong>: Code blocks, stack traces, logs, markdown tables.
+<strong>Conflict resolver</strong>: Vector similarity detection, keep the more important memory.</p>
+<h2 id="two-implementations">Two Implementations</h2>
+<table><thead><tr><th>Feature</th><th>Old (Hash)</th><th>New (Distiller)</th></tr></thead><tbody>
+<tr><td>Vectors</td><td>Hash function</td><td>Embedding Service</td></tr>
+<tr><td>Storage</td><td>Memory</td><td>PostgreSQL + pgvector</td></tr>
+<tr><td>Retrieval</td><td>Cosine similarity</td><td>Vector + BM25</td></tr>
+<tr><td>Capacity</td><td>5000 (LRU)</td><td>Unlimited</td></tr>
+<tr><td>Quality</td><td>Basic</td><td>Full pipeline</td></tr>
+</tbody></table>
+<p>Switchable via <code>useNewDistill</code> flag; old method as fallback.</p>
+<h2 id="summary">Summary</h2>
+<p>Three tiers naturally emerge from three time-scale needs: session for context, task for tracking, distilled for experience. The distillation pipeline's complexity reflects real "experience management" needs — not archiving logs, but extracting, classifying, scoring, filtering, and resolving conflicts.</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/06-tool-system/">GoAgent Source Deep Dive 06: Tool System — Registration, Capability Matching, and Execution</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="goagent-source-deep-dive-06-tool-system-registration-capability-matching-and-execution">GoAgent Source Deep Dive 06: Tool System — Registration, Capability Matching, and Execution</h1>
+<h2 id="the-problem-how-do-agents-do-things-instead-of-just-talking">The Problem: How Do Agents "Do Things" Instead of Just "Talking"</h2>
+<p>LLMs excel at understanding and generating text, but when a user says "calculate a 15% tip" or "check today's weather," the agent needs to call external capabilities. The question: how does an agent discover, select, and call these capabilities?</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>Approach A: Hardcode tool logic in prompts</strong> — Tool list changes require prompt changes, LLM selection is unpredictable, no parameter validation.</p>
+<p><strong>Approach B: Direct function calls inside agents</strong> — Agent couples with tool implementations, adding tools requires modifying agent code, no tool discovery mechanism.</p>
+<p>Both lack a <strong>unified tool abstraction layer</strong>: tools should be registerable, discoverable, and callable without coupling to agent code.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>Three layers:</p>
+<ol>
+<li><strong>Unified interface</strong>: All tools implement the same <code>Tool</code> interface.</li>
+<li><strong>Registry</strong>: Tools register via <code>Registry</code>, accessed by name.</li>
+<li><strong>Capability matching</strong>: <code>CapabilityEngine</code> detects needed capabilities from user input, automatically filters relevant tools.</li>
+</ol>
+<h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="tool-interface">Tool Interface</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Tool</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Name</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Description</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Category</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> ToolCategory</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Capabilities</span><span style="color: #9399B2;">() []</span><span style="color: #F9E2AF;font-style: italic;">Capability</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}) (</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Parameters</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ParameterSchema</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>6 categories, 8 capabilities. Every tool provides name, description, category, capabilities, parameter schema, and execute method.</p>
+<h3 id="registry">Registry</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Registry</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">    sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span>    tools</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">Tool</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Prevents nil tools and duplicate names on registration; retrieves by name on execution.</p>
+<h3 id="capability-engine-keyword-routing">Capability Engine: Keyword Routing</h3>
+<p>Not LLM reasoning — keyword matching:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> capabilityKeywords</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Capability</span><span style="color: #9399B2;">][]</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>    CapabilityMath</span><span style="color: #9399B2;">: {</span><span style="color: #A6E3A1;">&quot;calculate&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;sum&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;compute&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;aggregate&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    CapabilityNetwork</span><span style="color: #9399B2;">: {</span><span style="color: #A6E3A1;">&quot;api&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;request&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;fetch&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;download&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Flow: user input → keyword detection → matched capabilities → filter tools from registry → execute. Bilingual (English + Chinese), multi-capability matching, simple and predictable.</p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<ul>
+<li><strong>Keywords vs LLM reasoning</strong>: Fast, predictable, zero cost. Complex scenarios left to LLM tool selection in prompts.</li>
+<li><strong>Global registry vs per-agent</strong>: Simpler; AgentTools filters per agent on top of global registry.</li>
+<li><strong>map vs generics</strong>: Simple interface, sacrifices type safety. Practical for tools with wildly varying parameter types.</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>The Tool system is the agent's "action layer." Unified interface makes tools pluggable, registry manages lifecycle, capability engine auto-routes. Architecture naturally emerged from "how do agents do things": first the interface (decoupling), then the registry (management), then capability matching (discovery).</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/07-workflow-engine/">GoAgent Source Deep Dive 07: Workflow Engine — DAG-Based Agent Orchestration</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="goagent-source-deep-dive-07-workflow-engine-dag-based-agent-orchestration">GoAgent Source Deep Dive 07: Workflow Engine — DAG-Based Agent Orchestration</h1>
+<h2 id="the-problem-how-do-multi-step-tasks-execute-by-dependency">The Problem: How Do Multi-Step Tasks Execute by Dependency</h2>
+<p>The Leader/Sub-agent pattern excels at "user input → real-time decision → execute → return." But some tasks are multi-step: step A's output is step B's input, step C must wait for both A and B.</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>Approach A: Hardcoded execution order</strong> — Not reusable, no retry/timeout/concurrency control.</p>
+<p><strong>Approach B: Dynamic planning via Agent system</strong> — Same workflow re-inferred every time, LLM planning is unpredictable, no declarative definition.</p>
+<p>Both lack <strong>declarable, reusable, controllable process orchestration</strong>.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>Two workflow engines for different scenarios:</p>
+<ul>
+<li><strong>YAML DAG engine</strong>: Declare steps and dependencies in YAML, engine builds DAG, topological sort, concurrent execution.</li>
+<li><strong>Dynamic graph engine</strong>: Build graphs in Go code, conditional edges, multiple node types, pluggable schedulers.</li>
+</ul>
+<p>Not duplicate implementations: YAML DAG for "known processes," dynamic graph for "processes needing runtime decisions."</p>
+<h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="yaml-dag-engine">YAML DAG Engine</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[collect] --&gt; B[analyze]</span></span>
+<span class="giallo-l"><span>    A --&gt; C[retrieve]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[synthesize]</span></span>
+<span class="giallo-l"><span>    C --&gt; D</span></span></code></pre>
+<p>Executor follows topological order, semaphore controls concurrency, supports retry and template variable substitution.</p>
+<h3 id="dynamic-graph-engine">Dynamic Graph Engine</h3>
+<p>Three node types: AgentNode, ToolNode, FuncNode. Conditional edges for dynamic routing. Three schedulers: FIFO, Priority, Shortest-Job-First.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    Start --&gt; Analyze</span></span>
+<span class="giallo-l"><span>    Analyze --&gt;|confidence &gt; 0.8| Fast[Fast Path]</span></span>
+<span class="giallo-l"><span>    Analyze --&gt;|confidence &lt;= 0.8| Deep[Deep Analysis]</span></span>
+<span class="giallo-l"><span>    Fast --&gt; End</span></span>
+<span class="giallo-l"><span>    Deep --&gt; End</span></span></code></pre><h2 id="design-trade-offs">Design Trade-offs</h2>
+<ul>
+<li><strong>Two vs unified</strong>: Each serves its purpose better than a unified complexity.</li>
+<li><strong>Panic vs error</strong>: <code>NewGraph</code> panics on empty id — startup programming errors should fail fast.</li>
+<li><strong>Shared state vs message passing</strong>: Simpler, requires single-threaded execution (controlled by scheduler).</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>The Workflow engine extends agents from "real-time decisions" to "declarable, reusable process orchestration." Architecture naturally emerged from "how do multi-step tasks execute by dependency."</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/08-storage-retrieval/">GoAgent Source Deep Dive 08: Storage and Retrieval — PostgreSQL, pgvector, and Hybrid Search</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="goagent-source-deep-dive-08-storage-and-retrieval-postgresql-pgvector-and-hybrid-search">GoAgent Source Deep Dive 08: Storage and Retrieval — PostgreSQL, pgvector, and Hybrid Search</h1>
+<h2 id="the-problem-where-do-agent-memories-and-knowledge-live">The Problem: Where Do Agent Memories and Knowledge Live</h2>
+<p>Agent conversation history, knowledge base, and distilled experience need persistence. In-memory storage is lost on process restart. You need a database — but storage alone isn't enough. You also need efficient retrieval: "how was a similar problem solved last time" requires vector similarity search; "knowledge containing a keyword" requires full-text search.</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>SQLite + file storage</strong> — No vector retrieval, no concurrent writes, not production-ready.
+<strong>Direct PostgreSQL writes</strong> — High-frequency writes perform poorly; no vectorization pipeline.
+<strong>Pure vector databases (Pinecone, Weaviate)</strong> — External dependency, no relational queries, can't do structured + semantic retrieval simultaneously.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>PostgreSQL + pgvector as unified storage, with four capability layers:</p>
+<ol>
+<li><strong>Connection pool</strong>: Connection management with timeout and reuse.</li>
+<li><strong>WriteBuffer</strong>: Batch writes, content-hash dedup, graceful shutdown.</li>
+<li><strong>EmbeddingQueue</strong>: Async vectorization, idempotent dedup, dead letter queue.</li>
+<li><strong>RetrievalService</strong>: Hybrid search (vector + BM25), query rewriting, time decay, multi-source fusion.</li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    Write[Write Text] --&gt; Buffer[WriteBuffer&lt;br/&gt;Batch Write]</span></span>
+<span class="giallo-l"><span>    Buffer --&gt; DB[(PostgreSQL&lt;br/&gt;pending)]</span></span>
+<span class="giallo-l"><span>    DB --&gt; Queue[EmbeddingQueue&lt;br/&gt;Async Vectorize]</span></span>
+<span class="giallo-l"><span>    Queue --&gt; Embed[Embedding Service]</span></span>
+<span class="giallo-l"><span>    Embed --&gt; DB2[(PostgreSQL&lt;br/&gt;completed)]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Search[Search Request] --&gt; RS[RetrievalService]</span></span>
+<span class="giallo-l"><span>    RS --&gt; Vector[Vector Search&lt;br/&gt;pgvector]</span></span>
+<span class="giallo-l"><span>    RS --&gt; BM25[Keyword Search&lt;br/&gt;BM25]</span></span>
+<span class="giallo-l"><span>    Vector --&gt; Merge[Fuse &amp; Rank]</span></span>
+<span class="giallo-l"><span>    BM25 --&gt; Merge</span></span>
+<span class="giallo-l"><span>    Merge --&gt; Results[SearchResult]</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="writebuffer">WriteBuffer</h3>
+<p>Buffers high-frequency writes, flushes on batchSize or flushInterval. Content-hash dedup prevents duplicate entries. <code>safeSend</code> uses <code>recover()</code> to handle write-on-closed-channel races.</p>
+<h3 id="embeddingqueue">EmbeddingQueue</h3>
+<p>Async vectorization pipeline: text → DB (pending) → EmbeddingQueue → Embedding Service → DB (completed). Dedupe key ensures idempotency, dead letter queue handles repeated failures, reconciliation periodically retries pending records.</p>
+<h3 id="retrievalservice-hybrid-search">RetrievalService: Hybrid Search</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant User</span></span>
+<span class="giallo-l"><span>    participant RS as RetrievalService</span></span>
+<span class="giallo-l"><span>    participant PG as PostgreSQL</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    User-&gt;&gt;RS: Search(ctx, request)</span></span>
+<span class="giallo-l"><span>    RS-&gt;&gt;RS: Build RetrievalPlan</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    par Vector Search</span></span>
+<span class="giallo-l"><span>        RS-&gt;&gt;PG: ORDER BY vector &lt;-&gt; query_vector</span></span>
+<span class="giallo-l"><span>    and Keyword Search</span></span>
+<span class="giallo-l"><span>        RS-&gt;&gt;PG: WHERE content LIKE &#39;%keyword%&#39;</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RS-&gt;&gt;RS: Weight, merge, rank</span></span>
+<span class="giallo-l"><span>    RS--&gt;&gt;User: SearchResult list</span></span></code></pre><h2 id="design-trade-offs">Design Trade-offs</h2>
+<ul>
+<li><strong>WriteBuffer vs direct write</strong>: Batch + timer flush balances throughput and latency.</li>
+<li><strong>Hybrid vs pure vector</strong>: Semantic + exact match, but more complexity. RetrievalPlan lets callers choose.</li>
+<li><strong>Async vs sync vectorization</strong>: Writes don't wait; retrieval degrades to keyword search if vectors aren't ready.</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>Storage and Retrieval isn't "just connect to a database." Connection pool, repository, batch writes, async vectorization, hybrid search, multi-tenant isolation — together they form the agent's knowledge infrastructure. Architecture naturally emerged from "where do memories live and how are they retrieved."</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/09-embedding-service/">GoAgent Source Deep Dive 09: Embedding Service — The Engineering Boundary of Vector Generation</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="goagent-source-deep-dive-09-embedding-service-the-engineering-boundary-of-vector-generation">GoAgent Source Deep Dive 09: Embedding Service — The Engineering Boundary of Vector Generation</h1>
+<h2 id="the-problem-how-do-you-turn-text-into-vectors">The Problem: How Do You Turn Text Into Vectors</h2>
+<p>GoAgent's retrieval depends on vector similarity search. PostgreSQL + pgvector can do vector search, but you need vectors first. How does text become a vector?</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>CGO bindings for vector models in Go</strong> — Complex compilation, cross-platform difficulties, Go's ML ecosystem is immature.
+<strong>Python subprocess from Go</strong> — High latency, complex process management.
+<strong>External API (OpenAI Embedding)</strong> — External dependency, network latency and cost, not suitable for local deployment.</p>
+<p>All three have engineering pain points. What GoAgent needs: <strong>vector generation decoupled from the Go main program, supporting local deployment and flexible backend switching</strong>.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>Deploy embedding as an independent HTTP service:</p>
+<ul>
+<li>Python FastAPI implementation, leveraging Python's ML ecosystem.</li>
+<li>Go calls via HTTP, no CGO or subprocess dependency.</li>
+<li>Supports Ollama and SentenceTransformers backends, switchable via environment variable.</li>
+<li>Optional Redis cache, L2 normalization for retrieval consistency.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Go Main Program&quot;</span></span>
+<span class="giallo-l"><span>        Retrieval[RetrievalService]</span></span>
+<span class="giallo-l"><span>        Client[EmbeddingClient]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Embedding Service&quot;</span></span>
+<span class="giallo-l"><span>        FastAPI[FastAPI]</span></span>
+<span class="giallo-l"><span>        Cache[Redis]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Backends&quot;</span></span>
+<span class="giallo-l"><span>        Ollama[Ollama]</span></span>
+<span class="giallo-l"><span>        ST[SentenceTransformers]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Retrieval --&gt; Client</span></span>
+<span class="giallo-l"><span>    Client --&gt;|HTTP| FastAPI</span></span>
+<span class="giallo-l"><span>    FastAPI --&gt; Cache</span></span>
+<span class="giallo-l"><span>    FastAPI --&gt; Ollama</span></span>
+<span class="giallo-l"><span>    FastAPI --&gt; ST</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="go-side-embeddingclient">Go Side: EmbeddingClient</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EmbeddingClient</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    baseURL</span><span style="color: #CBA6F7;">    string</span></span>
+<span class="giallo-l"><span>    httpClient</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">http</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Client</span></span>
+<span class="giallo-l"><span>    retries</span><span style="color: #CBA6F7;">    int</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Two core methods: <code>Embed</code> (single text) and <code>EmbedBatch</code> (batch). Constructs JSON, POSTs to <code>/embed</code> or <code>/embed_batch</code>, parses response.</p>
+<h3 id="python-side-fastapi-service">Python Side: FastAPI Service</h3>
+<p>Three endpoints: <code>/embed</code>, <code>/embed_batch</code>, <code>/health</code>.</p>
+<p>Single text flow: check cache → generate vector → L2 normalize → write cache → return.
+Batch flow: filter cached → batch generate uncached → normalize and cache each → return.</p>
+<h3 id="backend-switching">Backend Switching</h3>
+<p><code>EMBEDDING_BACKEND</code> environment variable switches Ollama or SentenceTransformers. No code changes. Dev uses sentence-transformers (zero config), production uses Ollama (high performance).</p>
+<h3 id="vector-normalization">Vector Normalization</h3>
+<p>All vectors L2-normalized before return (norm = 1). After normalization, cosine similarity equals dot product — faster. Without normalization, long text vectors may have larger magnitudes, causing retrieval bias.</p>
+<h3 id="cache">Cache</h3>
+<p>Redis optional: same text doesn't recompute, reduces backend pressure. Service works without Redis, just uncached.</p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<ul>
+<li><strong>Independent service vs embedded</strong>: Extra network hop and deployment component, but language decoupling, independent scaling, flexible backend.</li>
+<li><strong>HTTP vs gRPC</strong>: Easy debugging, language-agnostic. For request-response patterns, HTTP overhead acceptable.</li>
+<li><strong>Optional vs mandatory cache</strong>: Zero config for dev, on-demand for production. Service availability independent of Redis.</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>The Embedding Service is the prerequisite for GoAgent's retrieval. Deploying independently is the trade-off between engineering complexity and operational flexibility. Architecture naturally emerged from "how does text become vectors" — Python ecosystem for vector generation, Go for business logic, HTTP as the bridge.</p>
+
+        </div>
+
+                </div>
+            <div class="pagination">
+                <div class="pagination__buttons"></div>
+            </div>
+        </div>
+        
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+</body>
+
+</html>
