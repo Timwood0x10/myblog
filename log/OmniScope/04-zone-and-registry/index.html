@@ -65,8 +65,9 @@
 
     <div class="content">
         
-<div class="post">
-  
+<div class="article-layout">
+  <article class="post">
+    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/04-zone-and-registry/">Zone Classification and Semantic Registry: Avoiding Blacklist-Style Reporting</a></h1>
     <div class="post-meta-inline">
         
@@ -84,7 +85,7 @@
                 <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
     
 
-  <div class="post-content">
+    <div class="post-content">
             <h1 id="zone-classification-and-semantic-registry-avoiding-blacklist-style-reporting">Zone Classification and Semantic Registry: Avoiding Blacklist-Style Reporting</h1>
 <p>A static analyzer without semantic layers can easily become a dangerous-function list. OmniScope separates region classification from function semantics before deciding whether a path should be analyzed in depth.</p>
 <h2 id="start-with-the-problem-the-same-function-name-means-different-things-in-context">Start with the problem: the same function name means different things in context</h2>
@@ -94,22 +95,24 @@
 <p><code>ZoneClassifier</code> classifies the region first. <code>SemanticRegistry</code> then explains function meaning in cross-language context. Together they provide context to later danger-path checks: the same call can receive different priority depending on its zone and semantic kind.</p>
 <h2 id="zonekind-classifies-code-by-risk-region">ZoneKind classifies code by risk region</h2>
 <p><code>ZoneKind</code> is defined at <code>src/semantics/zone_classifier.zig:24</code>. It includes <code>safe</code>, <code>unsafe</code>, <code>ffi</code>, <code>runtime_internal</code>, and <code>unknown</code>. The file-level comment states the operating principle: focus where language guarantees stop.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Function / Instruction / Debug path] --&gt; B[Zone Classifier]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[safe: language guarantees likely apply]</span></span>
-<span class="giallo-l"><span>    B --&gt; D[unsafe: explicit escape]</span></span>
-<span class="giallo-l"><span>    B --&gt; E[ffi: cross-language boundary]</span></span>
-<span class="giallo-l"><span>    B --&gt; F[runtime_internal: stdlib/runtime]</span></span>
-<span class="giallo-l"><span>    B --&gt; G[unknown: conservative handling]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[Function / Instruction / Debug path] --> B[Zone Classifier]
+    B --> C[safe: language guarantees likely apply]
+    B --> D[unsafe: explicit escape]
+    B --> E[ffi: cross-language boundary]
+    B --> F[runtime_internal: stdlib/runtime]
+    B --> G[unknown: conservative handling]
+</div>
 <p>This model is not a proof that safe zones are bug-free. It is a prioritization layer. For an FFI-focused analyzer, runtime glue or container internals should usually not have the same weight as user-written unsafe wrappers.</p>
 <h2 id="multi-language-escape-triggers">Multi-language escape triggers</h2>
 <p><code>EscapeTrigger</code> is defined at <code>src/semantics/zone_classifier.zig:45</code>. It represents cross-language escape points across ecosystems: Rust unsafe/extern/raw pointers, Zig pointer casts and C imports, Go cgo and <code>unsafe.Pointer</code>, and C++ extern C, reinterpret casts, and manual memory.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[Rust unsafe / extern C] --&gt; Z[EscapeTrigger]</span></span>
-<span class="giallo-l"><span>    B[Zig @ptrCast / @cImport] --&gt; Z</span></span>
-<span class="giallo-l"><span>    C[Go cgo / unsafe.Pointer] --&gt; Z</span></span>
-<span class="giallo-l"><span>    D[C++ reinterpret_cast / malloc] --&gt; Z</span></span>
-<span class="giallo-l"><span>    Z --&gt; E[ZoneKind unsafe or ffi]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart LR
+    A[Rust unsafe / extern C] --> Z[EscapeTrigger]
+    B[Zig @ptrCast / @cImport] --> Z
+    C[Go cgo / unsafe.Pointer] --> Z
+    D[C++ reinterpret_cast / malloc] --> Z
+    Z --> E[ZoneKind unsafe or ffi]
+</div>
 <p>This gives the implementation a common vocabulary for multiple language-specific risk boundaries.</p>
 <h2 id="function-level-and-llvm-level-classification">Function-level and LLVM-level classification</h2>
 <p>The classifier includes both name-based and LLVM-function-based entry points:</p>
@@ -117,42 +120,45 @@
 <li><code>src/semantics/zone_classifier.zig:347</code> classifies by function name.</li>
 <li><code>src/semantics/zone_classifier.zig:394</code> classifies LLVM functions using declarations, intrinsics, debug information, and path data when available.</li>
 </ul>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[LLVMValueRef function] --&gt; B{External declaration?}</span></span>
-<span class="giallo-l"><span>    B --&gt;|Yes| C[May be ffi]</span></span>
-<span class="giallo-l"><span>    B --&gt;|No| D[Name-based classification]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[Path/debug-info classification]</span></span>
-<span class="giallo-l"><span>    E --&gt; F[ZoneKind]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[LLVMValueRef function] --> B{External declaration?}
+    B -->|Yes| C[May be ffi]
+    B -->|No| D[Name-based classification]
+    D --> E[Path/debug-info classification]
+    E --> F[ZoneKind]
+</div>
 <p>These rules are heuristic. Symbol names and debug information quality can affect classification, so Zone should be described as a risk-prioritization mechanism rather than a formal proof.</p>
 <h2 id="semantic-registry-describes-function-meaning-in-ffi-context">Semantic Registry describes function meaning in FFI context</h2>
 <p><code>SemanticRegistry</code> is defined at <code>src/registry/semantic_registry.zig:48</code>; lookup starts at <code>src/registry/semantic_registry.zig:90</code>. The registry is layered by ecosystem: C standard library, Rust ownership patterns, Go cgo, Zig, C++, JNI, Python C API, POSIX, and dynamic loading.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[func_name] --&gt; B[SemanticRegistry.lookup]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[Layer1: C stdlib high-risk]</span></span>
-<span class="giallo-l"><span>    B --&gt; D[Layer2: Rust ownership]</span></span>
-<span class="giallo-l"><span>    B --&gt; E[Layer3: Go cgo]</span></span>
-<span class="giallo-l"><span>    B --&gt; F[Layer5: Zig stdlib]</span></span>
-<span class="giallo-l"><span>    B --&gt; G[Layer6: C++ stdlib]</span></span>
-<span class="giallo-l"><span>    B --&gt; H[JNI / Python C API / POSIX]</span></span>
-<span class="giallo-l"><span>    C --&gt; I[FunctionSemantics]</span></span>
-<span class="giallo-l"><span>    D --&gt; I</span></span>
-<span class="giallo-l"><span>    E --&gt; I</span></span>
-<span class="giallo-l"><span>    F --&gt; I</span></span>
-<span class="giallo-l"><span>    G --&gt; I</span></span>
-<span class="giallo-l"><span>    H --&gt; I</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[func_name] --> B[SemanticRegistry.lookup]
+    B --> C[Layer1: C stdlib high-risk]
+    B --> D[Layer2: Rust ownership]
+    B --> E[Layer3: Go cgo]
+    B --> F[Layer5: Zig stdlib]
+    B --> G[Layer6: C++ stdlib]
+    B --> H[JNI / Python C API / POSIX]
+    C --> I[FunctionSemantics]
+    D --> I
+    E --> I
+    F --> I
+    G --> I
+    H --> I
+</div>
 <p>The registry helps interpret calls in context. <code>Box::into_raw</code> is not a vulnerability by itself; it changes the ownership protocol. <code>strcpy</code> in local C code and <code>strcpy</code> at a Rust-to-C boundary may require different review priorities.</p>
 <h2 id="zone-registry-danger-path">Zone + Registry + Danger Path</h2>
 <p>Zone and Registry should not produce most findings directly. A more controlled path is: classify the region, look up function semantics, ask whether the pointer or function is on a relevant risk path, then produce an issue if warranted.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[Call / Function] --&gt; B[Zone]</span></span>
-<span class="giallo-l"><span>    A --&gt; C[Registry]</span></span>
-<span class="giallo-l"><span>    B --&gt; D[Region risk]</span></span>
-<span class="giallo-l"><span>    C --&gt; E[Function semantics]</span></span>
-<span class="giallo-l"><span>    D --&gt; F[Danger path]</span></span>
-<span class="giallo-l"><span>    E --&gt; F</span></span>
-<span class="giallo-l"><span>    F --&gt; G{Report?}</span></span>
-<span class="giallo-l"><span>    G --&gt;|Yes| H[Issue]</span></span>
-<span class="giallo-l"><span>    G --&gt;|No| I[Filter or lower priority]</span></span></code></pre><h2 id="summary">Summary</h2>
+<div class="mermaid-direct" data-series="omniscope">flowchart LR
+    A[Call / Function] --> B[Zone]
+    A --> C[Registry]
+    B --> D[Region risk]
+    C --> E[Function semantics]
+    D --> F[Danger path]
+    E --> F
+    F --> G{Report?}
+    G -->|Yes| H[Issue]
+    G -->|No| I[Filter or lower priority]
+</div><h2 id="summary">Summary</h2>
 <p>OmniScope avoids pure blacklist reporting by splitting a finding into three questions: where is the code located, what does the function mean at an FFI boundary, and does the pointer or function participate in a relevant risk path?</p>
 <h2 id="source-breakdown-zoneclassifier-is-a-priority-decision-tree">Source breakdown: ZoneClassifier is a priority decision tree</h2>
 <p>The latter half of <code>classifyFunction</code> lives around <code>src/semantics/zone_classifier.zig:640</code>. It is not a simple lookup table. The order is C++ unsafe patterns, C++ safe patterns, C escape patterns, extern C, and only then the <code>SemanticRegistry</code> fallback.</p>
@@ -215,7 +221,7 @@
 
         </div>
 
-  
+    
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -239,6 +245,13 @@
                     </div>
             </div>
         
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
 </div>
 
     </div>
@@ -261,17 +274,102 @@
 
 </div>
 <style>
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.article-layout { display: flex; gap: 40px; align-items: flex-start; }
+.article-layout .post { flex: 1; min-width: 0; max-width: 100%; }
+.toc-sidebar { display: none; flex-shrink: 0; width: 220px; }
+.toc-sticky { position: sticky; top: 24px; }
+.toc-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .1em; color: rgb(120,226,160); margin-bottom: 12px; }
+#toc-nav { font-size: .85rem; line-height: 1.8; }
+#toc-nav a { display: block; color: rgba(255,255,255,.5); text-decoration: none; border-left: 1px solid rgba(255,255,255,.1); padding-left: 12px; transition: color .2s, border-color .2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toc-nav a:hover { color: rgba(255,255,255,.8); border-left-color: rgba(255,255,255,.3); }
+#toc-nav a.active { color: rgb(120,226,160); border-left-color: rgb(120,226,160); }
+#toc-nav a.h3 { padding-left: 24px; font-size: .8rem; }
+@media (min-width: 1100px) { .toc-sidebar { display: block; } }
+
+/* scanline enhancement */
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node > rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > path { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > polygon { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; }
+.mermaid[data-series="memscope-rs"] .node > rect { fill: #5BA3E6; }
+.mermaid[data-series="memscope-rs"] .node > path { fill: #4A90D9; }
+.mermaid[data-series="memscope-rs"] .node > polygon { fill: #7EC8E3; }
+.mermaid[data-series="omniscope"] .node > rect { fill: #4DD0C8; }
+.mermaid[data-series="omniscope"] .node > path { fill: #3AB0A8; }
+.mermaid[data-series="omniscope"] .node > polygon { fill: #80DEEA; }
+.mermaid[data-series="goagent"] .node > rect { fill: #B388FF; }
+.mermaid[data-series="goagent"] .node > path { fill: #9575CD; }
+.mermaid[data-series="goagent"] .node > polygon { fill: #CE93D8; }
+.mermaid:not([data-series]) .node > rect { fill: #2a2d35; }
+.mermaid:not([data-series]) .node > path { fill: #3B4252; }
+.mermaid:not([data-series]) .node > polygon { fill: #434C5E; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+
+  // TOC generation
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    // Scroll-spy
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
 
 
 </body>

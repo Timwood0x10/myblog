@@ -65,8 +65,9 @@
 
     <div class="content">
         
-<div class="post">
-  
+<div class="article-layout">
+  <article class="post">
+    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/01-what-is-omniscope/">Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer</a></h1>
     <div class="post-meta-inline">
         
@@ -84,7 +85,7 @@
                 <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
     
 
-  <div class="post-content">
+    <div class="post-content">
             <h1 id="why-omniscope-analyzes-cross-language-safety-at-the-llvm-ir-layer">Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer</h1>
 <p>Rust ownership, Zig allocators, Go GC, and C++ RAII are language-level safety models. Across FFI, those models are lowered into ABI-level facts: functions, pointers, integers, layouts, and calling conventions. OmniScope works at this layer because many cross-language issues are difficult to cover from a single language AST alone.</p>
 <h2 id="start-with-the-problem-language-guarantees-stop-at-the-boundary">Start with the problem: language guarantees stop at the boundary</h2>
@@ -95,23 +96,25 @@
 <p>OmniScope’s choice follows from that gap: move down to LLVM IR, the layer where many languages meet, then reconstruct part of the missing semantics from symbols, calls, pointer flow, allocation/free events, and FFI boundaries.</p>
 <h2 id="the-issue-is-not-free-it-is-the-lost-deallocation-protocol">The issue is not <code>free</code>; it is the lost deallocation protocol</h2>
 <p>A common Rust/C boundary pattern is: Rust exposes a pointer through <code>Box::into_raw</code>, then C stores or releases that pointer. In Rust, <code>into_raw</code> is an explicit ownership transfer. In C, <code>free(ptr)</code> is an ordinary deallocation. The problem is that no single compiler verifies the full protocol across both sides.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
-<span class="giallo-l"><span>    participant R as Rust ownership model</span></span>
-<span class="giallo-l"><span>    participant ABI as C ABI / LLVM IR</span></span>
-<span class="giallo-l"><span>    participant C as C manual memory</span></span>
-<span class="giallo-l"><span>    R-&gt;&gt;ABI: Box::into_raw becomes a raw pointer</span></span>
-<span class="giallo-l"><span>    ABI-&gt;&gt;C: extern C argument passing</span></span>
-<span class="giallo-l"><span>    C-&gt;&gt;C: store / free / callback use</span></span>
-<span class="giallo-l"><span>    C--&gt;&gt;R: Rust cannot verify the C-side protocol</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">sequenceDiagram
+    participant R as Rust ownership model
+    participant ABI as C ABI / LLVM IR
+    participant C as C manual memory
+    R->>ABI: Box::into_raw becomes a raw pointer
+    ABI->>C: extern C argument passing
+    C->>C: store / free / callback use
+    C-->>R: Rust cannot verify the C-side protocol
+</div>
 <p>At the IR layer, source syntax is gone, but external declarations, call/invoke instructions, allocas, loads/stores, bitcasts, symbol names, and some debug information may remain. The analyzer tries to recover enough ownership and lifetime semantics from these facts.</p>
 <h2 id="what-omniscope-actually-analyzes">What OmniScope actually analyzes</h2>
 <p>OmniScope’s entry point consumes LLVM IR files such as <code>.ll</code> and <code>.bc</code>, not source directories. Argument parsing starts at <code>src/main.zig:73</code>, the main entry is <code>src/main.zig:567</code>, and single-module analysis is driven by <code>runModulePipeline</code> at <code>src/main.zig:171</code>.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Source languages: Rust / C / Zig / Go / C++] --&gt; B[Compiler emits LLVM IR]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[IRLoader obtains ModuleRef]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[Pipeline.setModule]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[PassContext.module]</span></span>
-<span class="giallo-l"><span>    E --&gt; F[Passes iterate functions, blocks, instructions]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[Source languages: Rust / C / Zig / Go / C++] --> B[Compiler emits LLVM IR]
+    B --> C[IRLoader obtains ModuleRef]
+    C --> D[Pipeline.setModule]
+    D --> E[PassContext.module]
+    E --> F[Passes iterate functions, blocks, instructions]
+</div>
 <p>This also defines the limits. OmniScope can inspect facts that remain in IR and can use symbols and debug information when available. Heavy optimization, missing symbols, or wrapper-heavy code may reduce the amount of recoverable semantics.</p>
 <h2 id="it-is-not-a-dangerous-function-blacklist">It is not a dangerous-function blacklist</h2>
 <p><code>src/registry/semantic_registry.zig:3</code> describes the registry as a function-semantics knowledge base for FFI boundary analysis, not a simple blacklist. <code>src/registry/semantic_registry.zig:8</code> also notes that the same function may carry different risk depending on context.</p>
@@ -121,12 +124,13 @@
 <li>A Rust <code>Box</code> pointer released by C may indicate allocator mismatch or ownership protocol breakage.</li>
 <li>Rust <code>as_ptr</code> used locally may be benign, while passing it to FFI and storing it may create a dangling pointer.</li>
 </ul>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[Function call] --&gt; B{Crosses language boundary?}</span></span>
-<span class="giallo-l"><span>    B --&gt;|No| C[Local semantics]</span></span>
-<span class="giallo-l"><span>    B --&gt;|Yes| D[FFI semantics]</span></span>
-<span class="giallo-l"><span>    C --&gt; E[May be lower priority]</span></span>
-<span class="giallo-l"><span>    D --&gt; F[Check ownership / lifetime / allocator context]</span></span></code></pre><h2 id="main-source-level-pillars">Main source-level pillars</h2>
+<div class="mermaid-direct" data-series="omniscope">flowchart LR
+    A[Function call] --> B{Crosses language boundary?}
+    B -->|No| C[Local semantics]
+    B -->|Yes| D[FFI semantics]
+    C --> E[May be lower priority]
+    D --> F[Check ownership / lifetime / allocator context]
+</div><h2 id="main-source-level-pillars">Main source-level pillars</h2>
 <p>The implementation is organized around shared analysis structures:</p>
 <ul>
 <li><code>PassContext</code>: shared state for passes, defined at <code>src/pass/pass.zig:192</code>.</li>
@@ -135,17 +139,18 @@
 <li><code>ZoneKind</code>: <code>safe</code>, <code>unsafe</code>, <code>ffi</code>, <code>runtime_internal</code>, and <code>unknown</code>, defined at <code>src/semantics/zone_classifier.zig:24</code>.</li>
 <li><code>SemanticRegistry</code>: layered function semantics, looked up through <code>src/registry/semantic_registry.zig:90</code>.</li>
 </ul>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TB</span></span>
-<span class="giallo-l"><span>    A[LLVM IR facts] --&gt; B[PassContext]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[CrossLangEdge]</span></span>
-<span class="giallo-l"><span>    B --&gt; D[MemoryGraph]</span></span>
-<span class="giallo-l"><span>    B --&gt; E[Zone cache]</span></span>
-<span class="giallo-l"><span>    B --&gt; F[Registry cache]</span></span>
-<span class="giallo-l"><span>    C --&gt; G[DangerSurface]</span></span>
-<span class="giallo-l"><span>    D --&gt; G</span></span>
-<span class="giallo-l"><span>    E --&gt; G</span></span>
-<span class="giallo-l"><span>    F --&gt; G</span></span>
-<span class="giallo-l"><span>    G --&gt; H[Issue]</span></span></code></pre><h2 id="practical-limits">Practical limits</h2>
+<div class="mermaid-direct" data-series="omniscope">flowchart TB
+    A[LLVM IR facts] --> B[PassContext]
+    B --> C[CrossLangEdge]
+    B --> D[MemoryGraph]
+    B --> E[Zone cache]
+    B --> F[Registry cache]
+    C --> G[DangerSurface]
+    D --> G
+    E --> G
+    F --> G
+    G --> H[Issue]
+</div><h2 id="practical-limits">Practical limits</h2>
 <p>OmniScope performs static recovery and risk classification; it is not a runtime proof system. It depends on:</p>
 <ul>
 <li>Enough call and symbol information remaining in IR.</li>
@@ -189,7 +194,7 @@
 
         </div>
 
-  
+    
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -213,6 +218,13 @@
                     </div>
             </div>
         
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
 </div>
 
     </div>
@@ -235,17 +247,102 @@
 
 </div>
 <style>
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.article-layout { display: flex; gap: 40px; align-items: flex-start; }
+.article-layout .post { flex: 1; min-width: 0; max-width: 100%; }
+.toc-sidebar { display: none; flex-shrink: 0; width: 220px; }
+.toc-sticky { position: sticky; top: 24px; }
+.toc-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .1em; color: rgb(120,226,160); margin-bottom: 12px; }
+#toc-nav { font-size: .85rem; line-height: 1.8; }
+#toc-nav a { display: block; color: rgba(255,255,255,.5); text-decoration: none; border-left: 1px solid rgba(255,255,255,.1); padding-left: 12px; transition: color .2s, border-color .2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toc-nav a:hover { color: rgba(255,255,255,.8); border-left-color: rgba(255,255,255,.3); }
+#toc-nav a.active { color: rgb(120,226,160); border-left-color: rgb(120,226,160); }
+#toc-nav a.h3 { padding-left: 24px; font-size: .8rem; }
+@media (min-width: 1100px) { .toc-sidebar { display: block; } }
+
+/* scanline enhancement */
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node > rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > path { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > polygon { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; }
+.mermaid[data-series="memscope-rs"] .node > rect { fill: #5BA3E6; }
+.mermaid[data-series="memscope-rs"] .node > path { fill: #4A90D9; }
+.mermaid[data-series="memscope-rs"] .node > polygon { fill: #7EC8E3; }
+.mermaid[data-series="omniscope"] .node > rect { fill: #4DD0C8; }
+.mermaid[data-series="omniscope"] .node > path { fill: #3AB0A8; }
+.mermaid[data-series="omniscope"] .node > polygon { fill: #80DEEA; }
+.mermaid[data-series="goagent"] .node > rect { fill: #B388FF; }
+.mermaid[data-series="goagent"] .node > path { fill: #9575CD; }
+.mermaid[data-series="goagent"] .node > polygon { fill: #CE93D8; }
+.mermaid:not([data-series]) .node > rect { fill: #2a2d35; }
+.mermaid:not([data-series]) .node > path { fill: #3B4252; }
+.mermaid:not([data-series]) .node > polygon { fill: #434C5E; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+
+  // TOC generation
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    // Scroll-spy
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
 
 
 </body>

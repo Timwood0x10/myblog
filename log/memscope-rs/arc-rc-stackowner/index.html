@@ -65,8 +65,9 @@
 
     <div class="content">
         
-<div class="post">
-  
+<div class="article-layout">
+  <article class="post">
+    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/arc-rc-stackowner/">Arc&#x2F;Rc Clone Detection: Why `StackOwner` Matters</a></h1>
     <div class="post-meta-inline">
         
@@ -83,7 +84,7 @@
                 <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memscope-rs/">#memscope-rs</a></span>
     
 
-  <div class="post-content">
+    <div class="post-content">
             <h1 id="arc-rc-clone-detection-why-stackowner-matters">Arc/Rc Clone Detection: Why <code>StackOwner</code> Matters</h1>
 <p><code>Arc&lt;T&gt;</code> and <code>Rc&lt;T&gt;</code> are safe Rust abstractions, but they make ownership harder to observe.</p>
 <p>Cloning an <code>Arc</code> or <code>Rc</code> usually does not allocate a new user object. It creates another smart pointer that shares ownership of the same heap data.</p>
@@ -96,13 +97,14 @@
 <span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> worker_a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>root</span><span style="color: #9399B2;">);</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> worker_b</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>root</span><span style="color: #9399B2;">);</span></span></code></pre>
 <p>Allocator-level tracking may only see the original heap allocation. But logically there are now three smart pointer values sharing the same data.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Arc::new T] --&gt; H[Heap Data]</span></span>
-<span class="giallo-l"><span>    B[Arc::clone] --&gt; C[New Stack Owner]</span></span>
-<span class="giallo-l"><span>    C --&gt; H</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    G[GlobalAlloc] --&gt; H</span></span>
-<span class="giallo-l"><span>    G -. cannot directly see .-&gt; B</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[Arc::new T] --> H[Heap Data]
+    B[Arc::clone] --> C[New Stack Owner]
+    C --> H
+
+    G[GlobalAlloc] --> H
+    G -. cannot directly see .-> B
+</div>
 <p>The question is not just “where was memory allocated?” but:</p>
 <blockquote>
 <p>Which tracked smart pointers point to the same heap object?</p>
@@ -192,17 +194,18 @@
 <p>This gives the analysis layer enough information to see:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>root      stack_ptr = S1, heap_ptr = H</span></span>
 <span class="giallo-l"><span>worker_a  stack_ptr = S2, heap_ptr = H</span></span>
-<span class="giallo-l"><span>worker_b  stack_ptr = S3, heap_ptr = H</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[root: Arc&lt;T&gt;] --&gt; S1[stack_ptr S1]</span></span>
-<span class="giallo-l"><span>    B[worker_a: Arc&lt;T&gt;] --&gt; S2[stack_ptr S2]</span></span>
-<span class="giallo-l"><span>    C[worker_b: Arc&lt;T&gt;] --&gt; S3[stack_ptr S3]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    S1 --&gt; H[heap_ptr H]</span></span>
-<span class="giallo-l"><span>    S2 --&gt; H</span></span>
-<span class="giallo-l"><span>    S3 --&gt; H</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    H --&gt; G[Same heap_ptr]</span></span>
-<span class="giallo-l"><span>    G --&gt; R[Shared Ownership Group]</span></span></code></pre>
+<span class="giallo-l"><span>worker_b  stack_ptr = S3, heap_ptr = H</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[root: Arc<T>] --> S1[stack_ptr S1]
+    B[worker_a: Arc<T>] --> S2[stack_ptr S2]
+    C[worker_b: Arc<T>] --> S3[stack_ptr S3]
+
+    S1 --> H[heap_ptr H]
+    S2 --> H
+    S3 --> H
+
+    H --> G[Same heap_ptr]
+    G --> R[Shared Ownership Group]
+</div>
 <hr />
 <h2 id="5-detection-strategy-group-by-heap-ptr">5. Detection Strategy: Group by <code>heap_ptr</code></h2>
 <p>The relation detector looks for records with <code>stack_ptr</code> metadata and groups them by heap pointer.</p>
@@ -235,13 +238,14 @@
 <span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[Memory Events] --&gt; B[Filter stack_ptr != None]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[Use event.ptr as heap_ptr]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[Group by heap_ptr]</span></span>
-<span class="giallo-l"><span>    D --&gt; E{group size &gt;= 2?}</span></span>
-<span class="giallo-l"><span>    E --&gt;|yes| F[Emit ArcClone relation]</span></span>
-<span class="giallo-l"><span>    E --&gt;|no| G[No shared clone relation]</span></span></code></pre>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs">flowchart LR
+    A[Memory Events] --> B[Filter stack_ptr != None]
+    B --> C[Use event.ptr as heap_ptr]
+    C --> D[Group by heap_ptr]
+    D --> E{group size >= 2?}
+    E -->|yes| F[Emit ArcClone relation]
+    E -->|no| G[No shared clone relation]
+</div>
 <hr />
 <h2 id="6-why-this-avoids-fragile-layout-assumptions">6. Why This Avoids Fragile Layout Assumptions</h2>
 <p>Some approaches to smart pointer analysis might try to inspect internal layout:</p>
@@ -314,21 +318,22 @@
 <p><code>StackOwner</code> matters because it maps shared ownership into observable runtime data:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>smart pointer value -&gt; stack_ptr</span></span>
 <span class="giallo-l"><span>shared heap object  -&gt; heap_ptr</span></span>
-<span class="giallo-l"><span>multiple stack_ptrs -&gt; same heap_ptr</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[track! arc_var] --&gt; B[Trackable for Arc/Rc]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[TrackKind::StackOwner]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[MemoryEvent]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[event.ptr = heap_ptr]</span></span>
-<span class="giallo-l"><span>    D --&gt; F[event.stack_ptr = stack_ptr]</span></span>
-<span class="giallo-l"><span>    E --&gt; G[Relation Inference]</span></span>
-<span class="giallo-l"><span>    F --&gt; G</span></span>
-<span class="giallo-l"><span>    G --&gt; H[Group by heap_ptr]</span></span>
-<span class="giallo-l"><span>    H --&gt; I[ArcClone relation]</span></span></code></pre>
+<span class="giallo-l"><span>multiple stack_ptrs -&gt; same heap_ptr</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[track! arc_var] --> B[Trackable for Arc/Rc]
+    B --> C[TrackKind::StackOwner]
+    C --> D[MemoryEvent]
+    D --> E[event.ptr = heap_ptr]
+    D --> F[event.stack_ptr = stack_ptr]
+    E --> G[Relation Inference]
+    F --> G
+    G --> H[Group by heap_ptr]
+    H --> I[ArcClone relation]
+</div>
 <p>This is not perfect ownership tracing. It is a clear, explainable, and useful model for observing shared ownership in Rust programs.</p>
 
         </div>
 
-  
+    
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -352,6 +357,13 @@
                     </div>
             </div>
         
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
 </div>
 
     </div>
@@ -374,17 +386,102 @@
 
 </div>
 <style>
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.article-layout { display: flex; gap: 40px; align-items: flex-start; }
+.article-layout .post { flex: 1; min-width: 0; max-width: 100%; }
+.toc-sidebar { display: none; flex-shrink: 0; width: 220px; }
+.toc-sticky { position: sticky; top: 24px; }
+.toc-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .1em; color: rgb(120,226,160); margin-bottom: 12px; }
+#toc-nav { font-size: .85rem; line-height: 1.8; }
+#toc-nav a { display: block; color: rgba(255,255,255,.5); text-decoration: none; border-left: 1px solid rgba(255,255,255,.1); padding-left: 12px; transition: color .2s, border-color .2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toc-nav a:hover { color: rgba(255,255,255,.8); border-left-color: rgba(255,255,255,.3); }
+#toc-nav a.active { color: rgb(120,226,160); border-left-color: rgb(120,226,160); }
+#toc-nav a.h3 { padding-left: 24px; font-size: .8rem; }
+@media (min-width: 1100px) { .toc-sidebar { display: block; } }
+
+/* scanline enhancement */
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node > rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > path { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > polygon { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; }
+.mermaid[data-series="memscope-rs"] .node > rect { fill: #5BA3E6; }
+.mermaid[data-series="memscope-rs"] .node > path { fill: #4A90D9; }
+.mermaid[data-series="memscope-rs"] .node > polygon { fill: #7EC8E3; }
+.mermaid[data-series="omniscope"] .node > rect { fill: #4DD0C8; }
+.mermaid[data-series="omniscope"] .node > path { fill: #3AB0A8; }
+.mermaid[data-series="omniscope"] .node > polygon { fill: #80DEEA; }
+.mermaid[data-series="goagent"] .node > rect { fill: #B388FF; }
+.mermaid[data-series="goagent"] .node > path { fill: #9575CD; }
+.mermaid[data-series="goagent"] .node > polygon { fill: #CE93D8; }
+.mermaid:not([data-series]) .node > rect { fill: #2a2d35; }
+.mermaid:not([data-series]) .node > path { fill: #3B4252; }
+.mermaid:not([data-series]) .node > polygon { fill: #434C5E; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+
+  // TOC generation
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    // Scroll-spy
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
 
 
 </body>

@@ -65,8 +65,9 @@
 
     <div class="content">
         
-<div class="post">
-  
+<div class="article-layout">
+  <article class="post">
+    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/single-thread-tracking/">Single-Thread Tracking: From GlobalAlloc to Rust-Level Memory Semantics</a></h1>
     <div class="post-meta-inline">
         
@@ -84,7 +85,7 @@
                 <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memscope-rs/">#memscope-rs</a></span>
     
 
-  <div class="post-content">
+    <div class="post-content">
             <h1 id="single-thread-tracking-from-globalalloc-to-rust-level-memory-semantics">Single-Thread Tracking: From <code>GlobalAlloc</code> to Rust-Level Memory Semantics</h1>
 <p>Rust gives us strong memory safety guarantees, but memory safety does not automatically mean memory behavior is transparent.</p>
 <p>In real Rust applications, developers still need answers to questions like:</p>
@@ -107,19 +108,20 @@
 <li><code>GlobalAlloc</code> captures runtime allocation facts.</li>
 <li><code>track!</code> and <code>Trackable</code> add Rust-level context.</li>
 </ol>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[User Code] --&gt; B[GlobalAlloc Hook]</span></span>
-<span class="giallo-l"><span>    A --&gt; C[track! Macro]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    B --&gt; D[Raw Runtime Facts]</span></span>
-<span class="giallo-l"><span>    C --&gt; E[Rust-Level Metadata]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    D --&gt; F[MemoryEvent]</span></span>
-<span class="giallo-l"><span>    E --&gt; F</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    F --&gt; G[EventStore]</span></span>
-<span class="giallo-l"><span>    G --&gt; H[Analysis]</span></span>
-<span class="giallo-l"><span>    H --&gt; I[JSON / HTML Report]</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[User Code] --> B[GlobalAlloc Hook]
+    A --> C[track! Macro]
+
+    B --> D[Raw Runtime Facts]
+    C --> E[Rust-Level Metadata]
+
+    D --> F[MemoryEvent]
+    E --> F
+
+    F --> G[EventStore]
+    G --> H[Analysis]
+    H --> I[JSON / HTML Report]
+</div>
 <p><code>GlobalAlloc</code> is the ground truth for pointer and size information, but it does not know Rust variable names or ownership semantics. The Rust-level semantic layer fills that gap explicitly.</p>
 <hr />
 <h2 id="2-runtime-ground-truth-globalalloc">2. Runtime Ground Truth: <code>GlobalAlloc</code></h2>
@@ -209,24 +211,25 @@
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Container</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Value</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StackOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> heap_ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> },</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
-<span class="giallo-l"><span>    V[Vec&lt;T&gt;] --&gt; H[HeapOwner]</span></span>
-<span class="giallo-l"><span>    S[String] --&gt; H</span></span>
-<span class="giallo-l"><span>    B[Box&lt;T&gt;] --&gt; H</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    HM[HashMap&lt;K,V&gt;] --&gt; C[Container]</span></span>
-<span class="giallo-l"><span>    BT[BTreeMap&lt;K,V&gt;] --&gt; C</span></span>
-<span class="giallo-l"><span>    VD[VecDeque&lt;T&gt;] --&gt; C</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    I[i32 / bool / simple value] --&gt; Val[Value]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    A[Arc&lt;T&gt;] --&gt; SO[StackOwner]</span></span>
-<span class="giallo-l"><span>    R[Rc&lt;T&gt;] --&gt; SO</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    H --&gt; HP[Real Heap Pointer]</span></span>
-<span class="giallo-l"><span>    C --&gt; Meta[Metadata Only]</span></span>
-<span class="giallo-l"><span>    Val --&gt; NoHeap[No Heap Allocation]</span></span>
-<span class="giallo-l"><span>    SO --&gt; SP[Stack Ptr + Heap Ptr]</span></span></code></pre>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs">graph TB
+    V[Vec<T>] --> H[HeapOwner]
+    S[String] --> H
+    B[Box<T>] --> H
+
+    HM[HashMap<K,V>] --> C[Container]
+    BT[BTreeMap<K,V>] --> C
+    VD[VecDeque<T>] --> C
+
+    I[i32 / bool / simple value] --> Val[Value]
+
+    A[Arc<T>] --> SO[StackOwner]
+    R[Rc<T>] --> SO
+
+    H --> HP[Real Heap Pointer]
+    C --> Meta[Metadata Only]
+    Val --> NoHeap[No Heap Allocation]
+    SO --> SP[Stack Ptr + Heap Ptr]
+</div>
 <p>This classification prevents <code>memscope-rs</code> from treating every Rust value as a fake heap allocation.</p>
 <hr />
 <h2 id="6-built-in-type-modeling">6. Built-in Type Modeling</h2>
@@ -368,7 +371,7 @@
 
         </div>
 
-  
+    
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -385,6 +388,13 @@
                     </div>
             </div>
         
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
 </div>
 
     </div>
@@ -407,17 +417,102 @@
 
 </div>
 <style>
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.article-layout { display: flex; gap: 40px; align-items: flex-start; }
+.article-layout .post { flex: 1; min-width: 0; max-width: 100%; }
+.toc-sidebar { display: none; flex-shrink: 0; width: 220px; }
+.toc-sticky { position: sticky; top: 24px; }
+.toc-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .1em; color: rgb(120,226,160); margin-bottom: 12px; }
+#toc-nav { font-size: .85rem; line-height: 1.8; }
+#toc-nav a { display: block; color: rgba(255,255,255,.5); text-decoration: none; border-left: 1px solid rgba(255,255,255,.1); padding-left: 12px; transition: color .2s, border-color .2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toc-nav a:hover { color: rgba(255,255,255,.8); border-left-color: rgba(255,255,255,.3); }
+#toc-nav a.active { color: rgb(120,226,160); border-left-color: rgb(120,226,160); }
+#toc-nav a.h3 { padding-left: 24px; font-size: .8rem; }
+@media (min-width: 1100px) { .toc-sidebar { display: block; } }
+
+/* scanline enhancement */
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node > rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > path { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > polygon { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; }
+.mermaid[data-series="memscope-rs"] .node > rect { fill: #5BA3E6; }
+.mermaid[data-series="memscope-rs"] .node > path { fill: #4A90D9; }
+.mermaid[data-series="memscope-rs"] .node > polygon { fill: #7EC8E3; }
+.mermaid[data-series="omniscope"] .node > rect { fill: #4DD0C8; }
+.mermaid[data-series="omniscope"] .node > path { fill: #3AB0A8; }
+.mermaid[data-series="omniscope"] .node > polygon { fill: #80DEEA; }
+.mermaid[data-series="goagent"] .node > rect { fill: #B388FF; }
+.mermaid[data-series="goagent"] .node > path { fill: #9575CD; }
+.mermaid[data-series="goagent"] .node > polygon { fill: #CE93D8; }
+.mermaid:not([data-series]) .node > rect { fill: #2a2d35; }
+.mermaid:not([data-series]) .node > path { fill: #3B4252; }
+.mermaid:not([data-series]) .node > polygon { fill: #434C5E; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+
+  // TOC generation
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    // Scroll-spy
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
 
 
 </body>

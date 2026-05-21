@@ -109,19 +109,20 @@
 <li><code>GlobalAlloc</code> captures runtime allocation facts.</li>
 <li><code>track!</code> and <code>Trackable</code> add Rust-level context.</li>
 </ol>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[User Code] --&gt; B[GlobalAlloc Hook]</span></span>
-<span class="giallo-l"><span>    A --&gt; C[track! Macro]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    B --&gt; D[Raw Runtime Facts]</span></span>
-<span class="giallo-l"><span>    C --&gt; E[Rust-Level Metadata]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    D --&gt; F[MemoryEvent]</span></span>
-<span class="giallo-l"><span>    E --&gt; F</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    F --&gt; G[EventStore]</span></span>
-<span class="giallo-l"><span>    G --&gt; H[Analysis]</span></span>
-<span class="giallo-l"><span>    H --&gt; I[JSON / HTML Report]</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[User Code] --> B[GlobalAlloc Hook]
+    A --> C[track! Macro]
+
+    B --> D[Raw Runtime Facts]
+    C --> E[Rust-Level Metadata]
+
+    D --> F[MemoryEvent]
+    E --> F
+
+    F --> G[EventStore]
+    G --> H[Analysis]
+    H --> I[JSON / HTML Report]
+</div>
 <p><code>GlobalAlloc</code> is the ground truth for pointer and size information, but it does not know Rust variable names or ownership semantics. The Rust-level semantic layer fills that gap explicitly.</p>
 <hr />
 <h2 id="2-runtime-ground-truth-globalalloc">2. Runtime Ground Truth: <code>GlobalAlloc</code></h2>
@@ -211,24 +212,25 @@
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Container</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Value</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StackOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> heap_ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> },</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
-<span class="giallo-l"><span>    V[Vec&lt;T&gt;] --&gt; H[HeapOwner]</span></span>
-<span class="giallo-l"><span>    S[String] --&gt; H</span></span>
-<span class="giallo-l"><span>    B[Box&lt;T&gt;] --&gt; H</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    HM[HashMap&lt;K,V&gt;] --&gt; C[Container]</span></span>
-<span class="giallo-l"><span>    BT[BTreeMap&lt;K,V&gt;] --&gt; C</span></span>
-<span class="giallo-l"><span>    VD[VecDeque&lt;T&gt;] --&gt; C</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    I[i32 / bool / simple value] --&gt; Val[Value]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    A[Arc&lt;T&gt;] --&gt; SO[StackOwner]</span></span>
-<span class="giallo-l"><span>    R[Rc&lt;T&gt;] --&gt; SO</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    H --&gt; HP[Real Heap Pointer]</span></span>
-<span class="giallo-l"><span>    C --&gt; Meta[Metadata Only]</span></span>
-<span class="giallo-l"><span>    Val --&gt; NoHeap[No Heap Allocation]</span></span>
-<span class="giallo-l"><span>    SO --&gt; SP[Stack Ptr + Heap Ptr]</span></span></code></pre>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs">graph TB
+    V[Vec<T>] --> H[HeapOwner]
+    S[String] --> H
+    B[Box<T>] --> H
+
+    HM[HashMap<K,V>] --> C[Container]
+    BT[BTreeMap<K,V>] --> C
+    VD[VecDeque<T>] --> C
+
+    I[i32 / bool / simple value] --> Val[Value]
+
+    A[Arc<T>] --> SO[StackOwner]
+    R[Rc<T>] --> SO
+
+    H --> HP[Real Heap Pointer]
+    C --> Meta[Metadata Only]
+    Val --> NoHeap[No Heap Allocation]
+    SO --> SP[Stack Ptr + Heap Ptr]
+</div>
 <p>This classification prevents <code>memscope-rs</code> from treating every Rust value as a fake heap allocation.</p>
 <hr />
 <h2 id="6-built-in-type-modeling">6. Built-in Type Modeling</h2>
@@ -413,18 +415,19 @@
 <li>the profiler itself should not dominate application contention.</li>
 </ul>
 <p>The design uses separate structures for separate responsibilities:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Concurrent Allocation Events] --&gt; B[Lock-free Event Queue]</span></span>
-<span class="giallo-l"><span>    A --&gt; C[Concurrent Allocation Map]</span></span>
-<span class="giallo-l"><span>    A --&gt; D[Atomic Counters]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    B --&gt; E[Snapshot / Export]</span></span>
-<span class="giallo-l"><span>    C --&gt; F[Active Allocation Lookup]</span></span>
-<span class="giallo-l"><span>    D --&gt; G[Stats / Peak Memory]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    E --&gt; H[Analysis / Report]</span></span>
-<span class="giallo-l"><span>    F --&gt; H</span></span>
-<span class="giallo-l"><span>    G --&gt; H</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[Concurrent Allocation Events] --> B[Lock-free Event Queue]
+    A --> C[Concurrent Allocation Map]
+    A --> D[Atomic Counters]
+
+    B --> E[Snapshot / Export]
+    C --> F[Active Allocation Lookup]
+    D --> G[Stats / Peak Memory]
+
+    E --> H[Analysis / Report]
+    F --> H
+    G --> H
+</div>
 <hr />
 <h2 id="2-threadlocaltracker">2. <code>ThreadLocalTracker</code></h2>
 <p>The core multithreaded structure is <code>ThreadLocalTracker</code>.</p>
@@ -653,22 +656,23 @@
 <h2 id="1-why-thread-level-tracking-fails-in-async-rust">1. Why Thread-Level Tracking Fails in Async Rust</h2>
 <p>In a synchronous multithreaded program, a thread often maps reasonably well to a unit of work.</p>
 <p>In async Rust, that assumption breaks down:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    R[Tokio Runtime] --&gt; T1[Worker Thread 1]</span></span>
-<span class="giallo-l"><span>    R --&gt; T2[Worker Thread 2]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    T1 --&gt; A[Task A]</span></span>
-<span class="giallo-l"><span>    T1 --&gt; B[Task B]</span></span>
-<span class="giallo-l"><span>    T2 --&gt; A</span></span>
-<span class="giallo-l"><span>    T2 --&gt; C[Task C]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    A --&gt; M1[Allocation]</span></span>
-<span class="giallo-l"><span>    B --&gt; M2[Allocation]</span></span>
-<span class="giallo-l"><span>    C --&gt; M3[Allocation]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    M1 --&gt; Q[Need task attribution]</span></span>
-<span class="giallo-l"><span>    M2 --&gt; Q</span></span>
-<span class="giallo-l"><span>    M3 --&gt; Q</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    R[Tokio Runtime] --> T1[Worker Thread 1]
+    R --> T2[Worker Thread 2]
+
+    T1 --> A[Task A]
+    T1 --> B[Task B]
+    T2 --> A
+    T2 --> C[Task C]
+
+    A --> M1[Allocation]
+    B --> M2[Allocation]
+    C --> M3[Allocation]
+
+    M1 --> Q[Need task attribution]
+    M2 --> Q
+    M3 --> Q
+</div>
 <p>Thread ID tells us where an allocation ran. Task attribution tells us which logical async unit it belongs to.</p>
 <hr />
 <h2 id="2-trackercontext">2. <code>TrackerContext</code></h2>
@@ -730,13 +734,14 @@
 <p>When it ends:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span>profile</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">mark_completed</span><span style="color: #9399B2;">();</span></span>
 <span class="giallo-l"><span>stats</span><span style="color: #94E2D5;">.</span><span>active_tasks </span><span style="color: #94E2D5;">=</span><span> stats</span><span style="color: #94E2D5;">.</span><span>active_tasks</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">saturating_sub</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">);</span></span>
-<span class="giallo-l"><span style="color: #F38BA8;">Self</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clear_current_task</span><span style="color: #9399B2;">();</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>stateDiagram-v2</span></span>
-<span class="giallo-l"><span>    [*] --&gt; Started</span></span>
-<span class="giallo-l"><span>    Started --&gt; Running</span></span>
-<span class="giallo-l"><span>    Running --&gt; Completed</span></span>
-<span class="giallo-l"><span>    Completed --&gt; [*]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Running --&gt; ZombieCandidate: started but not completed</span></span></code></pre>
+<span class="giallo-l"><span style="color: #F38BA8;">Self</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clear_current_task</span><span style="color: #9399B2;">();</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs">stateDiagram-v2
+    [*] --> Started
+    Started --> Running
+    Running --> Completed
+    Completed --> [*]
+
+    Running --> ZombieCandidate: started but not completed
+</div>
 <hr />
 <h2 id="7-tracking-allocations-by-task">7. Tracking Allocations by Task</h2>
 <p>Allocation attribution records pointer, size, task ID, and optional metadata:</p>
@@ -925,13 +930,14 @@
 <hr />
 <h2 id="15-summary">15. Summary</h2>
 <p>Async attribution matters because Rust services are increasingly task-oriented rather than thread-oriented.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[task_scope / tracked future] --&gt; B[Task Context]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[task_id]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[track allocation]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[AsyncTracker]</span></span>
-<span class="giallo-l"><span>    E --&gt; F[TaskMemoryProfile]</span></span>
-<span class="giallo-l"><span>    F --&gt; G[async_analysis.json]</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart LR
+    A[task_scope / tracked future] --> B[Task Context]
+    B --> C[task_id]
+    C --> D[track allocation]
+    D --> E[AsyncTracker]
+    E --> F[TaskMemoryProfile]
+    F --> G[async_analysis.json]
+</div>
 <p><code>memscope-rs</code> does not magically understand all async execution. It gives developers a way to attach memory events to logical tasks when context is available.</p>
 <p>That is a practical step beyond thread-level memory tracking.</p>
 
@@ -971,13 +977,14 @@
 <span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> worker_a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>root</span><span style="color: #9399B2;">);</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> worker_b</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>root</span><span style="color: #9399B2;">);</span></span></code></pre>
 <p>Allocator-level tracking may only see the original heap allocation. But logically there are now three smart pointer values sharing the same data.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Arc::new T] --&gt; H[Heap Data]</span></span>
-<span class="giallo-l"><span>    B[Arc::clone] --&gt; C[New Stack Owner]</span></span>
-<span class="giallo-l"><span>    C --&gt; H</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    G[GlobalAlloc] --&gt; H</span></span>
-<span class="giallo-l"><span>    G -. cannot directly see .-&gt; B</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[Arc::new T] --> H[Heap Data]
+    B[Arc::clone] --> C[New Stack Owner]
+    C --> H
+
+    G[GlobalAlloc] --> H
+    G -. cannot directly see .-> B
+</div>
 <p>The question is not just “where was memory allocated?” but:</p>
 <blockquote>
 <p>Which tracked smart pointers point to the same heap object?</p>
@@ -1067,17 +1074,18 @@
 <p>This gives the analysis layer enough information to see:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>root      stack_ptr = S1, heap_ptr = H</span></span>
 <span class="giallo-l"><span>worker_a  stack_ptr = S2, heap_ptr = H</span></span>
-<span class="giallo-l"><span>worker_b  stack_ptr = S3, heap_ptr = H</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[root: Arc&lt;T&gt;] --&gt; S1[stack_ptr S1]</span></span>
-<span class="giallo-l"><span>    B[worker_a: Arc&lt;T&gt;] --&gt; S2[stack_ptr S2]</span></span>
-<span class="giallo-l"><span>    C[worker_b: Arc&lt;T&gt;] --&gt; S3[stack_ptr S3]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    S1 --&gt; H[heap_ptr H]</span></span>
-<span class="giallo-l"><span>    S2 --&gt; H</span></span>
-<span class="giallo-l"><span>    S3 --&gt; H</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    H --&gt; G[Same heap_ptr]</span></span>
-<span class="giallo-l"><span>    G --&gt; R[Shared Ownership Group]</span></span></code></pre>
+<span class="giallo-l"><span>worker_b  stack_ptr = S3, heap_ptr = H</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[root: Arc<T>] --> S1[stack_ptr S1]
+    B[worker_a: Arc<T>] --> S2[stack_ptr S2]
+    C[worker_b: Arc<T>] --> S3[stack_ptr S3]
+
+    S1 --> H[heap_ptr H]
+    S2 --> H
+    S3 --> H
+
+    H --> G[Same heap_ptr]
+    G --> R[Shared Ownership Group]
+</div>
 <hr />
 <h2 id="5-detection-strategy-group-by-heap-ptr">5. Detection Strategy: Group by <code>heap_ptr</code></h2>
 <p>The relation detector looks for records with <code>stack_ptr</code> metadata and groups them by heap pointer.</p>
@@ -1110,13 +1118,14 @@
 <span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[Memory Events] --&gt; B[Filter stack_ptr != None]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[Use event.ptr as heap_ptr]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[Group by heap_ptr]</span></span>
-<span class="giallo-l"><span>    D --&gt; E{group size &gt;= 2?}</span></span>
-<span class="giallo-l"><span>    E --&gt;|yes| F[Emit ArcClone relation]</span></span>
-<span class="giallo-l"><span>    E --&gt;|no| G[No shared clone relation]</span></span></code></pre>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs">flowchart LR
+    A[Memory Events] --> B[Filter stack_ptr != None]
+    B --> C[Use event.ptr as heap_ptr]
+    C --> D[Group by heap_ptr]
+    D --> E{group size >= 2?}
+    E -->|yes| F[Emit ArcClone relation]
+    E -->|no| G[No shared clone relation]
+</div>
 <hr />
 <h2 id="6-why-this-avoids-fragile-layout-assumptions">6. Why This Avoids Fragile Layout Assumptions</h2>
 <p>Some approaches to smart pointer analysis might try to inspect internal layout:</p>
@@ -1189,16 +1198,17 @@
 <p><code>StackOwner</code> matters because it maps shared ownership into observable runtime data:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>smart pointer value -&gt; stack_ptr</span></span>
 <span class="giallo-l"><span>shared heap object  -&gt; heap_ptr</span></span>
-<span class="giallo-l"><span>multiple stack_ptrs -&gt; same heap_ptr</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[track! arc_var] --&gt; B[Trackable for Arc/Rc]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[TrackKind::StackOwner]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[MemoryEvent]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[event.ptr = heap_ptr]</span></span>
-<span class="giallo-l"><span>    D --&gt; F[event.stack_ptr = stack_ptr]</span></span>
-<span class="giallo-l"><span>    E --&gt; G[Relation Inference]</span></span>
-<span class="giallo-l"><span>    F --&gt; G</span></span>
-<span class="giallo-l"><span>    G --&gt; H[Group by heap_ptr]</span></span>
-<span class="giallo-l"><span>    H --&gt; I[ArcClone relation]</span></span></code></pre>
+<span class="giallo-l"><span>multiple stack_ptrs -&gt; same heap_ptr</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[track! arc_var] --> B[Trackable for Arc/Rc]
+    B --> C[TrackKind::StackOwner]
+    C --> D[MemoryEvent]
+    D --> E[event.ptr = heap_ptr]
+    D --> F[event.stack_ptr = stack_ptr]
+    E --> G[Relation Inference]
+    F --> G
+    G --> H[Group by heap_ptr]
+    H --> I[ArcClone relation]
+</div>
 <p>This is not perfect ownership tracing. It is a clear, explainable, and useful model for observing shared ownership in Rust programs.</p>
 
         </div>
@@ -1256,20 +1266,21 @@
 <li>is it still in foreign custody?</li>
 <li>does its lifecycle look suspicious?</li>
 </ul>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Safe Rust] --&gt; B[Unsafe Block]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[Raw Pointer]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[FFI Boundary]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[C malloc / External Memory]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    C --&gt; P[Memory Passport]</span></span>
-<span class="giallo-l"><span>    E --&gt; P</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    P --&gt; O[Origin]</span></span>
-<span class="giallo-l"><span>    P --&gt; L[Lifecycle Events]</span></span>
-<span class="giallo-l"><span>    P --&gt; V[Validity Status]</span></span>
-<span class="giallo-l"><span>    P --&gt; S[Safety Violations]</span></span>
-<span class="giallo-l"><span>    P --&gt; R[JSON / Dashboard]</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[Safe Rust] --> B[Unsafe Block]
+    B --> C[Raw Pointer]
+    C --> D[FFI Boundary]
+    D --> E[C malloc / External Memory]
+
+    C --> P[Memory Passport]
+    E --> P
+
+    P --> O[Origin]
+    P --> L[Lifecycle Events]
+    P --> V[Validity Status]
+    P --> S[Safety Violations]
+    P --> R[JSON / Dashboard]
+</div>
 <hr />
 <h2 id="2-what-is-a-memory-passport">2. What Is a Memory Passport?</h2>
 <p>A memory passport is a runtime identity record for a memory allocation.</p>
@@ -1688,21 +1699,22 @@
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> render</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">RenderEngine</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p>The facade exists to provide a unified entry point, but the internals remain modular.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[MemScope Facade] --&gt; B[CaptureEngine]</span></span>
-<span class="giallo-l"><span>    A --&gt; C[EventStore]</span></span>
-<span class="giallo-l"><span>    A --&gt; D[SnapshotEngine]</span></span>
-<span class="giallo-l"><span>    A --&gt; E[AnalysisEngine]</span></span>
-<span class="giallo-l"><span>    A --&gt; F[QueryEngine]</span></span>
-<span class="giallo-l"><span>    A --&gt; G[TimelineEngine]</span></span>
-<span class="giallo-l"><span>    A --&gt; H[RenderEngine]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    B --&gt; C</span></span>
-<span class="giallo-l"><span>    C --&gt; D</span></span>
-<span class="giallo-l"><span>    D --&gt; E</span></span>
-<span class="giallo-l"><span>    D --&gt; F</span></span>
-<span class="giallo-l"><span>    D --&gt; G</span></span>
-<span class="giallo-l"><span>    D --&gt; H</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[MemScope Facade] --> B[CaptureEngine]
+    A --> C[EventStore]
+    A --> D[SnapshotEngine]
+    A --> E[AnalysisEngine]
+    A --> F[QueryEngine]
+    A --> G[TimelineEngine]
+    A --> H[RenderEngine]
+
+    B --> C
+    C --> D
+    D --> E
+    D --> F
+    D --> G
+    D --> H
+</div>
 <p>This architecture is useful because it separates event collection from analysis and presentation.</p>
 <hr />
 <h2 id="2-captureengine-backend-abstraction">2. CaptureEngine: Backend Abstraction</h2>
@@ -1766,11 +1778,12 @@
 <blockquote>
 <p>snapshots are derived from events; they are not the primary source of truth.</p>
 </blockquote>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[MemoryEvent Queue] --&gt; B[EventStore Snapshot]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[build_snapshot_from_events]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[MemorySnapshot]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[Analysis / Query / Render]</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">graph LR
+    A[MemoryEvent Queue] --> B[EventStore Snapshot]
+    B --> C[build snapshot from events]
+    C --> D[MemorySnapshot]
+    D --> E[Analysis / Query / Render]
+</div>
 <hr />
 <h2 id="5-renderengine-output-as-a-separate-concern">5. RenderEngine: Output as a Separate Concern</h2>
 <p><code>RenderEngine</code> consumes snapshots and renders output.</p>
@@ -1862,12 +1875,13 @@
 <blockquote>
 <p>export does not only use a live allocation map; it rebuilds report data from the event stream.</p>
 </blockquote>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[EventStore] --&gt; B[snapshot]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[rebuild_allocations_from_events]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[MemorySnapshot]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[JSON Reports]</span></span>
-<span class="giallo-l"><span>    D --&gt; F[Dashboard Context]</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[EventStore] --> B[snapshot]
+    B --> C[rebuild_allocations_from_events]
+    C --> D[MemorySnapshot]
+    D --> E[JSON Reports]
+    D --> F[Dashboard Context]
+</div>
 <hr />
 <h2 id="2-what-export-all-json-writes">2. What <code>export_all_json()</code> Writes</h2>
 <p>The export pipeline writes multiple files:</p>
@@ -1980,12 +1994,13 @@
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DashboardTemplate</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Unified</span><span style="color: #94E2D5;"> =&gt;</span><span> renderer</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">render_unified_dashboard</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>context</span><span style="color: #9399B2;">),</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p>The dashboard is therefore a rendered view over the same reconstructed data used by JSON export.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Tracker + EventStore] --&gt; B[Dashboard Context]</span></span>
-<span class="giallo-l"><span>    C[Passport Tracker] --&gt; B</span></span>
-<span class="giallo-l"><span>    D[Async Tracker] --&gt; B</span></span>
-<span class="giallo-l"><span>    B --&gt; E[Handlebars Renderer]</span></span>
-<span class="giallo-l"><span>    E --&gt; F[Unified Dashboard HTML]</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[Tracker + EventStore] --> B[Dashboard Context]
+    C[Passport Tracker] --> B
+    D[Async Tracker] --> B
+    B --> E[Handlebars Renderer]
+    E --> F[Unified Dashboard HTML]
+</div>
 <hr />
 <h2 id="8-practical-value">8. Practical Value</h2>
 <p>The export pipeline matters because it gives different audiences different entry points:</p>
@@ -2078,29 +2093,30 @@
 <li>Are there cycles in the relationship graph?</li>
 </ul>
 <p>The relation graph exists to answer those questions as an analysis layer.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[MemoryEvent Stream] --&gt; B[Snapshot]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[Active Allocations]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[Inference Records]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[Relation Detectors]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    E --&gt; F[Owns]</span></span>
-<span class="giallo-l"><span>    E --&gt; G[Contains]</span></span>
-<span class="giallo-l"><span>    E --&gt; H[Shares]</span></span>
-<span class="giallo-l"><span>    E --&gt; I[Slice]</span></span>
-<span class="giallo-l"><span>    E --&gt; J[Clone]</span></span>
-<span class="giallo-l"><span>    E --&gt; K[ArcClone / RcClone]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    F --&gt; L[RelationGraph]</span></span>
-<span class="giallo-l"><span>    G --&gt; L</span></span>
-<span class="giallo-l"><span>    H --&gt; L</span></span>
-<span class="giallo-l"><span>    I --&gt; L</span></span>
-<span class="giallo-l"><span>    J --&gt; L</span></span>
-<span class="giallo-l"><span>    K --&gt; L</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    L --&gt; M[Diagnostics]</span></span>
-<span class="giallo-l"><span>    L --&gt; N[JSON Export]</span></span>
-<span class="giallo-l"><span>    L --&gt; O[Dashboard]</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[MemoryEvent Stream] --> B[Snapshot]
+    B --> C[Active Allocations]
+    C --> D[Inference Records]
+    D --> E[Relation Detectors]
+
+    E --> F[Owns]
+    E --> G[Contains]
+    E --> H[Shares]
+    E --> I[Slice]
+    E --> J[Clone]
+    E --> K[ArcClone / RcClone]
+
+    F --> L[RelationGraph]
+    G --> L
+    H --> L
+    I --> L
+    J --> L
+    K --> L
+
+    L --> M[Diagnostics]
+    L --> N[JSON Export]
+    L --> O[Dashboard]
+</div>
 <hr />
 <h2 id="2-relation-types">2. Relation Types</h2>
 <p>The relation inference module defines the core relationship types:</p>
@@ -2182,26 +2198,27 @@
 <li>detect variable evolution;</li>
 <li>detect shared ownership.</li>
 </ol>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[ActiveAllocation List] --&gt; B[HeapScanner]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[ScanResult]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[UTI / Type Inference]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[InferenceRecord]</span></span>
-<span class="giallo-l"><span>    E --&gt; F[RangeMap]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    F --&gt; G[Owner Detector]</span></span>
-<span class="giallo-l"><span>    F --&gt; H[Slice Detector]</span></span>
-<span class="giallo-l"><span>    E --&gt; I[Clone Detector]</span></span>
-<span class="giallo-l"><span>    A --&gt; J[Container Detector]</span></span>
-<span class="giallo-l"><span>    A --&gt; K[Variable Evolution]</span></span>
-<span class="giallo-l"><span>    E --&gt; L[Shared Detector]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    G --&gt; M[RelationGraph]</span></span>
-<span class="giallo-l"><span>    H --&gt; M</span></span>
-<span class="giallo-l"><span>    I --&gt; M</span></span>
-<span class="giallo-l"><span>    J --&gt; M</span></span>
-<span class="giallo-l"><span>    K --&gt; M</span></span>
-<span class="giallo-l"><span>    L --&gt; M</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    A[ActiveAllocation List] --> B[HeapScanner]
+    B --> C[ScanResult]
+    C --> D[UTI / Type Inference]
+    D --> E[InferenceRecord]
+    E --> F[RangeMap]
+
+    F --> G[Owner Detector]
+    F --> H[Slice Detector]
+    E --> I[Clone Detector]
+    A --> J[Container Detector]
+    A --> K[Variable Evolution]
+    E --> L[Shared Detector]
+
+    G --> M[RelationGraph]
+    H --> M
+    I --> M
+    J --> M
+    K --> M
+    L --> M
+</div>
 <hr />
 <h2 id="4-inferencerecord-the-analysis-unit">4. <code>InferenceRecord</code>: The Analysis Unit</h2>
 <p>The relation builder converts runtime allocations into inference records.</p>

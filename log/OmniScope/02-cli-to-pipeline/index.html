@@ -65,8 +65,9 @@
 
     <div class="content">
         
-<div class="post">
-  
+<div class="article-layout">
+  <article class="post">
+    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/02-cli-to-pipeline/">Lifecycle of an Analysis Run: CLI, IRLoader, Pipeline, and Output</a></h1>
     <div class="post-meta-inline">
         
@@ -84,7 +85,7 @@
                 <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
     
 
-  <div class="post-content">
+    <div class="post-content">
             <h1 id="lifecycle-of-an-analysis-run-cli-irloader-pipeline-and-output">Lifecycle of an Analysis Run: CLI, IRLoader, Pipeline, and Output</h1>
 <p>This article follows one OmniScope run from command-line arguments to structured findings. The important part is how the code turns user input into a <code>PassContext</code>, runs analysis passes, and emits reports.</p>
 <h2 id="start-with-the-problem-an-analyzer-run-is-not-one-rule-execution">Start with the problem: an analyzer run is not one rule execution</h2>
@@ -94,30 +95,32 @@
 <p>The CLI describes how the user wants to run. IRLoader turns input into a module. Pipeline is where the module, shared context, passes, indexes, and output path are assembled. Later structures such as <code>PassContext</code>, <code>CallSiteIndex</code>, <code>MemoryGraph</code>, and <code>GlobalAllocTracker</code> appear naturally from this lifecycle.</p>
 <h2 id="config-defines-the-external-shape-of-the-run">Config defines the external shape of the run</h2>
 <p><code>Config</code> is defined at <code>src/main.zig:24</code>. It stores input files, output format, output path, visualization flag, user-code focus, FFI-only mode, and stdlib inclusion. Argument parsing starts at <code>src/main.zig:73</code>.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[argv] --&gt; B[parseArgs]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[Config]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[input_files]</span></span>
-<span class="giallo-l"><span>    C --&gt; E[output_format: text/json/sarif]</span></span>
-<span class="giallo-l"><span>    C --&gt; F[visualize]</span></span>
-<span class="giallo-l"><span>    C --&gt; G[focus_user_code / ffi_only / include_stdlib]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[argv] --> B[parseArgs]
+    B --> C[Config]
+    C --> D[input_files]
+    C --> E[output_format: text/json/sarif]
+    C --> F[visualize]
+    C --> G[focus_user_code / ffi_only / include_stdlib]
+</div>
 <p>One implementation detail matters: the CLI parses analysis intent, but the exact effect depends on individual pass implementations. For example, some noise-reduction options are instantiated inside specific passes.</p>
 <h2 id="runmodulepipeline-is-the-analysis-loop"><code>runModulePipeline</code> is the analysis loop</h2>
 <p><code>runModulePipeline</code> is located at <code>src/main.zig:171</code>. It initializes the Pipeline, attaches the LLVM module, registers passes, runs static analysis, and collects issues.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
-<span class="giallo-l"><span>    participant Main as main.zig</span></span>
-<span class="giallo-l"><span>    participant Loader as IRLoader</span></span>
-<span class="giallo-l"><span>    participant Pipe as Pipeline</span></span>
-<span class="giallo-l"><span>    participant PM as PassManager</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Main-&gt;&gt;Pipe: Pipeline.init(allocator)</span></span>
-<span class="giallo-l"><span>    Loader--&gt;&gt;Main: getModule()</span></span>
-<span class="giallo-l"><span>    Main-&gt;&gt;Pipe: setModule(module_ref)</span></span>
-<span class="giallo-l"><span>    Main-&gt;&gt;Pipe: registerAllPasses()</span></span>
-<span class="giallo-l"><span>    Main-&gt;&gt;Pipe: runStaticAnalysis()</span></span>
-<span class="giallo-l"><span>    Pipe-&gt;&gt;PM: run(ctx, diag)</span></span>
-<span class="giallo-l"><span>    PM--&gt;&gt;Pipe: shared facts and issues</span></span>
-<span class="giallo-l"><span>    Pipe--&gt;&gt;Main: PipelineResult</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">sequenceDiagram
+    participant Main as main.zig
+    participant Loader as IRLoader
+    participant Pipe as Pipeline
+    participant PM as PassManager
+
+    Main->>Pipe: Pipeline.init(allocator)
+    Loader-->>Main: getModule()
+    Main->>Pipe: setModule(module_ref)
+    Main->>Pipe: registerAllPasses()
+    Main->>Pipe: runStaticAnalysis()
+    Pipe->>PM: run(ctx, diag)
+    PM-->>Pipe: shared facts and issues
+    Pipe-->>Main: PipelineResult
+</div>
 <p>Source anchors:</p>
 <ul>
 <li><code>src/main.zig:171</code> initializes <code>Pipeline</code>.</li>
@@ -128,14 +131,15 @@
 </ul>
 <h2 id="registerallpasses-reveals-the-analysis-sequence"><code>registerAllPasses</code> reveals the analysis sequence</h2>
 <p><code>registerAllPasses</code> is at <code>src/main.zig:153</code>. It registers CallGraph, TaintPropagation, FFI Boundary, FFI Type Mismatch, FFI Body Check, FFI Unsafe, PtrLifetime, DangerSurface, PointerOwnership, CallbackEscape, RustFfiAuditor, ReturnCheck, MemorySafety, FreeValidation, and BufferOverflow.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[CallGraph] --&gt; B[FFI Boundary]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[Type / Body / Unsafe]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[PtrLifetime]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[DangerSurface]</span></span>
-<span class="giallo-l"><span>    E --&gt; F[PointerOwnership]</span></span>
-<span class="giallo-l"><span>    F --&gt; G[CallbackEscape / RustFfiAuditor]</span></span>
-<span class="giallo-l"><span>    G --&gt; H[MemorySafety / FreeValidation / BufferOverflow]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart LR
+    A[CallGraph] --> B[FFI Boundary]
+    B --> C[Type / Body / Unsafe]
+    C --> D[PtrLifetime]
+    D --> E[DangerSurface]
+    E --> F[PointerOwnership]
+    F --> G[CallbackEscape / RustFfiAuditor]
+    G --> H[MemorySafety / FreeValidation / BufferOverflow]
+</div>
 <p>The registration order is not necessarily the final execution order. The final order is resolved by <code>PassManager</code>, with execution starting at <code>src/pass/manager.zig:193</code>.</p>
 <h2 id="pipeline-run-builds-the-analysis-context"><code>Pipeline.run</code> builds the analysis context</h2>
 <p><code>Pipeline</code> is defined at <code>src/pipeline/pipeline.zig:27</code>. It stores <code>FactStore</code>, <code>QueryEngine</code>, <code>DataFlowGraph</code>, <code>PassManager</code>, and the current module. <code>Pipeline.run</code> creates the <code>PassContext</code> at <code>src/pipeline/pipeline.zig:66</code>.</p>
@@ -150,24 +154,26 @@
 <li><code>memory_graph</code>;</li>
 <li><code>danger_surface_relevant</code>, <code>ffi_auto_relevant</code>, and <code>relevant_functions</code>.</li>
 </ul>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TB</span></span>
-<span class="giallo-l"><span>    subgraph Pipeline.run</span></span>
-<span class="giallo-l"><span>        A[Clear DataFlowGraph] --&gt; B[Create PassContext]</span></span>
-<span class="giallo-l"><span>        B --&gt; C[Attach module]</span></span>
-<span class="giallo-l"><span>        B --&gt; D[Initialize caches]</span></span>
-<span class="giallo-l"><span>        B --&gt; E[Initialize MemoryGraph]</span></span>
-<span class="giallo-l"><span>        B --&gt; F[Initialize CrossLangEdges]</span></span>
-<span class="giallo-l"><span>        F --&gt; G[PassManager.run]</span></span>
-<span class="giallo-l"><span>    end</span></span></code></pre><h2 id="output-is-part-of-the-design">Output is part of the design</h2>
+<div class="mermaid-direct" data-series="omniscope">flowchart TB
+    subgraph Pipeline.run
+        A[Clear DataFlowGraph] --> B[Create PassContext]
+        B --> C[Attach module]
+        B --> D[Initialize caches]
+        B --> E[Initialize MemoryGraph]
+        B --> F[Initialize CrossLangEdges]
+        F --> G[PassManager.run]
+    end
+</div><h2 id="output-is-part-of-the-design">Output is part of the design</h2>
 <p><code>emitOutput</code> is at <code>src/main.zig:207</code>. It branches into JSON, SARIF, or text output. JSON is produced by <code>formatIssuesAsJson</code>; SARIF is produced by <code>SarifOutput</code>.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[Issue list] --&gt; B[emitOutput]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[JSON: formatIssuesAsJson]</span></span>
-<span class="giallo-l"><span>    B --&gt; D[SARIF: SarifOutput]</span></span>
-<span class="giallo-l"><span>    B --&gt; E[Text]</span></span>
-<span class="giallo-l"><span>    C --&gt; F[stdout / file]</span></span>
-<span class="giallo-l"><span>    D --&gt; F</span></span>
-<span class="giallo-l"><span>    E --&gt; G[terminal]</span></span></code></pre><h2 id="summary">Summary</h2>
+<div class="mermaid-direct" data-series="omniscope">flowchart LR
+    A[Issue list] --> B[emitOutput]
+    B --> C[JSON: formatIssuesAsJson]
+    B --> D[SARIF: SarifOutput]
+    B --> E[Text]
+    C --> F[stdout / file]
+    D --> F
+    E --> G[terminal]
+</div><h2 id="summary">Summary</h2>
 <p>An OmniScope run follows a clear data path: CLI creates configuration, IRLoader supplies a module, Pipeline creates shared analysis context, PassManager executes passes, and <code>emitOutput</code> formats results.</p>
 <h2 id="source-breakdown-why-pipeline-builds-callsiteindex-early">Source breakdown: why Pipeline builds CallSiteIndex early</h2>
 <p><code>Pipeline.run</code> performs one important pre-pass optimization: before any analysis pass runs, it walks the LLVM module and indexes callee names to call sites. The code lives around <code>src/pipeline/pipeline.zig:130</code>:</p>
@@ -207,7 +213,7 @@
 
         </div>
 
-  
+    
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -231,6 +237,13 @@
                     </div>
             </div>
         
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
 </div>
 
     </div>
@@ -253,17 +266,102 @@
 
 </div>
 <style>
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.article-layout { display: flex; gap: 40px; align-items: flex-start; }
+.article-layout .post { flex: 1; min-width: 0; max-width: 100%; }
+.toc-sidebar { display: none; flex-shrink: 0; width: 220px; }
+.toc-sticky { position: sticky; top: 24px; }
+.toc-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .1em; color: rgb(120,226,160); margin-bottom: 12px; }
+#toc-nav { font-size: .85rem; line-height: 1.8; }
+#toc-nav a { display: block; color: rgba(255,255,255,.5); text-decoration: none; border-left: 1px solid rgba(255,255,255,.1); padding-left: 12px; transition: color .2s, border-color .2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toc-nav a:hover { color: rgba(255,255,255,.8); border-left-color: rgba(255,255,255,.3); }
+#toc-nav a.active { color: rgb(120,226,160); border-left-color: rgb(120,226,160); }
+#toc-nav a.h3 { padding-left: 24px; font-size: .8rem; }
+@media (min-width: 1100px) { .toc-sidebar { display: block; } }
+
+/* scanline enhancement */
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node > rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > path { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > polygon { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; }
+.mermaid[data-series="memscope-rs"] .node > rect { fill: #5BA3E6; }
+.mermaid[data-series="memscope-rs"] .node > path { fill: #4A90D9; }
+.mermaid[data-series="memscope-rs"] .node > polygon { fill: #7EC8E3; }
+.mermaid[data-series="omniscope"] .node > rect { fill: #4DD0C8; }
+.mermaid[data-series="omniscope"] .node > path { fill: #3AB0A8; }
+.mermaid[data-series="omniscope"] .node > polygon { fill: #80DEEA; }
+.mermaid[data-series="goagent"] .node > rect { fill: #B388FF; }
+.mermaid[data-series="goagent"] .node > path { fill: #9575CD; }
+.mermaid[data-series="goagent"] .node > polygon { fill: #CE93D8; }
+.mermaid:not([data-series]) .node > rect { fill: #2a2d35; }
+.mermaid:not([data-series]) .node > path { fill: #3B4252; }
+.mermaid:not([data-series]) .node > polygon { fill: #434C5E; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+
+  // TOC generation
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    // Scroll-spy
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
 
 
 </body>

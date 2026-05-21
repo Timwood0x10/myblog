@@ -65,8 +65,9 @@
 
     <div class="content">
         
-<div class="post">
-  
+<div class="article-layout">
+  <article class="post">
+    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/05-memory-system/">GoAgent Source Deep Dive 05: Memory System — Sessions, Tasks, and Distilled Memories</a></h1>
     <div class="post-meta-inline">
         
@@ -84,7 +85,7 @@
                 <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
     
 
-  <div class="post-content">
+    <div class="post-content">
             <h1 id="goagent-source-deep-dive-05-memory-system-sessions-tasks-and-distilled-memories">GoAgent Source Deep Dive 05: Memory System — Sessions, Tasks, and Distilled Memories</h1>
 <h2 id="the-problem-agents-start-from-scratch-every-conversation">The Problem: Agents Start From Scratch Every Conversation</h2>
 <p>You've built an agent with LLM calls. A user asks "recommend a Go book," and the agent recommends "The Go Programming Language." The user follows up with "is there a Chinese edition?" — the agent has no idea what "Chinese edition" refers to.</p>
@@ -100,27 +101,29 @@
 <tr><td>Task</td><td>Current task</td><td>Task input/output</td><td>Track execution</td></tr>
 <tr><td>Distilled</td><td>Long-term</td><td>Extracted experience</td><td>Retrieve for similar tasks</td></tr>
 </tbody></table>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    Input[User Input] --&gt; Session[Session Memory&lt;br/&gt;Short-term]</span></span>
-<span class="giallo-l"><span>    Input --&gt; Task[Task Memory&lt;br/&gt;Mid-term]</span></span>
-<span class="giallo-l"><span>    Task --&gt; Distill[Distilled Memory&lt;br/&gt;Long-term]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Session --&gt; BuildCtx[BuildContext]</span></span>
-<span class="giallo-l"><span>    Distill --&gt; Search[SearchSimilarTasks]</span></span>
-<span class="giallo-l"><span>    Search --&gt; BuildCtx</span></span>
-<span class="giallo-l"><span>    BuildCtx --&gt; Agent[Agent Execution]</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    Input[User Input] --> Session[Session Memory<br/>Short-term]
+    Input --> Task[Task Memory<br/>Mid-term]
+    Task --> Distill[Distilled Memory<br/>Long-term]
+
+    Session --> BuildCtx[BuildContext]
+    Distill --> Search[SearchSimilarTasks]
+    Search --> BuildCtx
+    BuildCtx --> Agent[Agent Execution]
+</div><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="session-memory">Session Memory</h3>
 <p><code>BuildContext</code> combines current input with message history. Key designs: TTL cleanup, max history limit, fault tolerance (returns original input on error).</p>
 <h3 id="distilled-memory-pipeline">Distilled Memory Pipeline</h3>
 <p>Not simple caching — a full pipeline:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    Conv[Conversation] --&gt; Extract[ExperienceExtractor]</span></span>
-<span class="giallo-l"><span>    Extract --&gt; Classify[MemoryClassifier]</span></span>
-<span class="giallo-l"><span>    Classify --&gt; Score[ImportanceScorer]</span></span>
-<span class="giallo-l"><span>    Score --&gt; Filter[NoiseFilter]</span></span>
-<span class="giallo-l"><span>    Filter --&gt; TopN[Top-N Selection]</span></span>
-<span class="giallo-l"><span>    TopN --&gt; Conflict[ConflictResolver]</span></span>
-<span class="giallo-l"><span>    Conflict --&gt; Store[(Repository)]</span></span></code></pre>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    Conv[Conversation] --> Extract[ExperienceExtractor]
+    Extract --> Classify[MemoryClassifier]
+    Classify --> Score[ImportanceScorer]
+    Score --> Filter[NoiseFilter]
+    Filter --> TopN[Top-N Selection]
+    TopN --> Conflict[ConflictResolver]
+    Conflict --> Store[(Repository)]
+</div>
 <p><strong>Classifier</strong>: Knowledge, Preference, Interaction, Profile.
 <strong>Noise filter</strong>: Code blocks, stack traces, logs, markdown tables.
 <strong>Conflict resolver</strong>: Vector similarity detection, keep the more important memory.</p>
@@ -138,7 +141,7 @@
 
         </div>
 
-  
+    
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -162,6 +165,13 @@
                     </div>
             </div>
         
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
 </div>
 
     </div>
@@ -184,17 +194,102 @@
 
 </div>
 <style>
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.article-layout { display: flex; gap: 40px; align-items: flex-start; }
+.article-layout .post { flex: 1; min-width: 0; max-width: 100%; }
+.toc-sidebar { display: none; flex-shrink: 0; width: 220px; }
+.toc-sticky { position: sticky; top: 24px; }
+.toc-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .1em; color: rgb(120,226,160); margin-bottom: 12px; }
+#toc-nav { font-size: .85rem; line-height: 1.8; }
+#toc-nav a { display: block; color: rgba(255,255,255,.5); text-decoration: none; border-left: 1px solid rgba(255,255,255,.1); padding-left: 12px; transition: color .2s, border-color .2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toc-nav a:hover { color: rgba(255,255,255,.8); border-left-color: rgba(255,255,255,.3); }
+#toc-nav a.active { color: rgb(120,226,160); border-left-color: rgb(120,226,160); }
+#toc-nav a.h3 { padding-left: 24px; font-size: .8rem; }
+@media (min-width: 1100px) { .toc-sidebar { display: block; } }
+
+/* scanline enhancement */
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node > rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > path { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > polygon { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; }
+.mermaid[data-series="memscope-rs"] .node > rect { fill: #5BA3E6; }
+.mermaid[data-series="memscope-rs"] .node > path { fill: #4A90D9; }
+.mermaid[data-series="memscope-rs"] .node > polygon { fill: #7EC8E3; }
+.mermaid[data-series="omniscope"] .node > rect { fill: #4DD0C8; }
+.mermaid[data-series="omniscope"] .node > path { fill: #3AB0A8; }
+.mermaid[data-series="omniscope"] .node > polygon { fill: #80DEEA; }
+.mermaid[data-series="goagent"] .node > rect { fill: #B388FF; }
+.mermaid[data-series="goagent"] .node > path { fill: #9575CD; }
+.mermaid[data-series="goagent"] .node > polygon { fill: #CE93D8; }
+.mermaid:not([data-series]) .node > rect { fill: #2a2d35; }
+.mermaid:not([data-series]) .node > path { fill: #3B4252; }
+.mermaid:not([data-series]) .node > polygon { fill: #434C5E; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+
+  // TOC generation
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    // Scroll-spy
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
 
 
 </body>

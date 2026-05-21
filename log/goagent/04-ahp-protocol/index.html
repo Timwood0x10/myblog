@@ -65,8 +65,9 @@
 
     <div class="content">
         
-<div class="post">
-  
+<div class="article-layout">
+  <article class="post">
+    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/04-ahp-protocol/">GoAgent Source Deep Dive 04: AHP Protocol — Messages, Queues, and Heartbeats</a></h1>
     <div class="post-meta-inline">
         
@@ -84,7 +85,7 @@
                 <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
     
 
-  <div class="post-content">
+    <div class="post-content">
             <h1 id="goagent-source-deep-dive-04-ahp-protocol-messages-queues-and-heartbeats">GoAgent Source Deep Dive 04: AHP Protocol — Messages, Queues, and Heartbeats</h1>
 <h2 id="the-problem-how-do-agents-communicate">The Problem: How Do Agents Communicate</h2>
 <p>Leader dispatches tasks to Sub Agents, Sub Agents return results — sounds like function calls. But when you want to run agents across processes or machines, function calls become network calls.</p>
@@ -99,13 +100,14 @@
 <li><strong>Message queue</strong>: Channel-based in-memory queue with enqueue, dequeue, peek.</li>
 <li><strong>Heartbeat</strong>: Periodic heartbeat signals so Leader can detect Sub Agent liveness.</li>
 </ol>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    Leader[Leader Agent] --&gt;|TASK| Queue[MessageQueue]</span></span>
-<span class="giallo-l"><span>    Queue --&gt;|TASK| Sub[Sub Agent]</span></span>
-<span class="giallo-l"><span>    Sub --&gt;|RESULT| Queue</span></span>
-<span class="giallo-l"><span>    Queue --&gt;|RESULT| Leader</span></span>
-<span class="giallo-l"><span>    Sub --&gt;|HEARTBEAT| HB[HeartbeatMonitor]</span></span>
-<span class="giallo-l"><span>    HB --&gt;|IsAlive?| Leader</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<div class="mermaid-direct" data-series="goagent">flowchart LR
+    Leader[Leader Agent] -->|TASK| Queue[MessageQueue]
+    Queue -->|TASK| Sub[Sub Agent]
+    Sub -->|RESULT| Queue
+    Queue -->|RESULT| Leader
+    Sub -->|HEARTBEAT| HB[HeartbeatMonitor]
+    HB -->|IsAlive?| Leader
+</div><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="five-message-types">Five Message Types</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
 <span class="giallo-l"><span style="color: #FAB387;">    AHPMethodTask</span><span style="color: #F9E2AF;font-style: italic;">      AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;TASK&quot;</span><span style="color: #9399B2;font-style: italic;">      // Leader dispatches task</span></span>
@@ -117,30 +119,32 @@
 <p>Message ID: <code>timestamp.atomic_counter.random_suffix</code> — three dimensions ensure uniqueness.</p>
 <h3 id="messagequeue-backup-buffer-prevents-lost-messages">MessageQueue: Backup Buffer Prevents Lost Messages</h3>
 <p>The key design: <strong>Peek never loses messages</strong>. When Peek takes a message out to inspect, if it can't put it back (queue full), the message goes into a backup buffer. Next Dequeue consumes backup first.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    Peek[Peek] --&gt; Check{backup has data?}</span></span>
-<span class="giallo-l"><span>    Check --&gt;|Yes| ReturnB[Return backup[0]]</span></span>
-<span class="giallo-l"><span>    Check --&gt;|No| Receive{Receive from channel}</span></span>
-<span class="giallo-l"><span>    Receive --&gt;|Got msg| PutBack{Try put back}</span></span>
-<span class="giallo-l"><span>    PutBack --&gt;|OK| Return[Return msg]</span></span>
-<span class="giallo-l"><span>    PutBack --&gt;|Full| Save[Save to backup]</span></span>
-<span class="giallo-l"><span>    Save --&gt; Return</span></span>
-<span class="giallo-l"><span>    Receive --&gt;|Empty| Nil[Return nil]</span></span></code></pre>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    Peek[Peek] --> Check{backup has data?}
+    Check -->|Yes| ReturnB[Return backup[0]]
+    Check -->|No| Receive{Receive from channel}
+    Receive -->|Got msg| PutBack{Try put back}
+    PutBack -->|OK| Return[Return msg]
+    PutBack -->|Full| Save[Save to backup]
+    Save --> Return
+    Receive -->|Empty| Nil[Return nil]
+</div>
 <p>Enqueue: <code>select</code> with three paths — success, context cancelled, queue full (never blocks).
 Dequeue: prioritizes backup buffer, then main channel.</p>
 <h3 id="heartbeat">Heartbeat</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
-<span class="giallo-l"><span>    participant Sub as Sub Agent</span></span>
-<span class="giallo-l"><span>    participant Monitor as HeartbeatMonitor</span></span>
-<span class="giallo-l"><span>    participant Leader as Leader Agent</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    loop Every HeartbeatInterval</span></span>
-<span class="giallo-l"><span>        Sub-&gt;&gt;Monitor: Heartbeat(agentID)</span></span>
-<span class="giallo-l"><span>        Monitor-&gt;&gt;Monitor: Update lastSeen</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Leader-&gt;&gt;Monitor: IsAlive(agentID)</span></span>
-<span class="giallo-l"><span>    Monitor--&gt;&gt;Leader: true / false</span></span></code></pre><h2 id="design-trade-offs">Design Trade-offs</h2>
+<div class="mermaid-direct" data-series="goagent">sequenceDiagram
+    participant Sub as Sub Agent
+    participant Monitor as HeartbeatMonitor
+    participant Leader as Leader Agent
+
+    loop Every HeartbeatInterval
+        Sub->>Monitor: Heartbeat(agentID)
+        Monitor->>Monitor: Update lastSeen
+    end
+
+    Leader->>Monitor: IsAlive(agentID)
+    Monitor-->>Leader: true / false
+</div><h2 id="design-trade-offs">Design Trade-offs</h2>
 <ul>
 <li><strong>In-memory queue vs external middleware</strong>: Zero dependencies, low latency. No persistence — sufficient for single-process, extend MessageSender for distributed.</li>
 <li><strong>Backup buffer vs unbounded queue</strong>: Bounded channel + backup buffer controls memory while ensuring Peek doesn't lose messages.</li>
@@ -151,7 +155,7 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 
         </div>
 
-  
+    
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -175,6 +179,13 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
                     </div>
             </div>
         
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
 </div>
 
     </div>
@@ -197,17 +208,102 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 
 </div>
 <style>
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.article-layout { display: flex; gap: 40px; align-items: flex-start; }
+.article-layout .post { flex: 1; min-width: 0; max-width: 100%; }
+.toc-sidebar { display: none; flex-shrink: 0; width: 220px; }
+.toc-sticky { position: sticky; top: 24px; }
+.toc-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .1em; color: rgb(120,226,160); margin-bottom: 12px; }
+#toc-nav { font-size: .85rem; line-height: 1.8; }
+#toc-nav a { display: block; color: rgba(255,255,255,.5); text-decoration: none; border-left: 1px solid rgba(255,255,255,.1); padding-left: 12px; transition: color .2s, border-color .2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toc-nav a:hover { color: rgba(255,255,255,.8); border-left-color: rgba(255,255,255,.3); }
+#toc-nav a.active { color: rgb(120,226,160); border-left-color: rgb(120,226,160); }
+#toc-nav a.h3 { padding-left: 24px; font-size: .8rem; }
+@media (min-width: 1100px) { .toc-sidebar { display: block; } }
+
+/* scanline enhancement */
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node > rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > path { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > polygon { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; }
+.mermaid[data-series="memscope-rs"] .node > rect { fill: #5BA3E6; }
+.mermaid[data-series="memscope-rs"] .node > path { fill: #4A90D9; }
+.mermaid[data-series="memscope-rs"] .node > polygon { fill: #7EC8E3; }
+.mermaid[data-series="omniscope"] .node > rect { fill: #4DD0C8; }
+.mermaid[data-series="omniscope"] .node > path { fill: #3AB0A8; }
+.mermaid[data-series="omniscope"] .node > polygon { fill: #80DEEA; }
+.mermaid[data-series="goagent"] .node > rect { fill: #B388FF; }
+.mermaid[data-series="goagent"] .node > path { fill: #9575CD; }
+.mermaid[data-series="goagent"] .node > polygon { fill: #CE93D8; }
+.mermaid:not([data-series]) .node > rect { fill: #2a2d35; }
+.mermaid:not([data-series]) .node > path { fill: #3B4252; }
+.mermaid:not([data-series]) .node > polygon { fill: #434C5E; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+
+  // TOC generation
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    // Scroll-spy
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
 
 
 </body>

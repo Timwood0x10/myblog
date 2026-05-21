@@ -65,8 +65,9 @@
 
     <div class="content">
         
-<div class="post">
-  
+<div class="article-layout">
+  <article class="post">
+    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/03-pass-system/">Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation</a></h1>
     <div class="post-meta-inline">
         
@@ -84,7 +85,7 @@
                 <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
     
 
-  <div class="post-content">
+    <div class="post-content">
             <h1 id="inside-the-pass-system-dependency-ordering-shared-context-and-graceful-degradation">Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation</h1>
 <p>OmniScope organizes analysis logic as passes rather than one large procedure. The relevant implementation questions are how passes share facts, how execution order is resolved, and how the system behaves when one pass fails.</p>
 <h2 id="start-with-the-problem-static-analysis-is-not-linear">Start with the problem: static analysis is not linear</h2>
@@ -94,54 +95,59 @@
 <p><code>PassManager</code> registers, sorts, and executes passes. <code>PassContext</code> carries facts across them. This lets call relationships, MemoryGraph state, danger surfaces, and issues move through one analysis context instead of being trapped inside individual rules.</p>
 <h2 id="what-passmanager-owns">What PassManager owns</h2>
 <p><code>PassManager</code> is defined at <code>src/pass/manager.zig:23</code>. It stores registered passes, a name-to-index map, resolved execution order, and cached execution names. Registration starts at <code>src/pass/manager.zig:61</code>.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[registerPass] --&gt; B[passes ArrayList]</span></span>
-<span class="giallo-l"><span>    A --&gt; C[pass_map]</span></span>
-<span class="giallo-l"><span>    B --&gt; D[resolveDependencies]</span></span>
-<span class="giallo-l"><span>    C --&gt; D</span></span>
-<span class="giallo-l"><span>    D --&gt; E[resolved_order]</span></span>
-<span class="giallo-l"><span>    E --&gt; F[run]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[registerPass] --> B[passes ArrayList]
+    A --> C[pass_map]
+    B --> D[resolveDependencies]
+    C --> D
+    D --> E[resolved_order]
+    E --> F[run]
+</div>
 <p>This keeps scheduling separate from the CLI and from each individual pass.</p>
 <h2 id="dependency-resolution-uses-kahn-topological-sorting">Dependency resolution uses Kahn topological sorting</h2>
 <p>The dependency resolver builds an adjacency list and in-degree table. Passes with zero in-degree enter the queue. Each popped node reduces the in-degree of its successors. If the final result contains fewer nodes than the registered pass count, a cycle is reported.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Passes + dependencies] --&gt; B[Build adjacency / in_degree]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[Queue zero in-degree nodes]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[Pop node]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[Reduce successor in-degree]</span></span>
-<span class="giallo-l"><span>    E --&gt; F{Successor reaches zero?}</span></span>
-<span class="giallo-l"><span>    F --&gt;|Yes| C</span></span>
-<span class="giallo-l"><span>    F --&gt;|No| G[Continue]</span></span>
-<span class="giallo-l"><span>    G --&gt; H{All passes resolved?}</span></span>
-<span class="giallo-l"><span>    H --&gt;|Yes| I[resolved_order]</span></span>
-<span class="giallo-l"><span>    H --&gt;|No| J[CycleDetected]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[Passes + dependencies] --> B[Build adjacency / in_degree]
+    B --> C[Queue zero in-degree nodes]
+    C --> D[Pop node]
+    D --> E[Reduce successor in-degree]
+    E --> F{Successor reaches zero?}
+    F -->|Yes| C
+    F -->|No| G[Continue]
+    G --> H{All passes resolved?}
+    H -->|Yes| I[resolved_order]
+    H -->|No| J[CycleDetected]
+</div>
 <p>This matters because later passes may consume facts produced by earlier passes: risk-path checks need cross-language edges and memory facts; ownership checks need allocation and call information.</p>
 <h2 id="graceful-degradation-is-deliberate">Graceful degradation is deliberate</h2>
 <p>The run loop starts at <code>src/pass/manager.zig:193</code>. If a pass fails, the manager logs a warning, increments a failure counter, and continues executing later passes.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Run pass] --&gt; B{run_fn succeeds?}</span></span>
-<span class="giallo-l"><span>    B --&gt;|Yes| C[Record timing]</span></span>
-<span class="giallo-l"><span>    B --&gt;|No| D[warn + pass_failures++]</span></span>
-<span class="giallo-l"><span>    C --&gt; E{More passes?}</span></span>
-<span class="giallo-l"><span>    D --&gt; E</span></span>
-<span class="giallo-l"><span>    E --&gt;|Yes| A</span></span>
-<span class="giallo-l"><span>    E --&gt;|No| F[Finish analysis]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[Run pass] --> B{run_fn succeeds?}
+    B -->|Yes| C[Record timing]
+    B -->|No| D[warn + pass_failures++]
+    C --> E{More passes?}
+    D --> E
+    E -->|Yes| A
+    E -->|No| F[Finish analysis]
+</div>
 <p>This is useful for real-world IR, which may come from different compilers, optimization levels, or link configurations. A failure in one analysis stage should not necessarily discard unrelated findings.</p>
 <h2 id="passcontext-is-the-fact-bus">PassContext is the fact bus</h2>
 <p><code>PassContext</code> is defined at <code>src/pass/pass.zig:192</code>. It is the shared state through which passes exchange information. CallGraphPass may write <code>cross_lang_edges</code>; PtrLifetimePass may write <code>memory_graph</code>; DangerSurfacePass may write relevance sets; issue-producing passes read those facts.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[CallGraphPass] --&gt;|writes| X[PassContext.cross_lang_edges]</span></span>
-<span class="giallo-l"><span>    B[PtrLifetimePass] --&gt;|writes| Y[PassContext.memory_graph]</span></span>
-<span class="giallo-l"><span>    C[DangerSurfacePass] --&gt;|reads X/Y, writes| Z[relevant sets]</span></span>
-<span class="giallo-l"><span>    D[FFI / Ownership / Memory passes] --&gt;|read Z/Y| E[Issue]</span></span></code></pre><h2 id="diagnosticwriter-and-structured-issues">DiagnosticWriter and structured issues</h2>
+<div class="mermaid-direct" data-series="omniscope">flowchart LR
+    A[CallGraphPass] -->|writes| X[PassContext.cross_lang_edges]
+    B[PtrLifetimePass] -->|writes| Y[PassContext.memory_graph]
+    C[DangerSurfacePass] -->|reads X/Y, writes| Z[relevant sets]
+    D[FFI / Ownership / Memory passes] -->|read Z/Y| E[Issue]
+</div><h2 id="diagnosticwriter-and-structured-issues">DiagnosticWriter and structured issues</h2>
 <p>Passes receive both <code>PassContext</code> and <code>DiagnosticWriter</code>. <code>DiagnosticWriter</code> handles logs and diagnostics. Structured findings are added through <code>ctx.addIssue</code>, whose entry point is at <code>src/pass/pass.zig:458</code>.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Pass detects finding] --&gt; B{Diagnostic only?}</span></span>
-<span class="giallo-l"><span>    B --&gt;|Yes| C[DiagnosticWriter]</span></span>
-<span class="giallo-l"><span>    B --&gt;|No| D[Issue.init / initWithReason]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[ctx.addIssue]</span></span>
-<span class="giallo-l"><span>    E --&gt; F[DataFlowGraph issues]</span></span>
-<span class="giallo-l"><span>    F --&gt; G[Pipeline.getIssues]</span></span></code></pre><h2 id="summary">Summary</h2>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[Pass detects finding] --> B{Diagnostic only?}
+    B -->|Yes| C[DiagnosticWriter]
+    B -->|No| D[Issue.init / initWithReason]
+    D --> E[ctx.addIssue]
+    E --> F[DataFlowGraph issues]
+    F --> G[Pipeline.getIssues]
+</div><h2 id="summary">Summary</h2>
 <p>The pass system provides registration, dependency ordering, shared state, graceful degradation, and structured issue collection. The later MemoryGraph, Zone, and Registry mechanisms rely on this shared execution model.</p>
 <h2 id="source-breakdown-dependency-ordering-is-a-runtime-constraint">Source breakdown: dependency ordering is a runtime constraint</h2>
 <p><code>PassManager.resolveDependencies</code> uses Kahn’s algorithm to topologically sort passes. The implementation in <code>src/pass/manager.zig:86</code> to <code>src/pass/manager.zig:180</code> builds the graph from <code>pass.deps</code>, tracks in-degrees, and computes <code>resolved_order</code>.</p>
@@ -205,7 +211,7 @@
 
         </div>
 
-  
+    
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -229,6 +235,13 @@
                     </div>
             </div>
         
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
 </div>
 
     </div>
@@ -251,17 +264,102 @@
 
 </div>
 <style>
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.article-layout { display: flex; gap: 40px; align-items: flex-start; }
+.article-layout .post { flex: 1; min-width: 0; max-width: 100%; }
+.toc-sidebar { display: none; flex-shrink: 0; width: 220px; }
+.toc-sticky { position: sticky; top: 24px; }
+.toc-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .1em; color: rgb(120,226,160); margin-bottom: 12px; }
+#toc-nav { font-size: .85rem; line-height: 1.8; }
+#toc-nav a { display: block; color: rgba(255,255,255,.5); text-decoration: none; border-left: 1px solid rgba(255,255,255,.1); padding-left: 12px; transition: color .2s, border-color .2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toc-nav a:hover { color: rgba(255,255,255,.8); border-left-color: rgba(255,255,255,.3); }
+#toc-nav a.active { color: rgb(120,226,160); border-left-color: rgb(120,226,160); }
+#toc-nav a.h3 { padding-left: 24px; font-size: .8rem; }
+@media (min-width: 1100px) { .toc-sidebar { display: block; } }
+
+/* scanline enhancement */
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node > rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > path { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > polygon { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; }
+.mermaid[data-series="memscope-rs"] .node > rect { fill: #5BA3E6; }
+.mermaid[data-series="memscope-rs"] .node > path { fill: #4A90D9; }
+.mermaid[data-series="memscope-rs"] .node > polygon { fill: #7EC8E3; }
+.mermaid[data-series="omniscope"] .node > rect { fill: #4DD0C8; }
+.mermaid[data-series="omniscope"] .node > path { fill: #3AB0A8; }
+.mermaid[data-series="omniscope"] .node > polygon { fill: #80DEEA; }
+.mermaid[data-series="goagent"] .node > rect { fill: #B388FF; }
+.mermaid[data-series="goagent"] .node > path { fill: #9575CD; }
+.mermaid[data-series="goagent"] .node > polygon { fill: #CE93D8; }
+.mermaid:not([data-series]) .node > rect { fill: #2a2d35; }
+.mermaid:not([data-series]) .node > path { fill: #3B4252; }
+.mermaid:not([data-series]) .node > polygon { fill: #434C5E; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+
+  // TOC generation
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    // Scroll-spy
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
 
 
 </body>

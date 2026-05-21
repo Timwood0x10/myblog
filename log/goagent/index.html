@@ -119,36 +119,37 @@
 <li><strong>Entry layer</strong> (<code>SimpleClient</code>, <code>WorkflowClient</code>): Minimal encapsulation for specific scenarios.</li>
 </ol>
 <p>This isn't a "designed architecture" — it's a layering that naturally emerges from the isolation requirement:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TB</span></span>
-<span class="giallo-l"><span>    subgraph &quot;Callers only see these&quot;</span></span>
-<span class="giallo-l"><span>        SimpleClient[SimpleClient&lt;br/&gt;One Execute call]</span></span>
-<span class="giallo-l"><span>        Client[api.Client&lt;br/&gt;Access all services]</span></span>
-<span class="giallo-l"><span>        WorkflowClient[WorkflowClient&lt;br/&gt;Run workflows]</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Callers only depend on these interfaces&quot;</span></span>
-<span class="giallo-l"><span>        LLMService[LLMService]</span></span>
-<span class="giallo-l"><span>        AgentService[AgentService]</span></span>
-<span class="giallo-l"><span>        MemoryService[MemoryService]</span></span>
-<span class="giallo-l"><span>        RetrievalService[RetrievalService]</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Callers never see these&quot;</span></span>
-<span class="giallo-l"><span>        LLM[llm/output]</span></span>
-<span class="giallo-l"><span>        Agents[agents/leader+sub]</span></span>
-<span class="giallo-l"><span>        Memory[memory/]</span></span>
-<span class="giallo-l"><span>        Storage[storage/postgres]</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    SimpleClient --&gt; Client</span></span>
-<span class="giallo-l"><span>    Client --&gt; LLMService</span></span>
-<span class="giallo-l"><span>    Client --&gt; AgentService</span></span>
-<span class="giallo-l"><span>    Client --&gt; MemoryService</span></span>
-<span class="giallo-l"><span>    Client --&gt; RetrievalService</span></span>
-<span class="giallo-l"><span>    LLMService -.-&gt;|impl| LLM</span></span>
-<span class="giallo-l"><span>    AgentService -.-&gt;|impl| Agents</span></span>
-<span class="giallo-l"><span>    MemoryService -.-&gt;|impl| Memory</span></span>
-<span class="giallo-l"><span>    RetrievalService -.-&gt;|impl| Storage</span></span></code></pre>
+<div class="mermaid-direct" data-series="goagent">flowchart TB
+    subgraph "Callers only see these"
+        SimpleClient[SimpleClient<br/>One Execute call]
+        Client[api.Client<br/>Access all services]
+        WorkflowClient[WorkflowClient<br/>Run workflows]
+    end
+
+    subgraph "Callers only depend on these interfaces"
+        LLMService[LLMService]
+        AgentService[AgentService]
+        MemoryService[MemoryService]
+        RetrievalService[RetrievalService]
+    end
+
+    subgraph "Callers never see these"
+        LLM[llm/output]
+        Agents[agents/leader+sub]
+        Memory[memory/]
+        Storage[storage/postgres]
+    end
+
+    SimpleClient --> Client
+    Client --> LLMService
+    Client --> AgentService
+    Client --> MemoryService
+    Client --> RetrievalService
+    LLMService -.->|impl| LLM
+    AgentService -.->|impl| Agents
+    MemoryService -.->|impl| Memory
+    RetrievalService -.->|impl| Storage
+</div>
 <p>Key point: <strong>callers never see any implementation under <code>internal/</code></strong>. Dashed lines mean "implementation relationships are completed inside the api package, invisible to the outside."</p>
 <h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="service-interfaces-the-core-of-isolation">Service Interfaces: The Core of Isolation</h3>
@@ -266,25 +267,26 @@
 <li><strong>Top layer</strong>: <code>LLMAdapter</code> interface + Factory pattern, unifying behavior and supporting structured output.</li>
 </ul>
 <p>Two layers isn't redundancy — it's division of labor: the bottom handles "how to send requests," the top handles "how to use the model."</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    subgraph &quot;Top: How to use the model&quot;</span></span>
-<span class="giallo-l"><span>        Adapter[LLMAdapter Interface]</span></span>
-<span class="giallo-l"><span>        Factory[Factory Dispatch]</span></span>
-<span class="giallo-l"><span>        Template[Prompt Template]</span></span>
-<span class="giallo-l"><span>        Parser[Response Parser]</span></span>
-<span class="giallo-l"><span>        Validator[Output Validator]</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Bottom: How to send requests&quot;</span></span>
-<span class="giallo-l"><span>        Client[llm.Client]</span></span>
-<span class="giallo-l"><span>        OpenRouter[OpenRouter HTTP]</span></span>
-<span class="giallo-l"><span>        Ollama[Ollama HTTP]</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Adapter --&gt; Factory</span></span>
-<span class="giallo-l"><span>    Factory --&gt; Client</span></span>
-<span class="giallo-l"><span>    Client --&gt; OpenRouter</span></span>
-<span class="giallo-l"><span>    Client --&gt; Ollama</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    subgraph "Top: How to use the model"
+        Adapter[LLMAdapter Interface]
+        Factory[Factory Dispatch]
+        Template[Prompt Template]
+        Parser[Response Parser]
+        Validator[Output Validator]
+    end
+
+    subgraph "Bottom: How to send requests"
+        Client[llm.Client]
+        OpenRouter[OpenRouter HTTP]
+        Ollama[Ollama HTTP]
+    end
+
+    Adapter --> Factory
+    Factory --> Client
+    Client --> OpenRouter
+    Client --> Ollama
+</div><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="bottom-layer-http-direct-connect">Bottom Layer: HTTP Direct-Connect</h3>
 <p><code>internal/llm/client.go</code>'s <code>Client</code> is the most primitive call layer — direct HTTP requests, no abstraction:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/llm/client.go:89</span></span>
@@ -351,21 +353,22 @@
 <li>Extract JSON from response.</li>
 <li>Validate against Schema.</li>
 </ol>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
-<span class="giallo-l"><span>    participant Agent</span></span>
-<span class="giallo-l"><span>    participant Adapter as LLMAdapter</span></span>
-<span class="giallo-l"><span>    participant Template as Prompt Template</span></span>
-<span class="giallo-l"><span>    participant LLM as LLM Provider</span></span>
-<span class="giallo-l"><span>    participant Parser as Response Parser</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Agent-&gt;&gt;Adapter: GenerateStructured(ctx, prompt, schema)</span></span>
-<span class="giallo-l"><span>    Adapter-&gt;&gt;Template: Inject schema into prompt</span></span>
-<span class="giallo-l"><span>    Template--&gt;&gt;Adapter: Complete prompt</span></span>
-<span class="giallo-l"><span>    Adapter-&gt;&gt;LLM: Generate(ctx, fullPrompt)</span></span>
-<span class="giallo-l"><span>    LLM--&gt;&gt;Adapter: Raw response</span></span>
-<span class="giallo-l"><span>    Adapter-&gt;&gt;Parser: Extract + validate JSON</span></span>
-<span class="giallo-l"><span>    Parser--&gt;&gt;Adapter: RecommendResult</span></span>
-<span class="giallo-l"><span>    Adapter--&gt;&gt;Agent: (*RecommendResult, error)</span></span></code></pre><h2 id="three-adapters-compared">Three Adapters Compared</h2>
+<div class="mermaid-direct" data-series="goagent">sequenceDiagram
+    participant Agent
+    participant Adapter as LLMAdapter
+    participant Template as Prompt Template
+    participant LLM as LLM Provider
+    participant Parser as Response Parser
+
+    Agent->>Adapter: GenerateStructured(ctx, prompt, schema)
+    Adapter->>Template: Inject schema into prompt
+    Template-->>Adapter: Complete prompt
+    Adapter->>LLM: Generate(ctx, fullPrompt)
+    LLM-->>Adapter: Raw response
+    Adapter->>Parser: Extract + validate JSON
+    Parser-->>Adapter: RecommendResult
+    Adapter-->>Agent: (*RecommendResult, error)
+</div><h2 id="three-adapters-compared">Three Adapters Compared</h2>
 <table><thead><tr><th>Feature</th><th>OpenAI</th><th>Ollama</th><th>OpenRouter</th></tr></thead><tbody>
 <tr><td>API format</td><td>Chat Completions</td><td>Generate</td><td>Chat Completions</td></tr>
 <tr><td>Auth</td><td>Bearer Token</td><td>None (local)</td><td>Bearer Token</td></tr>
@@ -424,22 +427,23 @@
 <li><strong>Sub Agent</strong> is the execution unit, not the decision maker. It receives a concrete task, calls LLM and tools to complete it.</li>
 </ul>
 <p>This division isn't a "designed architecture" — it naturally emerges from the task decomposition requirement: decomposition implies separation of planner and executor.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    Input[User Input] --&gt; Leader[Leader Agent&lt;br/&gt;Orchestrator]</span></span>
-<span class="giallo-l"><span>    Leader --&gt; Parse[Parse User Profile]</span></span>
-<span class="giallo-l"><span>    Parse --&gt; Plan[Plan Task List]</span></span>
-<span class="giallo-l"><span>    Plan --&gt; Dispatch[Parallel Dispatch]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Dispatch --&gt; SubA[Sub Agent A&lt;br/&gt;Itinerary]</span></span>
-<span class="giallo-l"><span>    Dispatch --&gt; SubB[Sub Agent B&lt;br/&gt;Restaurants]</span></span>
-<span class="giallo-l"><span>    Dispatch --&gt; SubC[Sub Agent C&lt;br/&gt;Budget]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    SubA --&gt; Results[TaskResults]</span></span>
-<span class="giallo-l"><span>    SubB --&gt; Results</span></span>
-<span class="giallo-l"><span>    SubC --&gt; Results</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Results --&gt; Aggregate[Aggregate]</span></span>
-<span class="giallo-l"><span>    Aggregate --&gt; Output[Final Output]</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    Input[User Input] --> Leader[Leader Agent<br/>Orchestrator]
+    Leader --> Parse[Parse User Profile]
+    Parse --> Plan[Plan Task List]
+    Plan --> Dispatch[Parallel Dispatch]
+
+    Dispatch --> SubA[Sub Agent A<br/>Itinerary]
+    Dispatch --> SubB[Sub Agent B<br/>Restaurants]
+    Dispatch --> SubC[Sub Agent C<br/>Budget]
+
+    SubA --> Results[TaskResults]
+    SubB --> Results
+    SubC --> Results
+
+    Results --> Aggregate[Aggregate]
+    Aggregate --> Output[Final Output]
+</div><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="interface-hierarchy">Interface Hierarchy</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// base.Agent — foundation for all agents</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Agent</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
@@ -546,13 +550,14 @@
 <li><strong>Message queue</strong>: Channel-based in-memory queue with enqueue, dequeue, peek.</li>
 <li><strong>Heartbeat</strong>: Periodic heartbeat signals so Leader can detect Sub Agent liveness.</li>
 </ol>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    Leader[Leader Agent] --&gt;|TASK| Queue[MessageQueue]</span></span>
-<span class="giallo-l"><span>    Queue --&gt;|TASK| Sub[Sub Agent]</span></span>
-<span class="giallo-l"><span>    Sub --&gt;|RESULT| Queue</span></span>
-<span class="giallo-l"><span>    Queue --&gt;|RESULT| Leader</span></span>
-<span class="giallo-l"><span>    Sub --&gt;|HEARTBEAT| HB[HeartbeatMonitor]</span></span>
-<span class="giallo-l"><span>    HB --&gt;|IsAlive?| Leader</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<div class="mermaid-direct" data-series="goagent">flowchart LR
+    Leader[Leader Agent] -->|TASK| Queue[MessageQueue]
+    Queue -->|TASK| Sub[Sub Agent]
+    Sub -->|RESULT| Queue
+    Queue -->|RESULT| Leader
+    Sub -->|HEARTBEAT| HB[HeartbeatMonitor]
+    HB -->|IsAlive?| Leader
+</div><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="five-message-types">Five Message Types</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
 <span class="giallo-l"><span style="color: #FAB387;">    AHPMethodTask</span><span style="color: #F9E2AF;font-style: italic;">      AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;TASK&quot;</span><span style="color: #9399B2;font-style: italic;">      // Leader dispatches task</span></span>
@@ -564,30 +569,32 @@
 <p>Message ID: <code>timestamp.atomic_counter.random_suffix</code> — three dimensions ensure uniqueness.</p>
 <h3 id="messagequeue-backup-buffer-prevents-lost-messages">MessageQueue: Backup Buffer Prevents Lost Messages</h3>
 <p>The key design: <strong>Peek never loses messages</strong>. When Peek takes a message out to inspect, if it can't put it back (queue full), the message goes into a backup buffer. Next Dequeue consumes backup first.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    Peek[Peek] --&gt; Check{backup has data?}</span></span>
-<span class="giallo-l"><span>    Check --&gt;|Yes| ReturnB[Return backup[0]]</span></span>
-<span class="giallo-l"><span>    Check --&gt;|No| Receive{Receive from channel}</span></span>
-<span class="giallo-l"><span>    Receive --&gt;|Got msg| PutBack{Try put back}</span></span>
-<span class="giallo-l"><span>    PutBack --&gt;|OK| Return[Return msg]</span></span>
-<span class="giallo-l"><span>    PutBack --&gt;|Full| Save[Save to backup]</span></span>
-<span class="giallo-l"><span>    Save --&gt; Return</span></span>
-<span class="giallo-l"><span>    Receive --&gt;|Empty| Nil[Return nil]</span></span></code></pre>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    Peek[Peek] --> Check{backup has data?}
+    Check -->|Yes| ReturnB[Return backup[0]]
+    Check -->|No| Receive{Receive from channel}
+    Receive -->|Got msg| PutBack{Try put back}
+    PutBack -->|OK| Return[Return msg]
+    PutBack -->|Full| Save[Save to backup]
+    Save --> Return
+    Receive -->|Empty| Nil[Return nil]
+</div>
 <p>Enqueue: <code>select</code> with three paths — success, context cancelled, queue full (never blocks).
 Dequeue: prioritizes backup buffer, then main channel.</p>
 <h3 id="heartbeat">Heartbeat</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
-<span class="giallo-l"><span>    participant Sub as Sub Agent</span></span>
-<span class="giallo-l"><span>    participant Monitor as HeartbeatMonitor</span></span>
-<span class="giallo-l"><span>    participant Leader as Leader Agent</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    loop Every HeartbeatInterval</span></span>
-<span class="giallo-l"><span>        Sub-&gt;&gt;Monitor: Heartbeat(agentID)</span></span>
-<span class="giallo-l"><span>        Monitor-&gt;&gt;Monitor: Update lastSeen</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Leader-&gt;&gt;Monitor: IsAlive(agentID)</span></span>
-<span class="giallo-l"><span>    Monitor--&gt;&gt;Leader: true / false</span></span></code></pre><h2 id="design-trade-offs">Design Trade-offs</h2>
+<div class="mermaid-direct" data-series="goagent">sequenceDiagram
+    participant Sub as Sub Agent
+    participant Monitor as HeartbeatMonitor
+    participant Leader as Leader Agent
+
+    loop Every HeartbeatInterval
+        Sub->>Monitor: Heartbeat(agentID)
+        Monitor->>Monitor: Update lastSeen
+    end
+
+    Leader->>Monitor: IsAlive(agentID)
+    Monitor-->>Leader: true / false
+</div><h2 id="design-trade-offs">Design Trade-offs</h2>
 <ul>
 <li><strong>In-memory queue vs external middleware</strong>: Zero dependencies, low latency. No persistence — sufficient for single-process, extend MessageSender for distributed.</li>
 <li><strong>Backup buffer vs unbounded queue</strong>: Bounded channel + backup buffer controls memory while ensuring Peek doesn't lose messages.</li>
@@ -636,27 +643,29 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 <tr><td>Task</td><td>Current task</td><td>Task input/output</td><td>Track execution</td></tr>
 <tr><td>Distilled</td><td>Long-term</td><td>Extracted experience</td><td>Retrieve for similar tasks</td></tr>
 </tbody></table>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    Input[User Input] --&gt; Session[Session Memory&lt;br/&gt;Short-term]</span></span>
-<span class="giallo-l"><span>    Input --&gt; Task[Task Memory&lt;br/&gt;Mid-term]</span></span>
-<span class="giallo-l"><span>    Task --&gt; Distill[Distilled Memory&lt;br/&gt;Long-term]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Session --&gt; BuildCtx[BuildContext]</span></span>
-<span class="giallo-l"><span>    Distill --&gt; Search[SearchSimilarTasks]</span></span>
-<span class="giallo-l"><span>    Search --&gt; BuildCtx</span></span>
-<span class="giallo-l"><span>    BuildCtx --&gt; Agent[Agent Execution]</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    Input[User Input] --> Session[Session Memory<br/>Short-term]
+    Input --> Task[Task Memory<br/>Mid-term]
+    Task --> Distill[Distilled Memory<br/>Long-term]
+
+    Session --> BuildCtx[BuildContext]
+    Distill --> Search[SearchSimilarTasks]
+    Search --> BuildCtx
+    BuildCtx --> Agent[Agent Execution]
+</div><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="session-memory">Session Memory</h3>
 <p><code>BuildContext</code> combines current input with message history. Key designs: TTL cleanup, max history limit, fault tolerance (returns original input on error).</p>
 <h3 id="distilled-memory-pipeline">Distilled Memory Pipeline</h3>
 <p>Not simple caching — a full pipeline:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    Conv[Conversation] --&gt; Extract[ExperienceExtractor]</span></span>
-<span class="giallo-l"><span>    Extract --&gt; Classify[MemoryClassifier]</span></span>
-<span class="giallo-l"><span>    Classify --&gt; Score[ImportanceScorer]</span></span>
-<span class="giallo-l"><span>    Score --&gt; Filter[NoiseFilter]</span></span>
-<span class="giallo-l"><span>    Filter --&gt; TopN[Top-N Selection]</span></span>
-<span class="giallo-l"><span>    TopN --&gt; Conflict[ConflictResolver]</span></span>
-<span class="giallo-l"><span>    Conflict --&gt; Store[(Repository)]</span></span></code></pre>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    Conv[Conversation] --> Extract[ExperienceExtractor]
+    Extract --> Classify[MemoryClassifier]
+    Classify --> Score[ImportanceScorer]
+    Score --> Filter[NoiseFilter]
+    Filter --> TopN[Top-N Selection]
+    TopN --> Conflict[ConflictResolver]
+    Conflict --> Store[(Repository)]
+</div>
 <p><strong>Classifier</strong>: Knowledge, Preference, Interaction, Profile.
 <strong>Noise filter</strong>: Code blocks, stack traces, logs, markdown tables.
 <strong>Conflict resolver</strong>: Vector similarity detection, keep the more important memory.</p>
@@ -786,20 +795,22 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 <p>Not duplicate implementations: YAML DAG for "known processes," dynamic graph for "processes needing runtime decisions."</p>
 <h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="yaml-dag-engine">YAML DAG Engine</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[collect] --&gt; B[analyze]</span></span>
-<span class="giallo-l"><span>    A --&gt; C[retrieve]</span></span>
-<span class="giallo-l"><span>    B --&gt; D[synthesize]</span></span>
-<span class="giallo-l"><span>    C --&gt; D</span></span></code></pre>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    A[collect] --> B[analyze]
+    A --> C[retrieve]
+    B --> D[synthesize]
+    C --> D
+</div>
 <p>Executor follows topological order, semaphore controls concurrency, supports retry and template variable substitution.</p>
 <h3 id="dynamic-graph-engine">Dynamic Graph Engine</h3>
 <p>Three node types: AgentNode, ToolNode, FuncNode. Conditional edges for dynamic routing. Three schedulers: FIFO, Priority, Shortest-Job-First.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    Start --&gt; Analyze</span></span>
-<span class="giallo-l"><span>    Analyze --&gt;|confidence &gt; 0.8| Fast[Fast Path]</span></span>
-<span class="giallo-l"><span>    Analyze --&gt;|confidence &lt;= 0.8| Deep[Deep Analysis]</span></span>
-<span class="giallo-l"><span>    Fast --&gt; End</span></span>
-<span class="giallo-l"><span>    Deep --&gt; End</span></span></code></pre><h2 id="design-trade-offs">Design Trade-offs</h2>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    Start --> Analyze
+    Analyze -->|confidence > 0.8| Fast[Fast Path]
+    Analyze -->|confidence <= 0.8| Deep[Deep Analysis]
+    Fast --> End
+    Deep --> End
+</div><h2 id="design-trade-offs">Design Trade-offs</h2>
 <ul>
 <li><strong>Two vs unified</strong>: Each serves its purpose better than a unified complexity.</li>
 <li><strong>Panic vs error</strong>: <code>NewGraph</code> panics on empty id — startup programming errors should fail fast.</li>
@@ -848,40 +859,42 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 <li><strong>EmbeddingQueue</strong>: Async vectorization, idempotent dedup, dead letter queue.</li>
 <li><strong>RetrievalService</strong>: Hybrid search (vector + BM25), query rewriting, time decay, multi-source fusion.</li>
 </ol>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    Write[Write Text] --&gt; Buffer[WriteBuffer&lt;br/&gt;Batch Write]</span></span>
-<span class="giallo-l"><span>    Buffer --&gt; DB[(PostgreSQL&lt;br/&gt;pending)]</span></span>
-<span class="giallo-l"><span>    DB --&gt; Queue[EmbeddingQueue&lt;br/&gt;Async Vectorize]</span></span>
-<span class="giallo-l"><span>    Queue --&gt; Embed[Embedding Service]</span></span>
-<span class="giallo-l"><span>    Embed --&gt; DB2[(PostgreSQL&lt;br/&gt;completed)]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Search[Search Request] --&gt; RS[RetrievalService]</span></span>
-<span class="giallo-l"><span>    RS --&gt; Vector[Vector Search&lt;br/&gt;pgvector]</span></span>
-<span class="giallo-l"><span>    RS --&gt; BM25[Keyword Search&lt;br/&gt;BM25]</span></span>
-<span class="giallo-l"><span>    Vector --&gt; Merge[Fuse &amp; Rank]</span></span>
-<span class="giallo-l"><span>    BM25 --&gt; Merge</span></span>
-<span class="giallo-l"><span>    Merge --&gt; Results[SearchResult]</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<div class="mermaid-direct" data-series="goagent">flowchart TD
+    Write[Write Text] --> Buffer[WriteBuffer<br/>Batch Write]
+    Buffer --> DB[(PostgreSQL<br/>pending)]
+    DB --> Queue[EmbeddingQueue<br/>Async Vectorize]
+    Queue --> Embed[Embedding Service]
+    Embed --> DB2[(PostgreSQL<br/>completed)]
+
+    Search[Search Request] --> RS[RetrievalService]
+    RS --> Vector[Vector Search<br/>pgvector]
+    RS --> BM25[Keyword Search<br/>BM25]
+    Vector --> Merge[Fuse & Rank]
+    BM25 --> Merge
+    Merge --> Results[SearchResult]
+</div><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="writebuffer">WriteBuffer</h3>
 <p>Buffers high-frequency writes, flushes on batchSize or flushInterval. Content-hash dedup prevents duplicate entries. <code>safeSend</code> uses <code>recover()</code> to handle write-on-closed-channel races.</p>
 <h3 id="embeddingqueue">EmbeddingQueue</h3>
 <p>Async vectorization pipeline: text → DB (pending) → EmbeddingQueue → Embedding Service → DB (completed). Dedupe key ensures idempotency, dead letter queue handles repeated failures, reconciliation periodically retries pending records.</p>
 <h3 id="retrievalservice-hybrid-search">RetrievalService: Hybrid Search</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
-<span class="giallo-l"><span>    participant User</span></span>
-<span class="giallo-l"><span>    participant RS as RetrievalService</span></span>
-<span class="giallo-l"><span>    participant PG as PostgreSQL</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    User-&gt;&gt;RS: Search(ctx, request)</span></span>
-<span class="giallo-l"><span>    RS-&gt;&gt;RS: Build RetrievalPlan</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    par Vector Search</span></span>
-<span class="giallo-l"><span>        RS-&gt;&gt;PG: ORDER BY vector &lt;-&gt; query_vector</span></span>
-<span class="giallo-l"><span>    and Keyword Search</span></span>
-<span class="giallo-l"><span>        RS-&gt;&gt;PG: WHERE content LIKE &#39;%keyword%&#39;</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    RS-&gt;&gt;RS: Weight, merge, rank</span></span>
-<span class="giallo-l"><span>    RS--&gt;&gt;User: SearchResult list</span></span></code></pre><h2 id="design-trade-offs">Design Trade-offs</h2>
+<div class="mermaid-direct" data-series="goagent">sequenceDiagram
+    participant User
+    participant RS as RetrievalService
+    participant PG as PostgreSQL
+
+    User->>RS: Search(ctx, request)
+    RS->>RS: Build RetrievalPlan
+
+    par Vector Search
+        RS->>PG: ORDER BY vector <-> query_vector
+    and Keyword Search
+        RS->>PG: WHERE content LIKE '%keyword%'
+    end
+
+    RS->>RS: Weight, merge, rank
+    RS-->>User: SearchResult list
+</div><h2 id="design-trade-offs">Design Trade-offs</h2>
 <ul>
 <li><strong>WriteBuffer vs direct write</strong>: Batch + timer flush balances throughput and latency.</li>
 <li><strong>Hybrid vs pure vector</strong>: Semantic + exact match, but more complexity. RetrievalPlan lets callers choose.</li>
@@ -931,27 +944,28 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 <li>Supports Ollama and SentenceTransformers backends, switchable via environment variable.</li>
 <li>Optional Redis cache, L2 normalization for retrieval consistency.</li>
 </ul>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    subgraph &quot;Go Main Program&quot;</span></span>
-<span class="giallo-l"><span>        Retrieval[RetrievalService]</span></span>
-<span class="giallo-l"><span>        Client[EmbeddingClient]</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Embedding Service&quot;</span></span>
-<span class="giallo-l"><span>        FastAPI[FastAPI]</span></span>
-<span class="giallo-l"><span>        Cache[Redis]</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Backends&quot;</span></span>
-<span class="giallo-l"><span>        Ollama[Ollama]</span></span>
-<span class="giallo-l"><span>        ST[SentenceTransformers]</span></span>
-<span class="giallo-l"><span>    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Retrieval --&gt; Client</span></span>
-<span class="giallo-l"><span>    Client --&gt;|HTTP| FastAPI</span></span>
-<span class="giallo-l"><span>    FastAPI --&gt; Cache</span></span>
-<span class="giallo-l"><span>    FastAPI --&gt; Ollama</span></span>
-<span class="giallo-l"><span>    FastAPI --&gt; ST</span></span></code></pre><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<div class="mermaid-direct" data-series="goagent">flowchart LR
+    subgraph "Go Main Program"
+        Retrieval[RetrievalService]
+        Client[EmbeddingClient]
+    end
+
+    subgraph "Embedding Service"
+        FastAPI[FastAPI]
+        Cache[Redis]
+    end
+
+    subgraph "Backends"
+        Ollama[Ollama]
+        ST[SentenceTransformers]
+    end
+
+    Retrieval --> Client
+    Client -->|HTTP| FastAPI
+    FastAPI --> Cache
+    FastAPI --> Ollama
+    FastAPI --> ST
+</div><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="go-side-embeddingclient">Go Side: EmbeddingClient</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EmbeddingClient</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span>    baseURL</span><span style="color: #CBA6F7;">    string</span></span>

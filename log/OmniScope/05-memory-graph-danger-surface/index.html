@@ -65,8 +65,9 @@
 
     <div class="content">
         
-<div class="post">
-  
+<div class="article-layout">
+  <article class="post">
+    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/05-memory-graph-danger-surface/">MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths</a></h1>
     <div class="post-meta-inline">
         
@@ -84,7 +85,7 @@
                 <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
     
 
-  <div class="post-content">
+    <div class="post-content">
             <h1 id="memorygraph-and-dangersurface-from-pointer-facts-to-risk-paths">MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths</h1>
 <p>Cross-language memory analysis should not only ask whether <code>malloc</code> or <code>free</code> exists. It should ask whether a pointer crosses FFI, comes from an unsafe region, or propagates through aliases. OmniScope uses <code>MemoryGraph</code> and <code>DangerSurfacePass</code> to connect these facts.</p>
 <h2 id="start-with-the-problem-memory-risk-lives-on-paths-not-names">Start with the problem: memory risk lives on paths, not names</h2>
@@ -94,60 +95,65 @@
 <p><code>MemoryGraph</code> stores allocations, frees, call arguments, returns, and aliases in one graph. <code>DangerSurfacePass</code> starts from FFI/unsafe boundaries and marks the pointers and functions worth deeper analysis. Reports then follow risky paths rather than isolated APIs.</p>
 <h2 id="role-of-memorygraph">Role of MemoryGraph</h2>
 <p><code>MemoryGraph</code> is defined at <code>src/semantics/memory_graph.zig:160</code>. It stores memory-related facts: allocations, frees, call arguments, call returns, alias relations, zones, and language sources.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[trackAlloc] --&gt; M[MemoryGraph]</span></span>
-<span class="giallo-l"><span>    B[trackFree] --&gt; M</span></span>
-<span class="giallo-l"><span>    C[trackCallArg] --&gt; M</span></span>
-<span class="giallo-l"><span>    D[trackCallRet] --&gt; M</span></span>
-<span class="giallo-l"><span>    E[alias relation] --&gt; M</span></span>
-<span class="giallo-l"><span>    F[Zone / Language] --&gt; M</span></span>
-<span class="giallo-l"><span>    M --&gt; G[isOnDangerPath]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[trackAlloc] --> M[MemoryGraph]
+    B[trackFree] --> M
+    C[trackCallArg] --> M
+    D[trackCallRet] --> M
+    E[alias relation] --> M
+    F[Zone / Language] --> M
+    M --> G[isOnDangerPath]
+</div>
 <p>The graph does not attempt to model every possible program path. It answers a narrower question: is there enough evidence that this pointer is relevant to an FFI/unsafe risk path?</p>
 <h2 id="risk-path-classification">Risk-path classification</h2>
 <p><code>MemoryGraph.isOnDangerPath</code> is implemented around <code>src/semantics/memory_graph.zig:892</code>. It may return categories such as <code>ffi_arg</code>, <code>ffi_ret</code>, and <code>unsafe_alloc</code>. <code>PassContext.isOnDangerPathFull</code> at <code>src/pass/pass.zig:866</code> provides a shared entry point for other passes.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[ptr_val] --&gt; B[PassContext.isOnDangerPathFull]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[MemoryGraph.isOnDangerPath]</span></span>
-<span class="giallo-l"><span>    C --&gt; D{DangerPathKind}</span></span>
-<span class="giallo-l"><span>    D --&gt;|ffi_arg| E[Pointer passed as FFI argument]</span></span>
-<span class="giallo-l"><span>    D --&gt;|ffi_ret| F[Pointer returned from FFI]</span></span>
-<span class="giallo-l"><span>    D --&gt;|unsafe_alloc| G[Allocation in unsafe region]</span></span>
-<span class="giallo-l"><span>    E --&gt; H[Prioritize analysis]</span></span>
-<span class="giallo-l"><span>    F --&gt; H</span></span>
-<span class="giallo-l"><span>    G --&gt; H</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart LR
+    A[ptr_val] --> B[PassContext.isOnDangerPathFull]
+    B --> C[MemoryGraph.isOnDangerPath]
+    C --> D{DangerPathKind}
+    D -->|ffi_arg| E[Pointer passed as FFI argument]
+    D -->|ffi_ret| F[Pointer returned from FFI]
+    D -->|unsafe_alloc| G[Allocation in unsafe region]
+    E --> H[Prioritize analysis]
+    F --> H
+    G --> H
+</div>
 <p>A shared entry point keeps later passes from inventing inconsistent risk definitions.</p>
 <h2 id="how-dangersurfacepass-marks-relevant-objects">How DangerSurfacePass marks relevant objects</h2>
 <p><code>DangerSurfacePass</code> starts at <code>src/pass/analysis/danger_surface.zig:37</code>. It consumes <code>cross_lang_edges</code> and <code>memory_graph</code>, then updates <code>danger_surface_relevant</code>, <code>ffi_auto_relevant</code>, and <code>relevant_functions</code>.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
-<span class="giallo-l"><span>    participant CG as CrossLangEdges</span></span>
-<span class="giallo-l"><span>    participant MG as MemoryGraph</span></span>
-<span class="giallo-l"><span>    participant DS as DangerSurfacePass</span></span>
-<span class="giallo-l"><span>    participant Ctx as PassContext</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    DS-&gt;&gt;CG: Read FFI callees</span></span>
-<span class="giallo-l"><span>    DS-&gt;&gt;MG: Inspect call args / returns</span></span>
-<span class="giallo-l"><span>    DS-&gt;&gt;Ctx: markRelevantAlloc(ptr)</span></span>
-<span class="giallo-l"><span>    DS-&gt;&gt;Ctx: markFfiRelevant(ptr)</span></span>
-<span class="giallo-l"><span>    DS-&gt;&gt;DS: traceAliasClosure(ptr)</span></span>
-<span class="giallo-l"><span>    DS-&gt;&gt;Ctx: markRelevantFunction(func)</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">sequenceDiagram
+    participant CG as CrossLangEdges
+    participant MG as MemoryGraph
+    participant DS as DangerSurfacePass
+    participant Ctx as PassContext
+
+    DS->>CG: Read FFI callees
+    DS->>MG: Inspect call args / returns
+    DS->>Ctx: markRelevantAlloc(ptr)
+    DS->>Ctx: markFfiRelevant(ptr)
+    DS->>DS: traceAliasClosure(ptr)
+    DS->>Ctx: markRelevantFunction(func)
+</div>
 <p>Two implementation choices are visible in the source: known FFI arguments and returns can be marked directly, while MemoryGraph nodes already on a risk path can be expanded through alias closure.</p>
 <h2 id="why-alias-closure-matters">Why alias closure matters</h2>
 <p><code>traceAliasClosure</code> is at <code>src/pass/analysis/danger_surface.zig:144</code>. In LLVM IR, one memory object may appear through several SSA values after bitcasts, loads, stores, parameters, and returns. Marking only the original pointer may miss later uses.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[ptr0: FFI relevant] --&gt; B[alias set]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[ptr1]</span></span>
-<span class="giallo-l"><span>    B --&gt; D[ptr2]</span></span>
-<span class="giallo-l"><span>    C --&gt; E[markRelevantAlloc]</span></span>
-<span class="giallo-l"><span>    D --&gt; E</span></span>
-<span class="giallo-l"><span>    E --&gt; F[Recursive alias tracing]</span></span></code></pre>
+<div class="mermaid-direct" data-series="omniscope">flowchart TD
+    A[ptr0: FFI relevant] --> B[alias set]
+    B --> C[ptr1]
+    B --> D[ptr2]
+    C --> E[markRelevantAlloc]
+    D --> E
+    E --> F[Recursive alias tracing]
+</div>
 <p>This is not a full alias analysis. It is a focused propagation step for FFI-related pointer families.</p>
 <h2 id="from-risk-paths-to-prioritized-reporting">From risk paths to prioritized reporting</h2>
 <p>Later passes can use <code>isOnDangerPathFull</code> or relevance sets to filter findings. A local C allocation/free pair may be lower priority, while a pointer crossing FFI through arguments, returns, or callbacks may require review.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[Potential memory issue] --&gt; B{On risk path?}</span></span>
-<span class="giallo-l"><span>    B --&gt;|No| C[Filter / lower priority / local issue]</span></span>
-<span class="giallo-l"><span>    B --&gt;|Yes| D[FFI-relevant issue]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[Higher review priority]</span></span></code></pre><h2 id="summary">Summary</h2>
+<div class="mermaid-direct" data-series="omniscope">flowchart LR
+    A[Potential memory issue] --> B{On risk path?}
+    B -->|No| C[Filter / lower priority / local issue]
+    B -->|Yes| D[FFI-relevant issue]
+    D --> E[Higher review priority]
+</div><h2 id="summary">Summary</h2>
 <p>MemoryGraph stores pointer facts. DangerSurfacePass turns those facts into relevance sets tied to FFI/unsafe paths. This is the layer that connects low-level IR events with higher-level ownership and lifetime checks.</p>
 <h2 id="source-breakdown-isondangerpath-is-the-central-question">Source breakdown: <code>isOnDangerPath</code> is the central question</h2>
 <p><code>MemoryGraph.isOnDangerPath</code> lives around <code>src/semantics/memory_graph.zig:892</code>. The source comment calls it the ONE question that decides whether a pointer matters. It checks call edges first, allocation-node facts second, and alias closure last.</p>
@@ -211,7 +217,7 @@
 
         </div>
 
-  
+    
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -235,6 +241,13 @@
                     </div>
             </div>
         
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
 </div>
 
     </div>
@@ -257,17 +270,102 @@
 
 </div>
 <style>
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.article-layout { display: flex; gap: 40px; align-items: flex-start; }
+.article-layout .post { flex: 1; min-width: 0; max-width: 100%; }
+.toc-sidebar { display: none; flex-shrink: 0; width: 220px; }
+.toc-sticky { position: sticky; top: 24px; }
+.toc-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .1em; color: rgb(120,226,160); margin-bottom: 12px; }
+#toc-nav { font-size: .85rem; line-height: 1.8; }
+#toc-nav a { display: block; color: rgba(255,255,255,.5); text-decoration: none; border-left: 1px solid rgba(255,255,255,.1); padding-left: 12px; transition: color .2s, border-color .2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toc-nav a:hover { color: rgba(255,255,255,.8); border-left-color: rgba(255,255,255,.3); }
+#toc-nav a.active { color: rgb(120,226,160); border-left-color: rgb(120,226,160); }
+#toc-nav a.h3 { padding-left: 24px; font-size: .8rem; }
+@media (min-width: 1100px) { .toc-sidebar { display: block; } }
+
+/* scanline enhancement */
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node > rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > path { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > polygon { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; }
+.mermaid[data-series="memscope-rs"] .node > rect { fill: #5BA3E6; }
+.mermaid[data-series="memscope-rs"] .node > path { fill: #4A90D9; }
+.mermaid[data-series="memscope-rs"] .node > polygon { fill: #7EC8E3; }
+.mermaid[data-series="omniscope"] .node > rect { fill: #4DD0C8; }
+.mermaid[data-series="omniscope"] .node > path { fill: #3AB0A8; }
+.mermaid[data-series="omniscope"] .node > polygon { fill: #80DEEA; }
+.mermaid[data-series="goagent"] .node > rect { fill: #B388FF; }
+.mermaid[data-series="goagent"] .node > path { fill: #9575CD; }
+.mermaid[data-series="goagent"] .node > polygon { fill: #CE93D8; }
+.mermaid:not([data-series]) .node > rect { fill: #2a2d35; }
+.mermaid:not([data-series]) .node > path { fill: #3B4252; }
+.mermaid:not([data-series]) .node > polygon { fill: #434C5E; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+
+  // TOC generation
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    // Scroll-spy
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
 
 
 </body>

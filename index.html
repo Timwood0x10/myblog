@@ -748,20 +748,98 @@ graph TB
 
 </div>
 <style>
+#bg-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+.container { position: relative; z-index: 1; }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .cluster rect { fill: transparent !important; stroke: rgba(255,255,255,.15) !important; stroke-width: 1px !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
+.mermaid .cluster rect { fill: transparent !important; stroke: rgba(255,255,255,.15) !important; stroke-width: 1px !important; filter: drop-shadow(0 0 4px rgba(255,255,255,.08)); }
+.mermaid .cluster-label span { color: rgba(255,255,255,.5) !important; }
+.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
-.mermaid .cluster-label span { color: rgba(255,255,255,.6) !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node rect[fill="#5BA3E6"] { filter: drop-shadow(0 0 6px rgba(91,163,230,.5)); }
+.mermaid .node rect[fill="#4DD0C8"] { filter: drop-shadow(0 0 6px rgba(77,208,200,.5)); }
+.mermaid .node rect[fill="#B388FF"] { filter: drop-shadow(0 0 6px rgba(179,136,255,.5)); }
+.mermaid .node:hover rect[fill="#5BA3E6"] { filter: drop-shadow(0 0 14px #5BA3E6) drop-shadow(0 0 30px rgba(91,163,230,.3)) !important; stroke: #fff !important; }
+.mermaid .node:hover rect[fill="#4DD0C8"] { filter: drop-shadow(0 0 14px #4DD0C8) drop-shadow(0 0 30px rgba(77,208,200,.3)) !important; stroke: #fff !important; }
+.mermaid .node:hover rect[fill="#B388FF"] { filter: drop-shadow(0 0 14px #B388FF) drop-shadow(0 0 30px rgba(179,136,255,.3)) !important; stroke: #fff !important; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
 .mermaid .edge-pattern-dashed { stroke-dasharray: 7 5 !important; }
+@keyframes dashflow { to { stroke-dashoffset: -24; } }
+.mermaid .edge-pattern-dashed .path { animation: dashflow .8s linear infinite; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath:not(.edge-pattern-dashed) .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath:not(.edge-pattern-dashed) .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});document.querySelectorAll(".series-toggle").forEach(function(btn){btn.addEventListener("click",function(e){e.preventDefault();var s=this.dataset.series;var hidden=document.querySelectorAll('.series-entry[data-series="'+s+'"]');hidden.forEach(function(el){el.style.display=""});this.style.display="none"})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  // Canvas particle memory network
+  (function(){
+    var c=document.getElementById("bg-canvas"),ctx=c.getContext("2d");
+    var w,h;
+    function resize(){w=c.width=window.innerWidth;h=c.height=window.innerHeight}
+    resize();window.addEventListener("resize",resize);
+    var particles=[],count=80;
+    for(var i=0;i<count;i++){particles.push({x:Math.random()*w,y:Math.random()*h,vx:(Math.random()-.5)*.3,vy:(Math.random()-.5)*.3})}
+    function draw(){
+      ctx.clearRect(0,0,w,h);
+      for(var i=0;i<count;i++){
+        var p=particles[i];
+        p.x+=p.vx;p.y+=p.vy;
+        if(p.x<0||p.x>w)p.vx*=-1;
+        if(p.y<0||p.y>h)p.vy*=-1;
+        ctx.beginPath();ctx.arc(p.x,p.y,1.5,0,Math.PI*2);
+        ctx.fillStyle="rgba(120,226,160,.4)";ctx.fill();
+        for(var j=i+1;j<count;j++){
+          var q=particles[j];
+          var dx=p.x-q.x,dy=p.y-q.y,dist=Math.sqrt(dx*dx+dy*dy);
+          if(dist<180){
+            ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);
+            ctx.strokeStyle="rgba(120,226,160,"+(1-dist/180)*.15+")";
+            ctx.stroke()
+          }
+        }
+      }
+      requestAnimationFrame(draw)
+    }
+    draw()
+  })();
+
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+});
+document.querySelectorAll(".series-toggle").forEach(function(btn){btn.addEventListener("click",function(e){e.preventDefault();var s=this.dataset.series;var hidden=document.querySelectorAll('.series-entry[data-series="'+s+'"]');hidden.forEach(function(el){el.style.display=""});this.style.display="none"})});
+</script>
 
 
 </body>

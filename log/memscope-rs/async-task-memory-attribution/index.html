@@ -65,8 +65,9 @@
 
     <div class="content">
         
-<div class="post">
-  
+<div class="article-layout">
+  <article class="post">
+    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/async-task-memory-attribution/">Async Task Memory Attribution: Tracking Memory Beyond Threads</a></h1>
     <div class="post-meta-inline">
         
@@ -83,7 +84,7 @@
                 <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memscope-rs/">#memscope-rs</a></span>
     
 
-  <div class="post-content">
+    <div class="post-content">
             <h1 id="async-task-memory-attribution-tracking-memory-beyond-threads">Async Task Memory Attribution: Tracking Memory Beyond Threads</h1>
 <p>Rust async applications often run many logical tasks on a small number of runtime worker threads.</p>
 <p>That makes thread-level memory tracking insufficient. A thread can execute many tasks, and a task may resume on different worker threads after an <code>.await</code>.</p>
@@ -96,22 +97,23 @@
 <h2 id="1-why-thread-level-tracking-fails-in-async-rust">1. Why Thread-Level Tracking Fails in Async Rust</h2>
 <p>In a synchronous multithreaded program, a thread often maps reasonably well to a unit of work.</p>
 <p>In async Rust, that assumption breaks down:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    R[Tokio Runtime] --&gt; T1[Worker Thread 1]</span></span>
-<span class="giallo-l"><span>    R --&gt; T2[Worker Thread 2]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    T1 --&gt; A[Task A]</span></span>
-<span class="giallo-l"><span>    T1 --&gt; B[Task B]</span></span>
-<span class="giallo-l"><span>    T2 --&gt; A</span></span>
-<span class="giallo-l"><span>    T2 --&gt; C[Task C]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    A --&gt; M1[Allocation]</span></span>
-<span class="giallo-l"><span>    B --&gt; M2[Allocation]</span></span>
-<span class="giallo-l"><span>    C --&gt; M3[Allocation]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    M1 --&gt; Q[Need task attribution]</span></span>
-<span class="giallo-l"><span>    M2 --&gt; Q</span></span>
-<span class="giallo-l"><span>    M3 --&gt; Q</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart TD
+    R[Tokio Runtime] --> T1[Worker Thread 1]
+    R --> T2[Worker Thread 2]
+
+    T1 --> A[Task A]
+    T1 --> B[Task B]
+    T2 --> A
+    T2 --> C[Task C]
+
+    A --> M1[Allocation]
+    B --> M2[Allocation]
+    C --> M3[Allocation]
+
+    M1 --> Q[Need task attribution]
+    M2 --> Q
+    M3 --> Q
+</div>
 <p>Thread ID tells us where an allocation ran. Task attribution tells us which logical async unit it belongs to.</p>
 <hr />
 <h2 id="2-trackercontext">2. <code>TrackerContext</code></h2>
@@ -173,13 +175,14 @@
 <p>When it ends:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span>profile</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">mark_completed</span><span style="color: #9399B2;">();</span></span>
 <span class="giallo-l"><span>stats</span><span style="color: #94E2D5;">.</span><span>active_tasks </span><span style="color: #94E2D5;">=</span><span> stats</span><span style="color: #94E2D5;">.</span><span>active_tasks</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">saturating_sub</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">);</span></span>
-<span class="giallo-l"><span style="color: #F38BA8;">Self</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clear_current_task</span><span style="color: #9399B2;">();</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>stateDiagram-v2</span></span>
-<span class="giallo-l"><span>    [*] --&gt; Started</span></span>
-<span class="giallo-l"><span>    Started --&gt; Running</span></span>
-<span class="giallo-l"><span>    Running --&gt; Completed</span></span>
-<span class="giallo-l"><span>    Completed --&gt; [*]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Running --&gt; ZombieCandidate: started but not completed</span></span></code></pre>
+<span class="giallo-l"><span style="color: #F38BA8;">Self</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clear_current_task</span><span style="color: #9399B2;">();</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs">stateDiagram-v2
+    [*] --> Started
+    Started --> Running
+    Running --> Completed
+    Completed --> [*]
+
+    Running --> ZombieCandidate: started but not completed
+</div>
 <hr />
 <h2 id="7-tracking-allocations-by-task">7. Tracking Allocations by Task</h2>
 <p>Allocation attribution records pointer, size, task ID, and optional metadata:</p>
@@ -368,19 +371,20 @@
 <hr />
 <h2 id="15-summary">15. Summary</h2>
 <p>Async attribution matters because Rust services are increasingly task-oriented rather than thread-oriented.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
-<span class="giallo-l"><span>    A[task_scope / tracked future] --&gt; B[Task Context]</span></span>
-<span class="giallo-l"><span>    B --&gt; C[task_id]</span></span>
-<span class="giallo-l"><span>    C --&gt; D[track allocation]</span></span>
-<span class="giallo-l"><span>    D --&gt; E[AsyncTracker]</span></span>
-<span class="giallo-l"><span>    E --&gt; F[TaskMemoryProfile]</span></span>
-<span class="giallo-l"><span>    F --&gt; G[async_analysis.json]</span></span></code></pre>
+<div class="mermaid-direct" data-series="memscope-rs">flowchart LR
+    A[task_scope / tracked future] --> B[Task Context]
+    B --> C[task_id]
+    C --> D[track allocation]
+    D --> E[AsyncTracker]
+    E --> F[TaskMemoryProfile]
+    F --> G[async_analysis.json]
+</div>
 <p><code>memscope-rs</code> does not magically understand all async execution. It gives developers a way to attach memory events to logical tasks when context is available.</p>
 <p>That is a practical step beyond thread-level memory tracking.</p>
 
         </div>
 
-  
+    
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -404,6 +408,13 @@
                     </div>
             </div>
         
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
 </div>
 
     </div>
@@ -426,17 +437,102 @@
 
 </div>
 <style>
+#progress-bar { position: fixed; top: 0; left: 0; height: 2px; background: linear-gradient(90deg, rgb(120,226,160), rgb(100,200,255)); z-index: 999; width: 0; transition: width .1s linear; }
+.article-layout { display: flex; gap: 40px; align-items: flex-start; }
+.article-layout .post { flex: 1; min-width: 0; max-width: 100%; }
+.toc-sidebar { display: none; flex-shrink: 0; width: 220px; }
+.toc-sticky { position: sticky; top: 24px; }
+.toc-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .1em; color: rgb(120,226,160); margin-bottom: 12px; }
+#toc-nav { font-size: .85rem; line-height: 1.8; }
+#toc-nav a { display: block; color: rgba(255,255,255,.5); text-decoration: none; border-left: 1px solid rgba(255,255,255,.1); padding-left: 12px; transition: color .2s, border-color .2s; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toc-nav a:hover { color: rgba(255,255,255,.8); border-left-color: rgba(255,255,255,.3); }
+#toc-nav a.active { color: rgb(120,226,160); border-left-color: rgb(120,226,160); }
+#toc-nav a.h3 { padding-left: 24px; font-size: .8rem; }
+@media (min-width: 1100px) { .toc-sidebar { display: block; } }
+
+/* scanline enhancement */
+.scan-overlay { position: fixed; inset: 0; pointer-events: none; z-index: 998; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,255,0,.008) 2px, rgba(0,255,0,.008) 4px); }
+
+.mermaid { position: relative; }
+.mermaid::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(255,255,255,.015) 2px, rgba(255,255,255,.015) 4px); pointer-events: none; }
 .mermaid svg { background: transparent !important; }
-.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
 .mermaid .node .label { color: #fff !important; }
 .mermaid .node .label span { color: #fff !important; }
+.mermaid .node { cursor: pointer; }
+.mermaid .node > rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > path { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; transition: filter .3s ease, stroke .3s ease; }
+.mermaid .node > polygon { stroke: rgba(255,255,255,.4) !important; stroke-width: 1.5px !important; }
+.mermaid[data-series="memscope-rs"] .node > rect { fill: #5BA3E6; }
+.mermaid[data-series="memscope-rs"] .node > path { fill: #4A90D9; }
+.mermaid[data-series="memscope-rs"] .node > polygon { fill: #7EC8E3; }
+.mermaid[data-series="omniscope"] .node > rect { fill: #4DD0C8; }
+.mermaid[data-series="omniscope"] .node > path { fill: #3AB0A8; }
+.mermaid[data-series="omniscope"] .node > polygon { fill: #80DEEA; }
+.mermaid[data-series="goagent"] .node > rect { fill: #B388FF; }
+.mermaid[data-series="goagent"] .node > path { fill: #9575CD; }
+.mermaid[data-series="goagent"] .node > polygon { fill: #CE93D8; }
+.mermaid:not([data-series]) .node > rect { fill: #2a2d35; }
+.mermaid:not([data-series]) .node > path { fill: #3B4252; }
+.mermaid:not([data-series]) .node > polygon { fill: #434C5E; }
 .mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
 .mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
 .mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
 .mermaid .edgeLabel rect { fill: transparent !important; }
+@keyframes edgepulse { 0%,100% { stroke-opacity: .5; } 50% { stroke-opacity: 1; } }
+.mermaid .edgePath .path { animation: edgepulse 2.5s ease-in-out infinite; }
+@keyframes arrowpulse { 0%,100% { fill-opacity: .5; } 50% { fill-opacity: 1; } }
+.mermaid .edgePath .arrowheadPath { animation: arrowpulse 2.5s ease-in-out infinite; }
 </style>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#2a2d35",primaryBorderColor:"rgba(255,255,255,.3)",primaryTextColor:"rgba(255,255,255,.9)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent",actorBkg:"#2a2d35",actorBorder:"rgba(255,255,255,.3)",actorTextColor:"#ffffff"}});
+  var nodes=[];
+  document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
+    var pre=el.parentElement;
+    var div=document.createElement("div");div.className="mermaid";
+    div.textContent=el.textContent;
+    pre.parentNode.replaceChild(div,pre);nodes.push(div)
+  });
+  document.querySelectorAll(".mermaid-direct").forEach(function(el){
+    el.className="mermaid";nodes.push(el)
+  });
+  if(nodes.length)mermaid.run({nodes:nodes});
+
+  // Reading progress bar
+  var pb=document.getElementById("progress-bar");
+  window.addEventListener("scroll",function(){
+    var h=document.documentElement.scrollHeight-window.innerHeight;
+    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
+  });
+
+  // TOC generation
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    // Scroll-spy
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
 
 
 </body>
