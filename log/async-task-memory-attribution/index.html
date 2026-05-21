@@ -1,0 +1,457 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script src="https://Timwood0x10.github.io/myblog/js/theme.min.js" integrity="sha384-pb++s6uBRKaQv+iAXpgA/H3IlpLZdO14tTwuCI7uXmz4aaZdByoCcM+6BhynMq/1"></script>
+  <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/abridge.css?h=df30ac3b7243723c50b2" />
+  <meta charset="utf-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="base" content="https://Timwood0x10.github.io/myblog" />
+  <meta name="HandheldFriendly" content="True" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="theme-color" content="#333333" />
+  <meta name="msapplication-TileColor" content="#333333" />
+  <link rel="manifest" href="https://Timwood0x10.github.io/myblog/manifest.min.json" />
+  <link rel="mask-icon" href="https://Timwood0x10.github.io/myblog/safari-pinned-tab.svg" color="#ff9900" />
+  <link rel="icon" type="image/svg+xml" href="https://Timwood0x10.github.io/myblog/favicon.svg" />
+  <link rel="apple-touch-icon" sizes="180x180" href="https://Timwood0x10.github.io/myblog/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="https://Timwood0x10.github.io/myblog/favicon-32x32.png" />
+  <link rel="icon" type="image/png" sizes="16x16" href="https://Timwood0x10.github.io/myblog/favicon-16x16.png" />
+  <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script><script>document.addEventListener("DOMContentLoaded",function(){document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.innerHTML=el.textContent;pre.parentNode.replaceChild(div,pre)});mermaid.initialize({startOnLoad:true})});</script>
+  <meta name="robots" content="index, follow" />
+  <meta name="googlebot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+  <meta name="bingbot" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+  <title>Async Task Memory Attribution: Tracking Memory Beyond Threads | Timwood0x10</title>
+  <meta name="author" content="Tim Wood" />
+  <meta name="copyright" content="Timwood0x10" />
+  <meta name="description" content="Rust async applications often run many logical tasks on a small number of runtime worker threads." />
+  <link rel="canonical" href="https://Timwood0x10.github.io/myblog/log/async-task-memory-attribution/" />
+  <meta name="keywords" content="Rust, Memory Safety, Static Analysis, LLVM, Go, Zig, AI Infrastructure" />
+  <meta name="google-site-verification" content="Your Google Site verification code." />
+  <meta name="msvalidate.01" content="Your Bing Site verification code." />
+  <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/async-task-memory-attribution/" />
+  <meta name="twitter:url" content="https://Timwood0x10.github.io/myblog/log/async-task-memory-attribution/" />
+  <meta property="og:description" content="Rust async applications often run many logical tasks on a small number of runtime worker threads." />
+  <meta name="twitter:description" content="Rust async applications often run many logical tasks on a small number of runtime worker threads." />
+  <meta property="og:title" content="Async Task Memory Attribution: Tracking Memory Beyond Threads | Timwood0x10" />
+  <meta name="twitter:title" content="Async Task Memory Attribution: Tracking Memory Beyond Threads | Timwood0x10" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:image" content="https://Timwood0x10.github.io/myblog/banner.png" />
+  <meta property="og:image" content="https://Timwood0x10.github.io/myblog/banner.png" />
+  <meta property="og:site_name" content="Timwood0x10" />
+  <meta property="og:locale" content="en_US" />
+  <meta property="og:type" content="website" />
+  <meta property="og:updated_time" content="2026-05-20" />
+  <meta name="twitter:site" content="@your-user-name" />
+  <meta name="twitter:creator" content="@your-user-name" />
+  <script defer src="https://talk.hyvor.com/embed/embed.js" type="module"></script>
+  <script defer src="https://Timwood0x10.github.io/myblog/js/abridge.min.js?h=e0f9a881a665c86cce9c" integrity="sha384-QF67y7RnPkuDrJNQqn3/7nYxqxWkW/qHI7zN0WTES1aXbf+TotoByRBb835fUE6U"></script>
+  <noscript><link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/nojs.css" /></noscript>
+</head>
+<body>
+  <header>
+    <nav>
+      <div><big><a href="https://Timwood0x10.github.io/myblog" title="Timwood0x10">Timwood0x10</a></big></div>
+      <div>
+
+        <div>
+          <ul><li><a class="s110" href="https://Timwood0x10.github.io/myblog/log/"> Log </a></li><li><a class="s110" href="https://Timwood0x10.github.io/myblog/tags/"> Tags </a></li><li><i type="reset" id="mode" class="js svgs adjust"></i></ul>
+        </div>
+
+        <div>
+          <div>
+            <form autocomplete=off class="js" name="goSearch" id="searchbox">
+              <div class="searchd">
+                <input id="searchinput" type="text" placeholder="Search" title="Search" />
+                <button type="submit" title="Search" class="svgs svgm search"></button>
+              </div>
+              <div class="results"><div id="suggestions"></div></div>
+            </form>
+          </div>
+        </div>
+
+      </div>
+    </nav>
+  </header>
+  <main>
+    <article>
+      <h1><a href="https://Timwood0x10.github.io/myblog/log/async-task-memory-attribution/">Async Task Memory Attribution: Tracking Memory Beyond Threads</a></h1>
+
+      <span class="s95"> Tim Wood <span class="rpad"></span> May 20, 2026 <span class="rpad"></span> #<a href="https://Timwood0x10.github.io/myblog/tags/rust/">Rust</a> </span>
+
+    
+
+
+<h1 id="async-task-memory-attribution-tracking-memory-beyond-threads">Async Task Memory Attribution: Tracking Memory Beyond Threads</h1>
+<p>Rust async applications often run many logical tasks on a small number of runtime worker threads.</p>
+<p>That makes thread-level memory tracking insufficient. A thread can execute many tasks, and a task may resume on different worker threads after an <code>.await</code>.</p>
+<p>The more useful question is:</p>
+<blockquote>
+<p>Which async task should be responsible for this allocation?</p>
+</blockquote>
+<p><code>memscope-rs</code> provides an async attribution layer that associates allocations with logical task IDs where task context is available.</p>
+<hr />
+<h2 id="1-why-thread-level-tracking-fails-in-async-rust">1. Why Thread-Level Tracking Fails in Async Rust</h2>
+<p>In a synchronous multithreaded program, a thread often maps reasonably well to a unit of work.</p>
+<p>In async Rust, that assumption breaks down:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    R[Tokio Runtime] --&gt; T1[Worker Thread 1]</span></span>
+<span class="giallo-l"><span>    R --&gt; T2[Worker Thread 2]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    T1 --&gt; A[Task A]</span></span>
+<span class="giallo-l"><span>    T1 --&gt; B[Task B]</span></span>
+<span class="giallo-l"><span>    T2 --&gt; A</span></span>
+<span class="giallo-l"><span>    T2 --&gt; C[Task C]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    A --&gt; M1[Allocation]</span></span>
+<span class="giallo-l"><span>    B --&gt; M2[Allocation]</span></span>
+<span class="giallo-l"><span>    C --&gt; M3[Allocation]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    M1 --&gt; Q[Need task attribution]</span></span>
+<span class="giallo-l"><span>    M2 --&gt; Q</span></span>
+<span class="giallo-l"><span>    M3 --&gt; Q</span></span></code></pre>
+<p>Thread ID tells us where an allocation ran. Task attribution tells us which logical async unit it belongs to.</p>
+<hr />
+<h2 id="2-trackercontext">2. <code>TrackerContext</code></h2>
+<p>The async context structure records thread and task information:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> TrackerContext</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> thread_id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> task_id</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> tokio_task_id</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Context capture attempts to read both memscope task context and Tokio task ID:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> capture</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F38BA8;"> Self</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> task_id_from_context</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> TASK_CONTEXT</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">try_with</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>ctx</span><span style="color: #94E2D5;">| *</span><span>ctx</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">ok</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">flatten</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> tokio_task_id</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> tokio</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">task</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">try_id</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">and_then</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>id</span><span style="color: #94E2D5;">|</span><span> id</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">parse</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">ok</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    Self</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        thread_id</span><span style="color: #94E2D5;">:</span><span style="color: #89B4FA;font-style: italic;"> current_thread_id</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        task_id</span><span style="color: #94E2D5;">:</span><span> task_id_from_context</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">or</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">CURRENT_TASK_ID</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">with</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>cell</span><span style="color: #94E2D5;">|</span><span> cell</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get</span><span style="color: #9399B2;">())),</span></span>
+<span class="giallo-l"><span>        tokio_task_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This provides the basic attribution context.</p>
+<hr />
+<h2 id="3-internal-task-ids">3. Internal Task IDs</h2>
+<p><code>memscope-rs</code> uses its own task ID counter:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">static</span><span style="color: #FAB387;"> TASK_COUNTER</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> AtomicU64</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> AtomicU64</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> generate_unique_task_id</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    TASK_COUNTER</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">fetch_add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;"> Ordering</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Relaxed</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This matters because runtime task IDs may be recycled. Internal IDs are more stable for analysis and export.</p>
+<hr />
+<h2 id="4-context-storage">4. Context Storage</h2>
+<p>The async tracker uses both thread-local and Tokio task-local context:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">thread_local!</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    static</span><span style="color: #FAB387;"> CURRENT_TASK_ID</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">cell</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cell</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #94E2D5;"> =</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        const</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">cell</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cell</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">None</span><span style="color: #9399B2;">) };</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">tokio</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">task_local!</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    static</span><span style="color: #FAB387;"> TASK_CONTEXT</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This design reflects an important truth: async task attribution requires explicit context management. It is not automatically inferred for every future in the program.</p>
+<hr />
+<h2 id="5-asynctracker">5. <code>AsyncTracker</code></h2>
+<p>The core async tracker stores allocations, statistics, and task profiles:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> AsyncTracker</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    allocations</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">usize</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> AsyncAllocation</span><span style="color: #89DCEB;">&gt;&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    stats</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">AsyncStats</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    profiles</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> TaskMemoryProfile</span><span style="color: #89DCEB;">&gt;&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    initialized</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">bool</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is not a lock-free async tracker. It uses <code>Mutex&lt;HashMap&lt;...&gt;&gt;</code> internally. The focus of this module is attribution, not zero-lock performance.</p>
+<hr />
+<h2 id="6-tracking-task-lifecycle">6. Tracking Task Lifecycle</h2>
+<p>When a task starts, the tracker creates a profile and updates counters:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span>stats</span><span style="color: #94E2D5;">.</span><span>total_tasks </span><span style="color: #94E2D5;">+=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>stats</span><span style="color: #94E2D5;">.</span><span>active_tasks </span><span style="color: #94E2D5;">+=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">Self</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">set_current_task</span><span style="color: #9399B2;">(</span><span>task_id</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>When it ends:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span>profile</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">mark_completed</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span>stats</span><span style="color: #94E2D5;">.</span><span>active_tasks </span><span style="color: #94E2D5;">=</span><span> stats</span><span style="color: #94E2D5;">.</span><span>active_tasks</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">saturating_sub</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">Self</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clear_current_task</span><span style="color: #9399B2;">();</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>stateDiagram-v2</span></span>
+<span class="giallo-l"><span>    [*] --&gt; Started</span></span>
+<span class="giallo-l"><span>    Started --&gt; Running</span></span>
+<span class="giallo-l"><span>    Running --&gt; Completed</span></span>
+<span class="giallo-l"><span>    Completed --&gt; [*]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Running --&gt; ZombieCandidate: started but not completed</span></span></code></pre>
+<hr />
+<h2 id="7-tracking-allocations-by-task">7. Tracking Allocations by Task</h2>
+<p>Allocation attribution records pointer, size, task ID, and optional metadata:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> track_allocation_with_location</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    size</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    task_id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    var_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    type_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    source_location</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">SourceLocation</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> allocation</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> AsyncAllocation</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        ptr</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        size</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        timestamp</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> Self</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">now</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        task_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        var_name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        type_name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        source_location</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    allocations</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">insert</span><span style="color: #9399B2;">(</span><span>ptr</span><span style="color: #9399B2;">,</span><span> allocation</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>profile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> profiles</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get_mut</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>task_id</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>        profile</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">record_allocation</span><span style="color: #9399B2;">(</span><span>size</span><span style="color: #CBA6F7;"> as u64</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    stats</span><span style="color: #94E2D5;">.</span><span>total_allocations </span><span style="color: #94E2D5;">+=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    stats</span><span style="color: #94E2D5;">.</span><span>total_memory </span><span style="color: #94E2D5;">+=</span><span> size</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    stats</span><span style="color: #94E2D5;">.</span><span>active_memory </span><span style="color: #94E2D5;">+=</span><span> size</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Deallocation removes the pointer and updates the relevant task profile:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span style="color: #9399B2;"> (</span><span>task_id</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> allocations</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">remove</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>ptr</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>alloc</span><span style="color: #94E2D5;">|</span><span style="color: #9399B2;"> (</span><span>alloc</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">task_id</span><span style="color: #9399B2;">,</span><span> alloc</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">size</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">unwrap_or</span><span style="color: #9399B2;">((</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> task_id</span><span style="color: #94E2D5;"> !=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>profile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> profiles</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get_mut</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>task_id</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>        profile</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">record_deallocation</span><span style="color: #9399B2;">(</span><span>size</span><span style="color: #CBA6F7;"> as u64</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="8-globaltracker-integration">8. <code>GlobalTracker</code> Integration</h2>
+<p><code>GlobalTracker::track_as()</code> first records the normal memory event, then tries to associate heap-owner allocations with the current async task:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span>tracker</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">track_as</span><span style="color: #9399B2;">(</span><span>var</span><span style="color: #9399B2;">,</span><span> name</span><span style="color: #9399B2;">,</span><span> file</span><span style="color: #9399B2;">,</span><span> line</span><span style="color: #9399B2;">,</span><span> module_path</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>task_id</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> AsyncTracker</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">get_current_task</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> kind</span><span style="color: #94E2D5;"> =</span><span> var</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">track_kind</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if let</span><span style="color: #F9E2AF;font-style: italic;"> TrackKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HeapOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> =</span><span> kind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">        self</span><span style="color: #94E2D5;">.</span><span>async_tracker</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">track_allocation_with_location</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span>            ptr</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            size</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            task_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            Some</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">()),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            Some</span><span style="color: #9399B2;">(</span><span>type_name</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            None</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        );</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Important limitation: this path reads <code>CURRENT_TASK_ID</code>, while <code>spawn_tracked()</code> sets Tokio task-local <code>TASK_CONTEXT</code>. <code>TrackerContext::capture()</code> can see the task-local context, but automatic attribution through <code>track!</code> depends on the current integration path.</p>
+<p>This should be described carefully.</p>
+<hr />
+<h2 id="9-spawn-tracked">9. <code>spawn_tracked</code></h2>
+<p><code>spawn_tracked()</code> creates a memscope task ID and scopes a future with Tokio task-local context:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> spawn_tracked</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">F</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">future</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> F</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;"> tokio</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">task</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">JoinHandle</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">F</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Output</span><span style="color: #89DCEB;">&gt;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">where</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    F</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Future</span><span style="color: #94E2D5;"> +</span><span style="color: #F9E2AF;font-style: italic;"> Send</span><span style="color: #94E2D5;"> +</span><span style="color: #9399B2;"> &#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">    F</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Output</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Send</span><span style="color: #94E2D5;"> +</span><span style="color: #9399B2;"> &#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> task_id</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> generate_unique_task_id</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">    tokio</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">spawn</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">async move</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">        TASK_CONTEXT</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">scope</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Some</span><span style="color: #9399B2;">(</span><span>task_id</span><span style="color: #9399B2;">),</span><span> future</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #CBA6F7;">await</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Example usage:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> handles</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span>_</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> (</span><span style="color: #FAB387;">0</span><span style="color: #94E2D5;">..</span><span style="color: #FAB387;">4</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>i</span><span style="color: #94E2D5;">|</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        spawn_tracked</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">async move</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            let</span><span> tracker</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> global_tracker</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            let</span><span> ctx</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> TrackerContext</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">capture</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            let</span><span> data</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">0</span><span style="color: #CBA6F7;">i32</span><span style="color: #9399B2;">;</span><span style="color: #FAB387;"> 100</span><span style="color: #9399B2;">];</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            track!</span><span style="color: #9399B2;">(</span><span>tracker</span><span style="color: #9399B2;">,</span><span> data</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>            ctx</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">collect</span><span style="color: #9399B2;">();</span></span></code></pre>
+<p>This is useful for context capture, but it should not be overstated as fully automatic attribution for every <code>track!</code> path.</p>
+<hr />
+<h2 id="10-track-in-tokio-task">10. <code>track_in_tokio_task</code></h2>
+<p><code>track_in_tokio_task()</code> wraps a future with explicit lifecycle tracking:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub async fn</span><span style="color: #89B4FA;font-style: italic;"> track_in_tokio_task</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">F</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> future</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> F</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #9399B2;"> (</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">where</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    F</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Future</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Output</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> unique_task_id</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> generate_unique_task_id</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> tokio_task_id</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> tokio</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">task</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">try_id</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">and_then</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>id</span><span style="color: #94E2D5;">|</span><span> id</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">parse</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">ok</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">track_task_start_with_tokio</span><span style="color: #9399B2;">(</span><span>unique_task_id</span><span style="color: #9399B2;">,</span><span> tokio_id</span><span style="color: #9399B2;">,</span><span> name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(),</span><span> thread_id</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> output</span><span style="color: #94E2D5;"> =</span><span> future</span><span style="color: #94E2D5;">.</span><span style="color: #CBA6F7;">await</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">track_task_end</span><span style="color: #9399B2;">(</span><span>unique_task_id</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">    (</span><span>unique_task_id</span><span style="color: #9399B2;">,</span><span> output</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This path is more explicit about start/end lifecycle tracking than plain <code>spawn_tracked()</code>.</p>
+<hr />
+<h2 id="11-zombie-task-detection">11. Zombie Task Detection</h2>
+<p>The async tracker can detect tasks that were started but not completed:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> detect_zombie_tasks</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> profiles</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>profiles</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">lock</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    profiles</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">filter</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span style="color: #9399B2;">(</span><span>_</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">| !</span><span>p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">is_completed</span><span style="color: #9399B2;">())</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>id</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">|</span><span> id</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">collect</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This should be interpreted as zombie task candidates. A long-running task is not always a bug.</p>
+<hr />
+<h2 id="12-export-async-analysis-json">12. Export: <code>async_analysis.json</code></h2>
+<p>The export pipeline writes async attribution data:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> async_data</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> json!</span><span style="color: #9399B2;">({</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;summary&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;total_tasks&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>total_tasks</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;active_tasks&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>active_tasks</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;total_allocations&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>total_allocations</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;total_memory_bytes&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>total_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;active_memory_bytes&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>active_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;peak_memory_bytes&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>peak_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    },</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;task_profiles&quot;</span><span style="color: #94E2D5;">:</span><span> profiles</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>p</span><span style="color: #94E2D5;">|</span><span style="color: #89B4FA;font-style: italic;"> json!</span><span style="color: #9399B2;">({</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;task_id&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">task_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;task_name&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">task_name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;current_memory&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">current_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;peak_memory&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">peak_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;total_allocations&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">total_allocations</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;total_deallocations&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">total_deallocations</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;is_completed&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">is_completed</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;has_potential_leak&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">has_potential_leak</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;allocations&quot;</span><span style="color: #94E2D5;">:</span><span> snapshot</span><span style="color: #94E2D5;">.</span><span>allocations</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>a</span><span style="color: #94E2D5;">|</span><span style="color: #89B4FA;font-style: italic;"> json!</span><span style="color: #9399B2;">({</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;ptr&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #89B4FA;font-style: italic;"> format!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;0x</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">:x</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> a</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">ptr</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;size&quot;</span><span style="color: #94E2D5;">:</span><span> a</span><span style="color: #94E2D5;">.</span><span>size</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;task_id&quot;</span><span style="color: #94E2D5;">:</span><span> a</span><span style="color: #94E2D5;">.</span><span>task_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;var_name&quot;</span><span style="color: #94E2D5;">:</span><span> a</span><span style="color: #94E2D5;">.</span><span>var_name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;type_name&quot;</span><span style="color: #94E2D5;">:</span><span> a</span><span style="color: #94E2D5;">.</span><span>type_name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">});</span></span></code></pre>
+<hr />
+<h2 id="13-what-this-can-track">13. What This Can Track</h2>
+<p>The async layer can track:</p>
+<ul>
+<li>internal task ID;</li>
+<li>Tokio task ID as auxiliary data;</li>
+<li>thread ID;</li>
+<li>task start/end;</li>
+<li>active task count;</li>
+<li>task-level allocation count;</li>
+<li>task-level current and peak memory;</li>
+<li>allocation pointer and size;</li>
+<li>variable name and type name;</li>
+<li>zombie task candidates;</li>
+<li><code>async_analysis.json</code> export.</li>
+</ul>
+<hr />
+<h2 id="14-limitations">14. Limitations</h2>
+<p>The async layer cannot guarantee:</p>
+<ul>
+<li>automatic tracking of every Tokio task;</li>
+<li>attribution for all third-party-library allocations;</li>
+<li>exact memory changes at every <code>.await</code> point;</li>
+<li>full future lifecycle reconstruction;</li>
+<li>automatic bridging between all task-local and thread-local context paths;</li>
+<li>lock-free async attribution.</li>
+</ul>
+<p>The best description is:</p>
+<blockquote>
+<p><code>memscope-rs</code> provides explicit async task attribution, not a fully automatic Tokio runtime profiler.</p>
+</blockquote>
+<hr />
+<h2 id="15-summary">15. Summary</h2>
+<p>Async attribution matters because Rust services are increasingly task-oriented rather than thread-oriented.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[task_scope / tracked future] --&gt; B[Task Context]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[task_id]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[track allocation]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[AsyncTracker]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[TaskMemoryProfile]</span></span>
+<span class="giallo-l"><span>    F --&gt; G[async_analysis.json]</span></span></code></pre>
+<p><code>memscope-rs</code> does not magically understand all async execution. It gives developers a way to attach memory events to logical tasks when context is available.</p>
+<p>That is a practical step beyond thread-level memory tracking.</p>
+
+      <nav>
+        <div>
+          <a href="https://Timwood0x10.github.io/myblog/log/lockfree-multithread-tracking/">&#8249; Lockfree Tracking: How <code>memscope-rs</code> Handles Concurrent Memory Events</a>
+        </div>
+        <div>
+          <a href="https://Timwood0x10.github.io/myblog/log/arc-rc-stackowner/"> Arc/Rc Clone Detection: Why <code>StackOwner</code> Matters &#8250;</a>
+        </div>
+      </nav>
+    </article>
+
+    <div class="sblock">
+      <div class="blockdiv sticky">
+        <a class="b s150" href="#">Index</a>
+        <div>
+          <a href="#async-task-memory-attribution-tracking-memory-beyond-threads">Async Task Memory Attribution: Tracking Memory Beyond Threads</a>
+        </div>
+        <div class="hpad">
+          <a href="#1-why-thread-level-tracking-fails-in-async-rust"><small>- 1. Why Thread-Level Tracking Fails in Async Rust</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#2-trackercontext"><small>- 2. TrackerContext</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#3-internal-task-ids"><small>- 3. Internal Task IDs</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#4-context-storage"><small>- 4. Context Storage</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#5-asynctracker"><small>- 5. AsyncTracker</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#6-tracking-task-lifecycle"><small>- 6. Tracking Task Lifecycle</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#7-tracking-allocations-by-task"><small>- 7. Tracking Allocations by Task</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#8-globaltracker-integration"><small>- 8. GlobalTracker Integration</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#9-spawn-tracked"><small>- 9. spawn_tracked</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#10-track-in-tokio-task"><small>- 10. track_in_tokio_task</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#11-zombie-task-detection"><small>- 11. Zombie Task Detection</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#12-export-async-analysis-json"><small>- 12. Export: async_analysis.json</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#13-what-this-can-track"><small>- 13. What This Can Track</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#14-limitations"><small>- 14. Limitations</small></a>
+        </div>
+        <div class="hpad">
+          <a href="#15-summary"><small>- 15. Summary</small></a>
+        </div>
+      </div>
+    </div>
+  </main>
+  <footer>
+    <div class="c">
+      <nav class="tpad"><div><a type="application/atom+xml" href="https://Timwood0x10.github.io/myblog/atom.xml" target="_blank" title="Timwood0x10 Atom Feed"><i type="Button" class="svg rss" title="Timwood0x10 Atom Feed"></i></a><a class="js m-protected" href="#bmFtZUBleGFtcGxlLmNvbQ==" target="_blank" title="Mail"><i type="Button" class="svg mail" title="Mail"></i></a><a href="https://mastodon.example.com/@username" target="_blank" title="Mastodon" rel="me"><i type="Button" class="svg mastodon" title="Mastodon"></i></a><a href="https://matrix.example.com/" target="_blank" title="Element"><i type="Button" class="svg element" title="Element"></i></a><a href="https://github.com/your-user-name/" target="_blank" title="Github"><i type="Button" class="svg github" title="Github"></i></a><a href="https://www.instagram.com/your-user-name/" target="_blank" title="Instagram"><i type="Button" class="svg instagram" title="Instagram"></i></a><a href="https://www.youtube.com/channel&#x2F;your-channel-id" target="_blank" title="YouTube"><i type="Button" class="svg youtube" title="YouTube"></i></a><a href="https://www.twitch.tv/your-user-name/" target="_blank" title="Twitch"><i type="Button" class="svg twitch" title="Twitch"></i></a><a href="https://www.ko-fi.com/your-user-name/" target="_blank" title="Support me on Ko-fi"><i type="Button" class="svg kofi" title="Support me on Ko-fi"></i></a></div></nav>
+      <p class="s80"> &copy; <span id="year">2026</span> Timwood0x10</p>
+      <p class="s80">Powered by <a href="https://www.getzola.org/" target="_blank">Zola</a> & <a href="https://github.com/jieiku/abridge/" target="_blank">Abridge</a></p>
+    </div>
+  </footer><span class="topout">
+<span class="topleft"> </span><a href="#" class="top" title="Back to Top"><i class="svgs svgh angu"></i></a>
+</span>
+</body>
+</html>
