@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="Static analysis results need to be reviewable and machine-readable. OmniScope’s reporting path starts with `Issue` objects, then emits text, JSON, or SARIF through `emitOutput`.">
+
+    <meta property="og:description" content="Static analysis results need to be reviewable and machine-readable. OmniScope’s reporting path starts with `Issue` objects, then emits text, JSON, or SARIF through `emitOutput`.">
+    <meta property="og:title" content="Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/07-output-and-integration/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Static analysis results need to be reviewable and machine-readable. OmniScope’s reporting path starts with `Issue` objects, then emits text, JSON, or SARIF through `emitOutput`.">
+    <meta name="twitter:title" content="Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/07-output-and-integration/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/07-output-and-integration/">Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="reporting-pipeline-issue-objects-json-sarif-and-engineering-integration">Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration</h1>
+<p>Static analysis results need to be reviewable and machine-readable. OmniScope’s reporting path starts with <code>Issue</code> objects, then emits text, JSON, or SARIF through <code>emitOutput</code>.</p>
+<h2 id="issue-is-the-shared-result-type">Issue is the shared result type</h2>
+<p><code>Issue</code> is defined in <code>src/diag/issue.zig</code>, and issue kinds are exposed from <code>src/common/types.zig:151</code>. The structure carries kind, message, location, severity, confidence, confidence level, reason, FFI boundary, trace, and classification.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>classDiagram</span></span>
+<span class="giallo-l"><span>    class Issue {</span></span>
+<span class="giallo-l"><span>        kind</span></span>
+<span class="giallo-l"><span>        message</span></span>
+<span class="giallo-l"><span>        location</span></span>
+<span class="giallo-l"><span>        severity</span></span>
+<span class="giallo-l"><span>        confidence</span></span>
+<span class="giallo-l"><span>        confidence_level</span></span>
+<span class="giallo-l"><span>        reason</span></span>
+<span class="giallo-l"><span>        ffi_boundary</span></span>
+<span class="giallo-l"><span>        trace</span></span>
+<span class="giallo-l"><span>        classification</span></span>
+<span class="giallo-l"><span>    }</span></span></code></pre>
+<p>These fields support different review needs:</p>
+<ul>
+<li><code>severity</code> helps triage.</li>
+<li><code>confidence</code> and <code>confidence_level</code> distinguish stronger evidence from heuristics.</li>
+<li><code>reason</code> records the rule rationale.</li>
+<li><code>ffi_boundary</code> marks cross-language context.</li>
+<li><code>trace</code> leaves room for evidence paths.</li>
+<li><code>classification</code> separates FFI-boundary findings from local-only findings.</li>
+</ul>
+<h2 id="from-pass-to-issue">From Pass to Issue</h2>
+<p>When a pass finds something reportable, it creates an <code>Issue</code> with constructors such as <code>Issue.init</code> or <code>Issue.initWithReason</code>, then calls <code>ctx.addIssue</code>. The entry point is <code>src/pass/pass.zig:458</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Analysis Pass] --&gt; B[Rule match]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Construct Issue]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[ctx.addIssue]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[DataFlowGraph / Issue store]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[Pipeline.getIssues]</span></span>
+<span class="giallo-l"><span>    F --&gt; G[emitOutput]</span></span></code></pre>
+<p>This decouples rule logic from output format. Passes produce structured findings; the main program decides how to serialize them.</p>
+<h2 id="emitoutput-dispatches-formats"><code>emitOutput</code> dispatches formats</h2>
+<p><code>emitOutput</code> is implemented at <code>src/main.zig:207</code>. The JSON branch calls <code>formatIssuesAsJson</code> at <code>src/main.zig:494</code>; the SARIF branch uses <code>SarifOutput</code>, initialized at <code>src/main.zig:232</code>; file output is controlled by <code>config.output_file</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[issues + func_count + time_ms] --&gt; B[emitOutput]</span></span>
+<span class="giallo-l"><span>    B --&gt; C{OutputFormat}</span></span>
+<span class="giallo-l"><span>    C --&gt;|json| D[formatIssuesAsJson]</span></span>
+<span class="giallo-l"><span>    C --&gt;|sarif| E[SarifOutput.generate]</span></span>
+<span class="giallo-l"><span>    C --&gt;|text| F[terminal diagnostics]</span></span>
+<span class="giallo-l"><span>    D --&gt; G[stdout or file]</span></span>
+<span class="giallo-l"><span>    E --&gt; G</span></span>
+<span class="giallo-l"><span>    F --&gt; H[developer console]</span></span></code></pre><h2 id="sarif-integration">SARIF integration</h2>
+<p><code>SarifOutput</code> is defined at <code>src/output/sarif.zig:36</code>, with file writing at <code>src/output/sarif.zig:167</code>. SARIF lets results be consumed by GitHub Code Scanning, CI systems, and security dashboards.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[OmniScope Issue] --&gt; B[SARIF Result]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[sarif.json]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[CI Artifact]</span></span>
+<span class="giallo-l"><span>    C --&gt; E[GitHub Code Scanning]</span></span>
+<span class="giallo-l"><span>    C --&gt; F[Security Dashboard]</span></span></code></pre><h2 id="example-commands">Example commands</h2>
+<p>Local inspection:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">omniscope</span><span style="color: #A6E3A1;"> input.ll</span></span></code></pre>
+<p>Structured JSON:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">omniscope</span><span style="color: #A6E3A1;"> --json -o omniscope-report.json input.ll</span></span></code></pre>
+<p>SARIF for CI or code scanning:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">omniscope</span><span style="color: #A6E3A1;"> --sarif -o omniscope.sarif input.ll</span></span></code></pre>
+<p>FFI-focused mode:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">omniscope</span><span style="color: #A6E3A1;"> --ffi-only input.ll</span></span></code></pre><h2 id="confidence-and-review-boundaries">Confidence and review boundaries</h2>
+<p>Confidence is not decorative. Cross-language static analysis can be affected by optimization, missing symbols, debug information quality, wrappers, and custom allocators. Exposing confidence, reason, and trace fields helps reviewers inspect the analyzer’s reasoning instead of relying only on alert color.</p>
+<h2 id="summary">Summary</h2>
+<p>The reporting path separates analysis from serialization: passes produce structured issues, <code>emitOutput</code> selects the output format, and JSON/SARIF make the results usable in engineering workflows.</p>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/06-rust-ffi-auditor/">
+                                <span class="button__text">Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>

@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="Cross-language memory analysis should not only ask whether `malloc` or `free` exists. It should ask whether a pointer crosses FFI, comes from an unsafe region, or propagates through aliases. OmniScope uses `MemoryGraph` and `DangerSurfacePass` to connect these facts.">
+
+    <meta property="og:description" content="Cross-language memory analysis should not only ask whether `malloc` or `free` exists. It should ask whether a pointer crosses FFI, comes from an unsafe region, or propagates through aliases. OmniScope uses `MemoryGraph` and `DangerSurfacePass` to connect these facts.">
+    <meta property="og:title" content="MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/05-memory-graph-danger-surface/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Cross-language memory analysis should not only ask whether `malloc` or `free` exists. It should ask whether a pointer crosses FFI, comes from an unsafe region, or propagates through aliases. OmniScope uses `MemoryGraph` and `DangerSurfacePass` to connect these facts.">
+    <meta name="twitter:title" content="MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/05-memory-graph-danger-surface/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/05-memory-graph-danger-surface/">MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="memorygraph-and-dangersurface-from-pointer-facts-to-risk-paths">MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths</h1>
+<p>Cross-language memory analysis should not only ask whether <code>malloc</code> or <code>free</code> exists. It should ask whether a pointer crosses FFI, comes from an unsafe region, or propagates through aliases. OmniScope uses <code>MemoryGraph</code> and <code>DangerSurfacePass</code> to connect these facts.</p>
+<h2 id="role-of-memorygraph">Role of MemoryGraph</h2>
+<p><code>MemoryGraph</code> is defined at <code>src/semantics/memory_graph.zig:160</code>. It stores memory-related facts: allocations, frees, call arguments, call returns, alias relations, zones, and language sources.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[trackAlloc] --&gt; M[MemoryGraph]</span></span>
+<span class="giallo-l"><span>    B[trackFree] --&gt; M</span></span>
+<span class="giallo-l"><span>    C[trackCallArg] --&gt; M</span></span>
+<span class="giallo-l"><span>    D[trackCallRet] --&gt; M</span></span>
+<span class="giallo-l"><span>    E[alias relation] --&gt; M</span></span>
+<span class="giallo-l"><span>    F[Zone / Language] --&gt; M</span></span>
+<span class="giallo-l"><span>    M --&gt; G[isOnDangerPath]</span></span></code></pre>
+<p>The graph does not attempt to model every possible program path. It answers a narrower question: is there enough evidence that this pointer is relevant to an FFI/unsafe risk path?</p>
+<h2 id="risk-path-classification">Risk-path classification</h2>
+<p><code>MemoryGraph.isOnDangerPath</code> is implemented around <code>src/semantics/memory_graph.zig:892</code>. It may return categories such as <code>ffi_arg</code>, <code>ffi_ret</code>, and <code>unsafe_alloc</code>. <code>PassContext.isOnDangerPathFull</code> at <code>src/pass/pass.zig:866</code> provides a shared entry point for other passes.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[ptr_val] --&gt; B[PassContext.isOnDangerPathFull]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[MemoryGraph.isOnDangerPath]</span></span>
+<span class="giallo-l"><span>    C --&gt; D{DangerPathKind}</span></span>
+<span class="giallo-l"><span>    D --&gt;|ffi_arg| E[Pointer passed as FFI argument]</span></span>
+<span class="giallo-l"><span>    D --&gt;|ffi_ret| F[Pointer returned from FFI]</span></span>
+<span class="giallo-l"><span>    D --&gt;|unsafe_alloc| G[Allocation in unsafe region]</span></span>
+<span class="giallo-l"><span>    E --&gt; H[Prioritize analysis]</span></span>
+<span class="giallo-l"><span>    F --&gt; H</span></span>
+<span class="giallo-l"><span>    G --&gt; H</span></span></code></pre>
+<p>A shared entry point keeps later passes from inventing inconsistent risk definitions.</p>
+<h2 id="how-dangersurfacepass-marks-relevant-objects">How DangerSurfacePass marks relevant objects</h2>
+<p><code>DangerSurfacePass</code> starts at <code>src/pass/analysis/danger_surface.zig:37</code>. It consumes <code>cross_lang_edges</code> and <code>memory_graph</code>, then updates <code>danger_surface_relevant</code>, <code>ffi_auto_relevant</code>, and <code>relevant_functions</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant CG as CrossLangEdges</span></span>
+<span class="giallo-l"><span>    participant MG as MemoryGraph</span></span>
+<span class="giallo-l"><span>    participant DS as DangerSurfacePass</span></span>
+<span class="giallo-l"><span>    participant Ctx as PassContext</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;CG: Read FFI callees</span></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;MG: Inspect call args / returns</span></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;Ctx: markRelevantAlloc(ptr)</span></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;Ctx: markFfiRelevant(ptr)</span></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;DS: traceAliasClosure(ptr)</span></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;Ctx: markRelevantFunction(func)</span></span></code></pre>
+<p>Two implementation choices are visible in the source: known FFI arguments and returns can be marked directly, while MemoryGraph nodes already on a risk path can be expanded through alias closure.</p>
+<h2 id="why-alias-closure-matters">Why alias closure matters</h2>
+<p><code>traceAliasClosure</code> is at <code>src/pass/analysis/danger_surface.zig:144</code>. In LLVM IR, one memory object may appear through several SSA values after bitcasts, loads, stores, parameters, and returns. Marking only the original pointer may miss later uses.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[ptr0: FFI relevant] --&gt; B[alias set]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[ptr1]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[ptr2]</span></span>
+<span class="giallo-l"><span>    C --&gt; E[markRelevantAlloc]</span></span>
+<span class="giallo-l"><span>    D --&gt; E</span></span>
+<span class="giallo-l"><span>    E --&gt; F[Recursive alias tracing]</span></span></code></pre>
+<p>This is not a full alias analysis. It is a focused propagation step for FFI-related pointer families.</p>
+<h2 id="from-risk-paths-to-prioritized-reporting">From risk paths to prioritized reporting</h2>
+<p>Later passes can use <code>isOnDangerPathFull</code> or relevance sets to filter findings. A local C allocation/free pair may be lower priority, while a pointer crossing FFI through arguments, returns, or callbacks may require review.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[Potential memory issue] --&gt; B{On risk path?}</span></span>
+<span class="giallo-l"><span>    B --&gt;|No| C[Filter / lower priority / local issue]</span></span>
+<span class="giallo-l"><span>    B --&gt;|Yes| D[FFI-relevant issue]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[Higher review priority]</span></span></code></pre><h2 id="summary">Summary</h2>
+<p>MemoryGraph stores pointer facts. DangerSurfacePass turns those facts into relevance sets tied to FFI/unsafe paths. This is the layer that connects low-level IR events with higher-level ownership and lifetime checks.</p>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/06-rust-ffi-auditor/">
+                                <span class="button__icon">←</span>&nbsp;
+                                <span class="button__text">Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/04-zone-and-registry/">
+                                <span class="button__text">Zone Classification and Semantic Registry: Avoiding Blacklist-Style Reporting</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>

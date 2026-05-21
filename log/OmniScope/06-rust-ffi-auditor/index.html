@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="Rust FFI risk often appears when Rust’s ownership and borrowing protocols cross an ABI boundary. `RustFfiAuditor` maps those protocols back onto LLVM IR patterns that can be inspected statically.">
+
+    <meta property="og:description" content="Rust FFI risk often appears when Rust’s ownership and borrowing protocols cross an ABI boundary. `RustFfiAuditor` maps those protocols back onto LLVM IR patterns that can be inspected statically.">
+    <meta property="og:title" content="Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/06-rust-ffi-auditor/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Rust FFI risk often appears when Rust’s ownership and borrowing protocols cross an ABI boundary. `RustFfiAuditor` maps those protocols back onto LLVM IR patterns that can be inspected statically.">
+    <meta name="twitter:title" content="Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/06-rust-ffi-auditor/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/06-rust-ffi-auditor/">Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="rust-ffi-auditor-reconstructing-and-checking-cross-language-ownership-protocols">Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols</h1>
+<p>Rust FFI risk often appears when Rust’s ownership and borrowing protocols cross an ABI boundary. <code>RustFfiAuditor</code> maps those protocols back onto LLVM IR patterns that can be inspected statically.</p>
+<h2 id="rule-surface">Rule surface</h2>
+<p><code>RustFfiAuditor</code> is defined at <code>src/pass/analysis/rust_ffi_auditor.zig:63</code>. Its function-level logic covers Rust-specific patterns and general FFI boundary checks:</p>
+<ul>
+<li><code>into_raw</code> without a matching <code>from_raw</code>;</li>
+<li><code>as_ptr</code> borrow escape;</li>
+<li>Rust allocator and C <code>free</code> mismatch;</li>
+<li>ownership-transfer protocol violations;</li>
+<li>dangling <code>as_ptr</code> after parent object drop;</li>
+<li>unsafe FFI calls;</li>
+<li>stack address escape to <code>extern C</code>.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[RustFfiAuditor] --&gt; B[Box::into_raw / from_raw]</span></span>
+<span class="giallo-l"><span>    A --&gt; C[as_ptr borrow escape]</span></span>
+<span class="giallo-l"><span>    A --&gt; D[allocator mismatch]</span></span>
+<span class="giallo-l"><span>    A --&gt; E[ownership transfer]</span></span>
+<span class="giallo-l"><span>    A --&gt; F[dangling as_ptr]</span></span>
+<span class="giallo-l"><span>    A --&gt; G[unsafe FFI call]</span></span>
+<span class="giallo-l"><span>    A --&gt; H[stack escape]</span></span></code></pre><h2 id="as-ptr-borrow-escape-recovering-a-lifetime-risk-from-ir-calls"><code>as_ptr</code> borrow escape: recovering a lifetime risk from IR calls</h2>
+<p><code>detectAsPtrEscape</code> is implemented at <code>src/pass/analysis/rust_ffi_auditor.zig:180</code>. It iterates LLVM functions, basic blocks, and instructions; handles only <code>LLVMCall</code> and <code>LLVMInvoke</code>; retrieves the callee from the final operand; reads the callee name; and matches Rust <code>as_ptr</code> patterns.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[LLVM Function] --&gt; B[BasicBlock iterator]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Instruction iterator]</span></span>
+<span class="giallo-l"><span>    C --&gt; D{opcode == call/invoke?}</span></span>
+<span class="giallo-l"><span>    D --&gt;|No| C</span></span>
+<span class="giallo-l"><span>    D --&gt;|Yes| E[Read callee operand]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[LLVMGetValueName]</span></span>
+<span class="giallo-l"><span>    F --&gt; G{isRustAsPtrCall?}</span></span>
+<span class="giallo-l"><span>    G --&gt;|No| C</span></span>
+<span class="giallo-l"><span>    G --&gt;|Yes| H[addFinding + ctx.addIssue]</span></span></code></pre>
+<p>The risk is that <code>String</code> or <code>Vec</code> <code>as_ptr</code> returns a borrowed pointer. If C stores it, the Rust object may be dropped while C still holds the address.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant R as Rust local Vec/String</span></span>
+<span class="giallo-l"><span>    participant P as raw pointer from as_ptr</span></span>
+<span class="giallo-l"><span>    participant C as C FFI callee</span></span>
+<span class="giallo-l"><span>    R-&gt;&gt;P: as_ptr()</span></span>
+<span class="giallo-l"><span>    P-&gt;&gt;C: pass pointer</span></span>
+<span class="giallo-l"><span>    R-&gt;&gt;R: local value dropped</span></span>
+<span class="giallo-l"><span>    C-&gt;&gt;P: later use</span></span>
+<span class="giallo-l"><span>    P--&gt;&gt;C: dangling pointer risk</span></span></code></pre>
+<p>At <code>src/pass/analysis/rust_ffi_auditor.zig:212</code>, the rule creates a <code>borrow_escape</code> issue through <code>Issue.initWithReason</code>, with a reason explaining that a local <code>String/Vec</code> pointer passed to extern C may dangle.</p>
+<h2 id="into-raw-from-raw-ownership-transfer-should-close-correctly"><code>into_raw/from_raw</code>: ownership transfer should close correctly</h2>
+<p><code>Box::into_raw</code> converts Rust-managed heap ownership into a raw pointer. The caller must ensure the later deallocation protocol is correct. Missing restoration can leak; double restoration can double free; C-side release can produce allocator mismatch depending on allocation protocol.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[Box&lt;T&gt;] --&gt; B[Box::into_raw]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[*mut T]</span></span>
+<span class="giallo-l"><span>    C --&gt; D{Later protocol}</span></span>
+<span class="giallo-l"><span>    D --&gt;|from_raw exactly once| E[Ownership restored]</span></span>
+<span class="giallo-l"><span>    D --&gt;|Never restored| F[Leak risk]</span></span>
+<span class="giallo-l"><span>    D --&gt;|C free + Rust drop| G[Double free / allocator mismatch]</span></span></code></pre>
+<p><code>into_raw</code> alone is not a vulnerability. The finding depends on the surrounding protocol and subsequent pointer flow.</p>
+<h2 id="cross-language-allocator-mismatch">Cross-language allocator mismatch</h2>
+<p><code>detectCrossLangMismatch</code> starts at <code>src/pass/analysis/rust_ffi_auditor.zig:230</code>. It iterates call/invoke instructions and attempts to identify Rust allocation paired with C deallocation.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant RA as Rust allocator</span></span>
+<span class="giallo-l"><span>    participant IR as LLVM IR pointer</span></span>
+<span class="giallo-l"><span>    participant CF as C free</span></span>
+<span class="giallo-l"><span>    RA-&gt;&gt;IR: allocate / expose pointer</span></span>
+<span class="giallo-l"><span>    IR-&gt;&gt;CF: pointer crosses ABI</span></span>
+<span class="giallo-l"><span>    CF-&gt;&gt;CF: free(pointer)</span></span>
+<span class="giallo-l"><span>    CF--&gt;&gt;RA: allocator ownership contract may be violated</span></span></code></pre>
+<p>The accuracy of this kind of check depends on symbol names, preserved call relationships, wrappers, inlining, and custom allocators.</p>
+<h2 id="general-ffi-checks">General FFI checks</h2>
+<p>The auditor also runs checks that are not Rust-only, such as unsafe FFI call scanning and stack address escape. Stack escape is relevant when a pointer to a local object is passed to C and then stored beyond the call.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[alloca / local stack object] --&gt; B[Take address]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Pass to extern C]</span></span>
+<span class="giallo-l"><span>    C --&gt; D{Does C store it?}</span></span>
+<span class="giallo-l"><span>    D --&gt;|Yes| E[Dangling after return]</span></span>
+<span class="giallo-l"><span>    D --&gt;|No| F[Depends on call-duration use]</span></span></code></pre><h2 id="summary">Summary</h2>
+<p><code>RustFfiAuditor</code> maps Rust ownership and borrowing concepts onto IR-level call and pointer patterns. It should be described as static protocol recovery and checking, with accuracy bounded by available IR information.</p>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/07-output-and-integration/">
+                                <span class="button__icon">←</span>&nbsp;
+                                <span class="button__text">Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/05-memory-graph-danger-surface/">
+                                <span class="button__text">MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>

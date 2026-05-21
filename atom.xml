@@ -8,6 +8,648 @@
     <updated>2026-05-21T00:00:00+00:00</updated>
     <id>https://Timwood0x10.github.io/myblog/atom.xml</id>
     <entry xml:lang="en">
+        <title>OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing</title>
+        <published>2026-05-21T00:00:00+00:00</published>
+        <updated>2026-05-21T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/">&lt;h1 id=&quot;omniscope-deep-dive-series-from-llvm-ir-to-cross-language-ownership-auditing&quot;&gt;OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing&lt;&#x2F;h1&gt;
+&lt;p&gt;This series is a source-level technical walkthrough, not a product pitch. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.&lt;&#x2F;p&gt;
+&lt;p&gt;OmniScope focuses on one concrete question: &lt;strong&gt;after ownership, lifetime, and deallocation protocols cross a language boundary, can a static analyzer recover enough semantics to produce reviewable findings?&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[LLVM IR input] --&amp;gt; B[Module loading]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[PassContext]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D[CallGraph &#x2F; CrossLangEdge]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; E[MemoryGraph]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; F[Zone &#x2F; Registry]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; G[DangerSurface]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; G&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt; G&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    G --&amp;gt; H[Ownership &#x2F; Lifetime &#x2F; FFI rules]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    H --&amp;gt; I[Issue &#x2F; JSON &#x2F; SARIF]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;articles&quot;&gt;Articles&lt;&#x2F;h2&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;OmniScope&#x2F;00-series-index&#x2F;.&#x2F;01-what-is-omniscope.md&quot;&gt;Why OmniScope analyzes cross-language safety at the LLVM IR layer&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;OmniScope&#x2F;00-series-index&#x2F;.&#x2F;02-cli-to-pipeline.md&quot;&gt;Lifecycle of an analysis run: CLI, IRLoader, Pipeline, and output&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;OmniScope&#x2F;00-series-index&#x2F;.&#x2F;03-pass-system.md&quot;&gt;Inside the Pass system: dependency ordering, shared context, and graceful degradation&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;OmniScope&#x2F;00-series-index&#x2F;.&#x2F;04-zone-and-registry.md&quot;&gt;Zone Classification and Semantic Registry: avoiding blacklist-style reporting&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;OmniScope&#x2F;00-series-index&#x2F;.&#x2F;05-memory-graph-danger-surface.md&quot;&gt;MemoryGraph and DangerSurface: from pointer facts to risk paths&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;OmniScope&#x2F;00-series-index&#x2F;.&#x2F;06-rust-ffi-auditor.md&quot;&gt;Rust FFI Auditor: reconstructing and checking cross-language ownership protocols&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;OmniScope&#x2F;00-series-index&#x2F;.&#x2F;07-output-and-integration.md&quot;&gt;Reporting pipeline: Issue objects, JSON, SARIF, and engineering integration&lt;&#x2F;a&gt;&lt;&#x2F;li&gt;
+&lt;&#x2F;ol&gt;
+&lt;h2 id=&quot;source-reading-map&quot;&gt;Source Reading Map&lt;&#x2F;h2&gt;
+&lt;ul&gt;
+&lt;li&gt;Entry and output: &lt;code&gt;src&#x2F;main.zig:73&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;main.zig:153&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;main.zig:171&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;main.zig:207&lt;&#x2F;code&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;Pipeline: &lt;code&gt;src&#x2F;pipeline&#x2F;pipeline.zig:27&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;pipeline&#x2F;pipeline.zig:66&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;pipeline&#x2F;pipeline.zig:223&lt;&#x2F;code&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;Pass system: &lt;code&gt;src&#x2F;pass&#x2F;manager.zig:61&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;pass&#x2F;manager.zig:193&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:192&lt;&#x2F;code&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;Semantic layer: &lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:24&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;registry&#x2F;semantic_registry.zig:90&lt;&#x2F;code&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;Risk paths: &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:866&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;semantics&#x2F;memory_graph.zig:892&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;danger_surface.zig:37&lt;&#x2F;code&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;Rust FFI: &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;rust_ffi_auditor.zig:63&lt;&#x2F;code&gt;, &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;rust_ffi_auditor.zig:180&lt;&#x2F;code&gt;&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h2 id=&quot;how-to-read&quot;&gt;How to Read&lt;&#x2F;h2&gt;
+&lt;p&gt;Read this as a mechanism-by-mechanism walkthrough. Each article follows one implementation path: how input becomes analysis context, how passes exchange facts, how Zone and Registry reduce noise, how MemoryGraph models pointer flow, and how Rust FFI ownership rules are checked.&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer</title>
+        <published>2026-05-21T00:00:00+00:00</published>
+        <updated>2026-05-21T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/OmniScope/01-what-is-omniscope/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/OmniScope/01-what-is-omniscope/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/OmniScope/01-what-is-omniscope/">&lt;h1 id=&quot;why-omniscope-analyzes-cross-language-safety-at-the-llvm-ir-layer&quot;&gt;Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer&lt;&#x2F;h1&gt;
+&lt;p&gt;Rust ownership, Zig allocators, Go GC, and C++ RAII are language-level safety models. Across FFI, those models are lowered into ABI-level facts: functions, pointers, integers, layouts, and calling conventions. OmniScope works at this layer because many cross-language issues are difficult to cover from a single language AST alone.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;the-issue-is-not-free-it-is-the-lost-deallocation-protocol&quot;&gt;The issue is not &lt;code&gt;free&lt;&#x2F;code&gt;; it is the lost deallocation protocol&lt;&#x2F;h2&gt;
+&lt;p&gt;A common Rust&#x2F;C boundary pattern is: Rust exposes a pointer through &lt;code&gt;Box::into_raw&lt;&#x2F;code&gt;, then C stores or releases that pointer. In Rust, &lt;code&gt;into_raw&lt;&#x2F;code&gt; is an explicit ownership transfer. In C, &lt;code&gt;free(ptr)&lt;&#x2F;code&gt; is an ordinary deallocation. The problem is that no single compiler verifies the full protocol across both sides.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;sequenceDiagram&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant R as Rust ownership model&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant ABI as C ABI &#x2F; LLVM IR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant C as C manual memory&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    R-&amp;gt;&amp;gt;ABI: Box::into_raw becomes a raw pointer&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    ABI-&amp;gt;&amp;gt;C: extern C argument passing&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C-&amp;gt;&amp;gt;C: store &#x2F; free &#x2F; callback use&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C--&amp;gt;&amp;gt;R: Rust cannot verify the C-side protocol&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;At the IR layer, source syntax is gone, but external declarations, call&#x2F;invoke instructions, allocas, loads&#x2F;stores, bitcasts, symbol names, and some debug information may remain. The analyzer tries to recover enough ownership and lifetime semantics from these facts.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;what-omniscope-actually-analyzes&quot;&gt;What OmniScope actually analyzes&lt;&#x2F;h2&gt;
+&lt;p&gt;OmniScope’s entry point consumes LLVM IR files such as &lt;code&gt;.ll&lt;&#x2F;code&gt; and &lt;code&gt;.bc&lt;&#x2F;code&gt;, not source directories. Argument parsing starts at &lt;code&gt;src&#x2F;main.zig:73&lt;&#x2F;code&gt;, the main entry is &lt;code&gt;src&#x2F;main.zig:567&lt;&#x2F;code&gt;, and single-module analysis is driven by &lt;code&gt;runModulePipeline&lt;&#x2F;code&gt; at &lt;code&gt;src&#x2F;main.zig:171&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Source languages: Rust &#x2F; C &#x2F; Zig &#x2F; Go &#x2F; C++] --&amp;gt; B[Compiler emits LLVM IR]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[IRLoader obtains ModuleRef]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D[Pipeline.setModule]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; E[PassContext.module]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; F[Passes iterate functions, blocks, instructions]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This also defines the limits. OmniScope can inspect facts that remain in IR and can use symbols and debug information when available. Heavy optimization, missing symbols, or wrapper-heavy code may reduce the amount of recoverable semantics.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;it-is-not-a-dangerous-function-blacklist&quot;&gt;It is not a dangerous-function blacklist&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;src&#x2F;registry&#x2F;semantic_registry.zig:3&lt;&#x2F;code&gt; describes the registry as a function-semantics knowledge base for FFI boundary analysis, not a simple blacklist. &lt;code&gt;src&#x2F;registry&#x2F;semantic_registry.zig:8&lt;&#x2F;code&gt; also notes that the same function may carry different risk depending on context.&lt;&#x2F;p&gt;
+&lt;p&gt;For example:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;A local C &lt;code&gt;free&lt;&#x2F;code&gt; may be a normal lifetime endpoint.&lt;&#x2F;li&gt;
+&lt;li&gt;A Rust &lt;code&gt;Box&lt;&#x2F;code&gt; pointer released by C may indicate allocator mismatch or ownership protocol breakage.&lt;&#x2F;li&gt;
+&lt;li&gt;Rust &lt;code&gt;as_ptr&lt;&#x2F;code&gt; used locally may be benign, while passing it to FFI and storing it may create a dangling pointer.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Function call] --&amp;gt; B{Crosses language boundary?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt;|No| C[Local semantics]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt;|Yes| D[FFI semantics]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; E[May be lower priority]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; F[Check ownership &#x2F; lifetime &#x2F; allocator context]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;main-source-level-pillars&quot;&gt;Main source-level pillars&lt;&#x2F;h2&gt;
+&lt;p&gt;The implementation is organized around shared analysis structures:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;PassContext&lt;&#x2F;code&gt;: shared state for passes, defined at &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:192&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;cross_lang_edges&lt;&#x2F;code&gt;: cross-language call edges.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;MemoryGraph&lt;&#x2F;code&gt;: memory objects, frees, call arguments, returns, and alias relations.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;ZoneKind&lt;&#x2F;code&gt;: &lt;code&gt;safe&lt;&#x2F;code&gt;, &lt;code&gt;unsafe&lt;&#x2F;code&gt;, &lt;code&gt;ffi&lt;&#x2F;code&gt;, &lt;code&gt;runtime_internal&lt;&#x2F;code&gt;, and &lt;code&gt;unknown&lt;&#x2F;code&gt;, defined at &lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:24&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;SemanticRegistry&lt;&#x2F;code&gt;: layered function semantics, looked up through &lt;code&gt;src&#x2F;registry&#x2F;semantic_registry.zig:90&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TB&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[LLVM IR facts] --&amp;gt; B[PassContext]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[CrossLangEdge]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; D[MemoryGraph]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; E[Zone cache]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; F[Registry cache]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; G[DangerSurface]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; G&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; G&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt; G&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    G --&amp;gt; H[Issue]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;practical-limits&quot;&gt;Practical limits&lt;&#x2F;h2&gt;
+&lt;p&gt;OmniScope performs static recovery and risk classification; it is not a runtime proof system. It depends on:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;Enough call and symbol information remaining in IR.&lt;&#x2F;li&gt;
+&lt;li&gt;Recognizable cross-language declarations and call sites.&lt;&#x2F;li&gt;
+&lt;li&gt;MemoryGraph coverage for relevant pointer flows.&lt;&#x2F;li&gt;
+&lt;li&gt;Zone and Registry rules that cover the project’s FFI patterns.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;A careful description should avoid absolute detection claims. A more accurate framing is: OmniScope reconstructs queryable facts about ownership, lifetime, and allocator protocols at language boundaries, then uses risk-path filtering to prioritize findings.&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>Lifecycle of an Analysis Run: CLI, IRLoader, Pipeline, and Output</title>
+        <published>2026-05-21T00:00:00+00:00</published>
+        <updated>2026-05-21T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/OmniScope/02-cli-to-pipeline/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/OmniScope/02-cli-to-pipeline/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/OmniScope/02-cli-to-pipeline/">&lt;h1 id=&quot;lifecycle-of-an-analysis-run-cli-irloader-pipeline-and-output&quot;&gt;Lifecycle of an Analysis Run: CLI, IRLoader, Pipeline, and Output&lt;&#x2F;h1&gt;
+&lt;p&gt;This article follows one OmniScope run from command-line arguments to structured findings. The important part is how the code turns user input into a &lt;code&gt;PassContext&lt;&#x2F;code&gt;, runs analysis passes, and emits reports.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;config-defines-the-external-shape-of-the-run&quot;&gt;Config defines the external shape of the run&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;Config&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;main.zig:24&lt;&#x2F;code&gt;. It stores input files, output format, output path, visualization flag, user-code focus, FFI-only mode, and stdlib inclusion. Argument parsing starts at &lt;code&gt;src&#x2F;main.zig:73&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[argv] --&amp;gt; B[parseArgs]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[Config]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D[input_files]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; E[output_format: text&#x2F;json&#x2F;sarif]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; F[visualize]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; G[focus_user_code &#x2F; ffi_only &#x2F; include_stdlib]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;One implementation detail matters: the CLI parses analysis intent, but the exact effect depends on individual pass implementations. For example, some noise-reduction options are instantiated inside specific passes.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;runmodulepipeline-is-the-analysis-loop&quot;&gt;&lt;code&gt;runModulePipeline&lt;&#x2F;code&gt; is the analysis loop&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;runModulePipeline&lt;&#x2F;code&gt; is located at &lt;code&gt;src&#x2F;main.zig:171&lt;&#x2F;code&gt;. It initializes the Pipeline, attaches the LLVM module, registers passes, runs static analysis, and collects issues.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;sequenceDiagram&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant Main as main.zig&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant Loader as IRLoader&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant Pipe as Pipeline&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant PM as PassManager&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Main-&amp;gt;&amp;gt;Pipe: Pipeline.init(allocator)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Loader--&amp;gt;&amp;gt;Main: getModule()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Main-&amp;gt;&amp;gt;Pipe: setModule(module_ref)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Main-&amp;gt;&amp;gt;Pipe: registerAllPasses()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Main-&amp;gt;&amp;gt;Pipe: runStaticAnalysis()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Pipe-&amp;gt;&amp;gt;PM: run(ctx, diag)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    PM--&amp;gt;&amp;gt;Pipe: shared facts and issues&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Pipe--&amp;gt;&amp;gt;Main: PipelineResult&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Source anchors:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;src&#x2F;main.zig:171&lt;&#x2F;code&gt; initializes &lt;code&gt;Pipeline&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;src&#x2F;main.zig:173&lt;&#x2F;code&gt; obtains the module from &lt;code&gt;IRLoader&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;src&#x2F;main.zig:177&lt;&#x2F;code&gt; registers passes.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;src&#x2F;main.zig:180&lt;&#x2F;code&gt; runs static analysis.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;src&#x2F;main.zig:184&lt;&#x2F;code&gt; reads issues from the pipeline.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h2 id=&quot;registerallpasses-reveals-the-analysis-sequence&quot;&gt;&lt;code&gt;registerAllPasses&lt;&#x2F;code&gt; reveals the analysis sequence&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;registerAllPasses&lt;&#x2F;code&gt; is at &lt;code&gt;src&#x2F;main.zig:153&lt;&#x2F;code&gt;. It registers CallGraph, TaintPropagation, FFI Boundary, FFI Type Mismatch, FFI Body Check, FFI Unsafe, PtrLifetime, DangerSurface, PointerOwnership, CallbackEscape, RustFfiAuditor, ReturnCheck, MemorySafety, FreeValidation, and BufferOverflow.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[CallGraph] --&amp;gt; B[FFI Boundary]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[Type &#x2F; Body &#x2F; Unsafe]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D[PtrLifetime]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; E[DangerSurface]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; F[PointerOwnership]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt; G[CallbackEscape &#x2F; RustFfiAuditor]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    G --&amp;gt; H[MemorySafety &#x2F; FreeValidation &#x2F; BufferOverflow]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The registration order is not necessarily the final execution order. The final order is resolved by &lt;code&gt;PassManager&lt;&#x2F;code&gt;, with execution starting at &lt;code&gt;src&#x2F;pass&#x2F;manager.zig:193&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;pipeline-run-builds-the-analysis-context&quot;&gt;&lt;code&gt;Pipeline.run&lt;&#x2F;code&gt; builds the analysis context&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;Pipeline&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;pipeline&#x2F;pipeline.zig:27&lt;&#x2F;code&gt;. It stores &lt;code&gt;FactStore&lt;&#x2F;code&gt;, &lt;code&gt;QueryEngine&lt;&#x2F;code&gt;, &lt;code&gt;DataFlowGraph&lt;&#x2F;code&gt;, &lt;code&gt;PassManager&lt;&#x2F;code&gt;, and the current module. &lt;code&gt;Pipeline.run&lt;&#x2F;code&gt; creates the &lt;code&gt;PassContext&lt;&#x2F;code&gt; at &lt;code&gt;src&#x2F;pipeline&#x2F;pipeline.zig:66&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;code&gt;PassContext&lt;&#x2F;code&gt; contains shared state such as:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;facts and query engine;&lt;&#x2F;li&gt;
+&lt;li&gt;data-flow graph;&lt;&#x2F;li&gt;
+&lt;li&gt;value-id map;&lt;&#x2F;li&gt;
+&lt;li&gt;registry and zone caches;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;cross_lang_edges&lt;&#x2F;code&gt;;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;global_alloc_tracker&lt;&#x2F;code&gt;;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;memory_graph&lt;&#x2F;code&gt;;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;danger_surface_relevant&lt;&#x2F;code&gt;, &lt;code&gt;ffi_auto_relevant&lt;&#x2F;code&gt;, and &lt;code&gt;relevant_functions&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TB&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    subgraph Pipeline.run&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        A[Clear DataFlowGraph] --&amp;gt; B[Create PassContext]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        B --&amp;gt; C[Attach module]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        B --&amp;gt; D[Initialize caches]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        B --&amp;gt; E[Initialize MemoryGraph]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        B --&amp;gt; F[Initialize CrossLangEdges]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        F --&amp;gt; G[PassManager.run]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    end&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;output-is-part-of-the-design&quot;&gt;Output is part of the design&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;emitOutput&lt;&#x2F;code&gt; is at &lt;code&gt;src&#x2F;main.zig:207&lt;&#x2F;code&gt;. It branches into JSON, SARIF, or text output. JSON is produced by &lt;code&gt;formatIssuesAsJson&lt;&#x2F;code&gt;; SARIF is produced by &lt;code&gt;SarifOutput&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Issue list] --&amp;gt; B[emitOutput]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[JSON: formatIssuesAsJson]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; D[SARIF: SarifOutput]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; E[Text]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; F[stdout &#x2F; file]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; F&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; G[terminal]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;summary&quot;&gt;Summary&lt;&#x2F;h2&gt;
+&lt;p&gt;An OmniScope run follows a clear data path: CLI creates configuration, IRLoader supplies a module, Pipeline creates shared analysis context, PassManager executes passes, and &lt;code&gt;emitOutput&lt;&#x2F;code&gt; formats results.&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation</title>
+        <published>2026-05-21T00:00:00+00:00</published>
+        <updated>2026-05-21T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/OmniScope/03-pass-system/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/OmniScope/03-pass-system/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/OmniScope/03-pass-system/">&lt;h1 id=&quot;inside-the-pass-system-dependency-ordering-shared-context-and-graceful-degradation&quot;&gt;Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation&lt;&#x2F;h1&gt;
+&lt;p&gt;OmniScope organizes analysis logic as passes rather than one large procedure. The relevant implementation questions are how passes share facts, how execution order is resolved, and how the system behaves when one pass fails.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;what-passmanager-owns&quot;&gt;What PassManager owns&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;PassManager&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;pass&#x2F;manager.zig:23&lt;&#x2F;code&gt;. It stores registered passes, a name-to-index map, resolved execution order, and cached execution names. Registration starts at &lt;code&gt;src&#x2F;pass&#x2F;manager.zig:61&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[registerPass] --&amp;gt; B[passes ArrayList]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A --&amp;gt; C[pass_map]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; D[resolveDependencies]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; E[resolved_order]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; F[run]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This keeps scheduling separate from the CLI and from each individual pass.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;dependency-resolution-uses-kahn-topological-sorting&quot;&gt;Dependency resolution uses Kahn topological sorting&lt;&#x2F;h2&gt;
+&lt;p&gt;The dependency resolver builds an adjacency list and in-degree table. Passes with zero in-degree enter the queue. Each popped node reduces the in-degree of its successors. If the final result contains fewer nodes than the registered pass count, a cycle is reported.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Passes + dependencies] --&amp;gt; B[Build adjacency &#x2F; in_degree]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[Queue zero in-degree nodes]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D[Pop node]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; E[Reduce successor in-degree]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; F{Successor reaches zero?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt;|Yes| C&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt;|No| G[Continue]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    G --&amp;gt; H{All passes resolved?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    H --&amp;gt;|Yes| I[resolved_order]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    H --&amp;gt;|No| J[CycleDetected]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This matters because later passes may consume facts produced by earlier passes: risk-path checks need cross-language edges and memory facts; ownership checks need allocation and call information.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;graceful-degradation-is-deliberate&quot;&gt;Graceful degradation is deliberate&lt;&#x2F;h2&gt;
+&lt;p&gt;The run loop starts at &lt;code&gt;src&#x2F;pass&#x2F;manager.zig:193&lt;&#x2F;code&gt;. If a pass fails, the manager logs a warning, increments a failure counter, and continues executing later passes.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Run pass] --&amp;gt; B{run_fn succeeds?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt;|Yes| C[Record timing]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt;|No| D[warn + pass_failures++]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; E{More passes?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; E&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt;|Yes| A&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt;|No| F[Finish analysis]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This is useful for real-world IR, which may come from different compilers, optimization levels, or link configurations. A failure in one analysis stage should not necessarily discard unrelated findings.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;passcontext-is-the-fact-bus&quot;&gt;PassContext is the fact bus&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;PassContext&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:192&lt;&#x2F;code&gt;. It is the shared state through which passes exchange information. CallGraphPass may write &lt;code&gt;cross_lang_edges&lt;&#x2F;code&gt;; PtrLifetimePass may write &lt;code&gt;memory_graph&lt;&#x2F;code&gt;; DangerSurfacePass may write relevance sets; issue-producing passes read those facts.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[CallGraphPass] --&amp;gt;|writes| X[PassContext.cross_lang_edges]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B[PtrLifetimePass] --&amp;gt;|writes| Y[PassContext.memory_graph]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C[DangerSurfacePass] --&amp;gt;|reads X&#x2F;Y, writes| Z[relevant sets]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D[FFI &#x2F; Ownership &#x2F; Memory passes] --&amp;gt;|read Z&#x2F;Y| E[Issue]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;diagnosticwriter-and-structured-issues&quot;&gt;DiagnosticWriter and structured issues&lt;&#x2F;h2&gt;
+&lt;p&gt;Passes receive both &lt;code&gt;PassContext&lt;&#x2F;code&gt; and &lt;code&gt;DiagnosticWriter&lt;&#x2F;code&gt;. &lt;code&gt;DiagnosticWriter&lt;&#x2F;code&gt; handles logs and diagnostics. Structured findings are added through &lt;code&gt;ctx.addIssue&lt;&#x2F;code&gt;, whose entry point is at &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:458&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Pass detects finding] --&amp;gt; B{Diagnostic only?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt;|Yes| C[DiagnosticWriter]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt;|No| D[Issue.init &#x2F; initWithReason]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; E[ctx.addIssue]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; F[DataFlowGraph issues]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt; G[Pipeline.getIssues]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;summary&quot;&gt;Summary&lt;&#x2F;h2&gt;
+&lt;p&gt;The pass system provides registration, dependency ordering, shared state, graceful degradation, and structured issue collection. The later MemoryGraph, Zone, and Registry mechanisms rely on this shared execution model.&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>Zone Classification and Semantic Registry: Avoiding Blacklist-Style Reporting</title>
+        <published>2026-05-21T00:00:00+00:00</published>
+        <updated>2026-05-21T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/OmniScope/04-zone-and-registry/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/OmniScope/04-zone-and-registry/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/OmniScope/04-zone-and-registry/">&lt;h1 id=&quot;zone-classification-and-semantic-registry-avoiding-blacklist-style-reporting&quot;&gt;Zone Classification and Semantic Registry: Avoiding Blacklist-Style Reporting&lt;&#x2F;h1&gt;
+&lt;p&gt;A static analyzer without semantic layers can easily become a dangerous-function list. OmniScope separates region classification from function semantics before deciding whether a path should be analyzed in depth.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zonekind-classifies-code-by-risk-region&quot;&gt;ZoneKind classifies code by risk region&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;ZoneKind&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:24&lt;&#x2F;code&gt;. It includes &lt;code&gt;safe&lt;&#x2F;code&gt;, &lt;code&gt;unsafe&lt;&#x2F;code&gt;, &lt;code&gt;ffi&lt;&#x2F;code&gt;, &lt;code&gt;runtime_internal&lt;&#x2F;code&gt;, and &lt;code&gt;unknown&lt;&#x2F;code&gt;. The file-level comment states the operating principle: focus where language guarantees stop.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Function &#x2F; Instruction &#x2F; Debug path] --&amp;gt; B[Zone Classifier]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[safe: language guarantees likely apply]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; D[unsafe: explicit escape]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; E[ffi: cross-language boundary]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; F[runtime_internal: stdlib&#x2F;runtime]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; G[unknown: conservative handling]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This model is not a proof that safe zones are bug-free. It is a prioritization layer. For an FFI-focused analyzer, runtime glue or container internals should usually not have the same weight as user-written unsafe wrappers.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;multi-language-escape-triggers&quot;&gt;Multi-language escape triggers&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;EscapeTrigger&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:45&lt;&#x2F;code&gt;. It represents cross-language escape points across ecosystems: Rust unsafe&#x2F;extern&#x2F;raw pointers, Zig pointer casts and C imports, Go cgo and &lt;code&gt;unsafe.Pointer&lt;&#x2F;code&gt;, and C++ extern C, reinterpret casts, and manual memory.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Rust unsafe &#x2F; extern C] --&amp;gt; Z[EscapeTrigger]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B[Zig @ptrCast &#x2F; @cImport] --&amp;gt; Z&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C[Go cgo &#x2F; unsafe.Pointer] --&amp;gt; Z&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D[C++ reinterpret_cast &#x2F; malloc] --&amp;gt; Z&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Z --&amp;gt; E[ZoneKind unsafe or ffi]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This gives the implementation a common vocabulary for multiple language-specific risk boundaries.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;function-level-and-llvm-level-classification&quot;&gt;Function-level and LLVM-level classification&lt;&#x2F;h2&gt;
+&lt;p&gt;The classifier includes both name-based and LLVM-function-based entry points:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:347&lt;&#x2F;code&gt; classifies by function name.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:394&lt;&#x2F;code&gt; classifies LLVM functions using declarations, intrinsics, debug information, and path data when available.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[LLVMValueRef function] --&amp;gt; B{External declaration?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt;|Yes| C[May be ffi]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt;|No| D[Name-based classification]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; E[Path&#x2F;debug-info classification]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; F[ZoneKind]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;These rules are heuristic. Symbol names and debug information quality can affect classification, so Zone should be described as a risk-prioritization mechanism rather than a formal proof.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;semantic-registry-describes-function-meaning-in-ffi-context&quot;&gt;Semantic Registry describes function meaning in FFI context&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;SemanticRegistry&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;registry&#x2F;semantic_registry.zig:48&lt;&#x2F;code&gt;; lookup starts at &lt;code&gt;src&#x2F;registry&#x2F;semantic_registry.zig:90&lt;&#x2F;code&gt;. The registry is layered by ecosystem: C standard library, Rust ownership patterns, Go cgo, Zig, C++, JNI, Python C API, POSIX, and dynamic loading.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[func_name] --&amp;gt; B[SemanticRegistry.lookup]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[Layer1: C stdlib high-risk]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; D[Layer2: Rust ownership]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; E[Layer3: Go cgo]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; F[Layer5: Zig stdlib]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; G[Layer6: C++ stdlib]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; H[JNI &#x2F; Python C API &#x2F; POSIX]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; I[FunctionSemantics]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; I&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; I&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt; I&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    G --&amp;gt; I&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    H --&amp;gt; I&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The registry helps interpret calls in context. &lt;code&gt;Box::into_raw&lt;&#x2F;code&gt; is not a vulnerability by itself; it changes the ownership protocol. &lt;code&gt;strcpy&lt;&#x2F;code&gt; in local C code and &lt;code&gt;strcpy&lt;&#x2F;code&gt; at a Rust-to-C boundary may require different review priorities.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zone-registry-danger-path&quot;&gt;Zone + Registry + Danger Path&lt;&#x2F;h2&gt;
+&lt;p&gt;Zone and Registry should not produce most findings directly. A more controlled path is: classify the region, look up function semantics, ask whether the pointer or function is on a relevant risk path, then produce an issue if warranted.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Call &#x2F; Function] --&amp;gt; B[Zone]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A --&amp;gt; C[Registry]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; D[Region risk]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; E[Function semantics]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; F[Danger path]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; F&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt; G{Report?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    G --&amp;gt;|Yes| H[Issue]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    G --&amp;gt;|No| I[Filter or lower priority]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;summary&quot;&gt;Summary&lt;&#x2F;h2&gt;
+&lt;p&gt;OmniScope avoids pure blacklist reporting by splitting a finding into three questions: where is the code located, what does the function mean at an FFI boundary, and does the pointer or function participate in a relevant risk path?&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths</title>
+        <published>2026-05-21T00:00:00+00:00</published>
+        <updated>2026-05-21T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/OmniScope/05-memory-graph-danger-surface/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/OmniScope/05-memory-graph-danger-surface/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/OmniScope/05-memory-graph-danger-surface/">&lt;h1 id=&quot;memorygraph-and-dangersurface-from-pointer-facts-to-risk-paths&quot;&gt;MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths&lt;&#x2F;h1&gt;
+&lt;p&gt;Cross-language memory analysis should not only ask whether &lt;code&gt;malloc&lt;&#x2F;code&gt; or &lt;code&gt;free&lt;&#x2F;code&gt; exists. It should ask whether a pointer crosses FFI, comes from an unsafe region, or propagates through aliases. OmniScope uses &lt;code&gt;MemoryGraph&lt;&#x2F;code&gt; and &lt;code&gt;DangerSurfacePass&lt;&#x2F;code&gt; to connect these facts.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;role-of-memorygraph&quot;&gt;Role of MemoryGraph&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;MemoryGraph&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;semantics&#x2F;memory_graph.zig:160&lt;&#x2F;code&gt;. It stores memory-related facts: allocations, frees, call arguments, call returns, alias relations, zones, and language sources.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[trackAlloc] --&amp;gt; M[MemoryGraph]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B[trackFree] --&amp;gt; M&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C[trackCallArg] --&amp;gt; M&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D[trackCallRet] --&amp;gt; M&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E[alias relation] --&amp;gt; M&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F[Zone &#x2F; Language] --&amp;gt; M&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    M --&amp;gt; G[isOnDangerPath]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The graph does not attempt to model every possible program path. It answers a narrower question: is there enough evidence that this pointer is relevant to an FFI&#x2F;unsafe risk path?&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;risk-path-classification&quot;&gt;Risk-path classification&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;MemoryGraph.isOnDangerPath&lt;&#x2F;code&gt; is implemented around &lt;code&gt;src&#x2F;semantics&#x2F;memory_graph.zig:892&lt;&#x2F;code&gt;. It may return categories such as &lt;code&gt;ffi_arg&lt;&#x2F;code&gt;, &lt;code&gt;ffi_ret&lt;&#x2F;code&gt;, and &lt;code&gt;unsafe_alloc&lt;&#x2F;code&gt;. &lt;code&gt;PassContext.isOnDangerPathFull&lt;&#x2F;code&gt; at &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:866&lt;&#x2F;code&gt; provides a shared entry point for other passes.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[ptr_val] --&amp;gt; B[PassContext.isOnDangerPathFull]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[MemoryGraph.isOnDangerPath]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D{DangerPathKind}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt;|ffi_arg| E[Pointer passed as FFI argument]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt;|ffi_ret| F[Pointer returned from FFI]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt;|unsafe_alloc| G[Allocation in unsafe region]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; H[Prioritize analysis]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt; H&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    G --&amp;gt; H&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;A shared entry point keeps later passes from inventing inconsistent risk definitions.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;how-dangersurfacepass-marks-relevant-objects&quot;&gt;How DangerSurfacePass marks relevant objects&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;DangerSurfacePass&lt;&#x2F;code&gt; starts at &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;danger_surface.zig:37&lt;&#x2F;code&gt;. It consumes &lt;code&gt;cross_lang_edges&lt;&#x2F;code&gt; and &lt;code&gt;memory_graph&lt;&#x2F;code&gt;, then updates &lt;code&gt;danger_surface_relevant&lt;&#x2F;code&gt;, &lt;code&gt;ffi_auto_relevant&lt;&#x2F;code&gt;, and &lt;code&gt;relevant_functions&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;sequenceDiagram&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant CG as CrossLangEdges&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant MG as MemoryGraph&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant DS as DangerSurfacePass&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant Ctx as PassContext&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    DS-&amp;gt;&amp;gt;CG: Read FFI callees&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    DS-&amp;gt;&amp;gt;MG: Inspect call args &#x2F; returns&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    DS-&amp;gt;&amp;gt;Ctx: markRelevantAlloc(ptr)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    DS-&amp;gt;&amp;gt;Ctx: markFfiRelevant(ptr)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    DS-&amp;gt;&amp;gt;DS: traceAliasClosure(ptr)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    DS-&amp;gt;&amp;gt;Ctx: markRelevantFunction(func)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Two implementation choices are visible in the source: known FFI arguments and returns can be marked directly, while MemoryGraph nodes already on a risk path can be expanded through alias closure.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;why-alias-closure-matters&quot;&gt;Why alias closure matters&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;traceAliasClosure&lt;&#x2F;code&gt; is at &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;danger_surface.zig:144&lt;&#x2F;code&gt;. In LLVM IR, one memory object may appear through several SSA values after bitcasts, loads, stores, parameters, and returns. Marking only the original pointer may miss later uses.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[ptr0: FFI relevant] --&amp;gt; B[alias set]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[ptr1]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; D[ptr2]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; E[markRelevantAlloc]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; E&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; F[Recursive alias tracing]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This is not a full alias analysis. It is a focused propagation step for FFI-related pointer families.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;from-risk-paths-to-prioritized-reporting&quot;&gt;From risk paths to prioritized reporting&lt;&#x2F;h2&gt;
+&lt;p&gt;Later passes can use &lt;code&gt;isOnDangerPathFull&lt;&#x2F;code&gt; or relevance sets to filter findings. A local C allocation&#x2F;free pair may be lower priority, while a pointer crossing FFI through arguments, returns, or callbacks may require review.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Potential memory issue] --&amp;gt; B{On risk path?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt;|No| C[Filter &#x2F; lower priority &#x2F; local issue]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt;|Yes| D[FFI-relevant issue]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; E[Higher review priority]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;summary&quot;&gt;Summary&lt;&#x2F;h2&gt;
+&lt;p&gt;MemoryGraph stores pointer facts. DangerSurfacePass turns those facts into relevance sets tied to FFI&#x2F;unsafe paths. This is the layer that connects low-level IR events with higher-level ownership and lifetime checks.&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols</title>
+        <published>2026-05-21T00:00:00+00:00</published>
+        <updated>2026-05-21T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/OmniScope/06-rust-ffi-auditor/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/OmniScope/06-rust-ffi-auditor/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/OmniScope/06-rust-ffi-auditor/">&lt;h1 id=&quot;rust-ffi-auditor-reconstructing-and-checking-cross-language-ownership-protocols&quot;&gt;Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols&lt;&#x2F;h1&gt;
+&lt;p&gt;Rust FFI risk often appears when Rust’s ownership and borrowing protocols cross an ABI boundary. &lt;code&gt;RustFfiAuditor&lt;&#x2F;code&gt; maps those protocols back onto LLVM IR patterns that can be inspected statically.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;rule-surface&quot;&gt;Rule surface&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;RustFfiAuditor&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;rust_ffi_auditor.zig:63&lt;&#x2F;code&gt;. Its function-level logic covers Rust-specific patterns and general FFI boundary checks:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;into_raw&lt;&#x2F;code&gt; without a matching &lt;code&gt;from_raw&lt;&#x2F;code&gt;;&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;as_ptr&lt;&#x2F;code&gt; borrow escape;&lt;&#x2F;li&gt;
+&lt;li&gt;Rust allocator and C &lt;code&gt;free&lt;&#x2F;code&gt; mismatch;&lt;&#x2F;li&gt;
+&lt;li&gt;ownership-transfer protocol violations;&lt;&#x2F;li&gt;
+&lt;li&gt;dangling &lt;code&gt;as_ptr&lt;&#x2F;code&gt; after parent object drop;&lt;&#x2F;li&gt;
+&lt;li&gt;unsafe FFI calls;&lt;&#x2F;li&gt;
+&lt;li&gt;stack address escape to &lt;code&gt;extern C&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[RustFfiAuditor] --&amp;gt; B[Box::into_raw &#x2F; from_raw]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A --&amp;gt; C[as_ptr borrow escape]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A --&amp;gt; D[allocator mismatch]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A --&amp;gt; E[ownership transfer]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A --&amp;gt; F[dangling as_ptr]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A --&amp;gt; G[unsafe FFI call]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A --&amp;gt; H[stack escape]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;as-ptr-borrow-escape-recovering-a-lifetime-risk-from-ir-calls&quot;&gt;&lt;code&gt;as_ptr&lt;&#x2F;code&gt; borrow escape: recovering a lifetime risk from IR calls&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;detectAsPtrEscape&lt;&#x2F;code&gt; is implemented at &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;rust_ffi_auditor.zig:180&lt;&#x2F;code&gt;. It iterates LLVM functions, basic blocks, and instructions; handles only &lt;code&gt;LLVMCall&lt;&#x2F;code&gt; and &lt;code&gt;LLVMInvoke&lt;&#x2F;code&gt;; retrieves the callee from the final operand; reads the callee name; and matches Rust &lt;code&gt;as_ptr&lt;&#x2F;code&gt; patterns.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[LLVM Function] --&amp;gt; B[BasicBlock iterator]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[Instruction iterator]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D{opcode == call&#x2F;invoke?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt;|No| C&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt;|Yes| E[Read callee operand]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; F[LLVMGetValueName]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt; G{isRustAsPtrCall?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    G --&amp;gt;|No| C&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    G --&amp;gt;|Yes| H[addFinding + ctx.addIssue]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The risk is that &lt;code&gt;String&lt;&#x2F;code&gt; or &lt;code&gt;Vec&lt;&#x2F;code&gt; &lt;code&gt;as_ptr&lt;&#x2F;code&gt; returns a borrowed pointer. If C stores it, the Rust object may be dropped while C still holds the address.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;sequenceDiagram&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant R as Rust local Vec&#x2F;String&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant P as raw pointer from as_ptr&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant C as C FFI callee&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    R-&amp;gt;&amp;gt;P: as_ptr()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    P-&amp;gt;&amp;gt;C: pass pointer&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    R-&amp;gt;&amp;gt;R: local value dropped&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C-&amp;gt;&amp;gt;P: later use&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    P--&amp;gt;&amp;gt;C: dangling pointer risk&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;At &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;rust_ffi_auditor.zig:212&lt;&#x2F;code&gt;, the rule creates a &lt;code&gt;borrow_escape&lt;&#x2F;code&gt; issue through &lt;code&gt;Issue.initWithReason&lt;&#x2F;code&gt;, with a reason explaining that a local &lt;code&gt;String&#x2F;Vec&lt;&#x2F;code&gt; pointer passed to extern C may dangle.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;into-raw-from-raw-ownership-transfer-should-close-correctly&quot;&gt;&lt;code&gt;into_raw&#x2F;from_raw&lt;&#x2F;code&gt;: ownership transfer should close correctly&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;Box::into_raw&lt;&#x2F;code&gt; converts Rust-managed heap ownership into a raw pointer. The caller must ensure the later deallocation protocol is correct. Missing restoration can leak; double restoration can double free; C-side release can produce allocator mismatch depending on allocation protocol.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Box&amp;lt;T&amp;gt;] --&amp;gt; B[Box::into_raw]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[*mut T]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D{Later protocol}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt;|from_raw exactly once| E[Ownership restored]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt;|Never restored| F[Leak risk]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt;|C free + Rust drop| G[Double free &#x2F; allocator mismatch]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;code&gt;into_raw&lt;&#x2F;code&gt; alone is not a vulnerability. The finding depends on the surrounding protocol and subsequent pointer flow.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;cross-language-allocator-mismatch&quot;&gt;Cross-language allocator mismatch&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;detectCrossLangMismatch&lt;&#x2F;code&gt; starts at &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;rust_ffi_auditor.zig:230&lt;&#x2F;code&gt;. It iterates call&#x2F;invoke instructions and attempts to identify Rust allocation paired with C deallocation.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;sequenceDiagram&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant RA as Rust allocator&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant IR as LLVM IR pointer&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    participant CF as C free&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    RA-&amp;gt;&amp;gt;IR: allocate &#x2F; expose pointer&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    IR-&amp;gt;&amp;gt;CF: pointer crosses ABI&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    CF-&amp;gt;&amp;gt;CF: free(pointer)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    CF--&amp;gt;&amp;gt;RA: allocator ownership contract may be violated&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The accuracy of this kind of check depends on symbol names, preserved call relationships, wrappers, inlining, and custom allocators.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;general-ffi-checks&quot;&gt;General FFI checks&lt;&#x2F;h2&gt;
+&lt;p&gt;The auditor also runs checks that are not Rust-only, such as unsafe FFI call scanning and stack address escape. Stack escape is relevant when a pointer to a local object is passed to C and then stored beyond the call.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[alloca &#x2F; local stack object] --&amp;gt; B[Take address]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[Pass to extern C]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D{Does C store it?}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt;|Yes| E[Dangling after return]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt;|No| F[Depends on call-duration use]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;summary&quot;&gt;Summary&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;RustFfiAuditor&lt;&#x2F;code&gt; maps Rust ownership and borrowing concepts onto IR-level call and pointer patterns. It should be described as static protocol recovery and checking, with accuracy bounded by available IR information.&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration</title>
+        <published>2026-05-21T00:00:00+00:00</published>
+        <updated>2026-05-21T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/OmniScope/07-output-and-integration/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/OmniScope/07-output-and-integration/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/OmniScope/07-output-and-integration/">&lt;h1 id=&quot;reporting-pipeline-issue-objects-json-sarif-and-engineering-integration&quot;&gt;Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration&lt;&#x2F;h1&gt;
+&lt;p&gt;Static analysis results need to be reviewable and machine-readable. OmniScope’s reporting path starts with &lt;code&gt;Issue&lt;&#x2F;code&gt; objects, then emits text, JSON, or SARIF through &lt;code&gt;emitOutput&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;issue-is-the-shared-result-type&quot;&gt;Issue is the shared result type&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;Issue&lt;&#x2F;code&gt; is defined in &lt;code&gt;src&#x2F;diag&#x2F;issue.zig&lt;&#x2F;code&gt;, and issue kinds are exposed from &lt;code&gt;src&#x2F;common&#x2F;types.zig:151&lt;&#x2F;code&gt;. The structure carries kind, message, location, severity, confidence, confidence level, reason, FFI boundary, trace, and classification.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;classDiagram&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    class Issue {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        kind&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        message&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        location&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        severity&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        confidence&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        confidence_level&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        reason&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        ffi_boundary&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        trace&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        classification&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;These fields support different review needs:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;severity&lt;&#x2F;code&gt; helps triage.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;confidence&lt;&#x2F;code&gt; and &lt;code&gt;confidence_level&lt;&#x2F;code&gt; distinguish stronger evidence from heuristics.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;reason&lt;&#x2F;code&gt; records the rule rationale.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;ffi_boundary&lt;&#x2F;code&gt; marks cross-language context.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;trace&lt;&#x2F;code&gt; leaves room for evidence paths.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;classification&lt;&#x2F;code&gt; separates FFI-boundary findings from local-only findings.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h2 id=&quot;from-pass-to-issue&quot;&gt;From Pass to Issue&lt;&#x2F;h2&gt;
+&lt;p&gt;When a pass finds something reportable, it creates an &lt;code&gt;Issue&lt;&#x2F;code&gt; with constructors such as &lt;code&gt;Issue.init&lt;&#x2F;code&gt; or &lt;code&gt;Issue.initWithReason&lt;&#x2F;code&gt;, then calls &lt;code&gt;ctx.addIssue&lt;&#x2F;code&gt;. The entry point is &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:458&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[Analysis Pass] --&amp;gt; B[Rule match]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[Construct Issue]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D[ctx.addIssue]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; E[DataFlowGraph &#x2F; Issue store]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; F[Pipeline.getIssues]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt; G[emitOutput]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This decouples rule logic from output format. Passes produce structured findings; the main program decides how to serialize them.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;emitoutput-dispatches-formats&quot;&gt;&lt;code&gt;emitOutput&lt;&#x2F;code&gt; dispatches formats&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;emitOutput&lt;&#x2F;code&gt; is implemented at &lt;code&gt;src&#x2F;main.zig:207&lt;&#x2F;code&gt;. The JSON branch calls &lt;code&gt;formatIssuesAsJson&lt;&#x2F;code&gt; at &lt;code&gt;src&#x2F;main.zig:494&lt;&#x2F;code&gt;; the SARIF branch uses &lt;code&gt;SarifOutput&lt;&#x2F;code&gt;, initialized at &lt;code&gt;src&#x2F;main.zig:232&lt;&#x2F;code&gt;; file output is controlled by &lt;code&gt;config.output_file&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart LR&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[issues + func_count + time_ms] --&amp;gt; B[emitOutput]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C{OutputFormat}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt;|json| D[formatIssuesAsJson]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt;|sarif| E[SarifOutput.generate]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt;|text| F[terminal diagnostics]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    D --&amp;gt; G[stdout or file]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    E --&amp;gt; G&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    F --&amp;gt; H[developer console]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;sarif-integration&quot;&gt;SARIF integration&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;SarifOutput&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;output&#x2F;sarif.zig:36&lt;&#x2F;code&gt;, with file writing at &lt;code&gt;src&#x2F;output&#x2F;sarif.zig:167&lt;&#x2F;code&gt;. SARIF lets results be consumed by GitHub Code Scanning, CI systems, and security dashboards.&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;flowchart TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    A[OmniScope Issue] --&amp;gt; B[SARIF Result]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    B --&amp;gt; C[sarif.json]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; D[CI Artifact]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; E[GitHub Code Scanning]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    C --&amp;gt; F[Security Dashboard]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;example-commands&quot;&gt;Example commands&lt;&#x2F;h2&gt;
+&lt;p&gt;Local inspection:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;omniscope&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; input.ll&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Structured JSON:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;omniscope&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; --json -o omniscope-report.json input.ll&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;SARIF for CI or code scanning:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;omniscope&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; --sarif -o omniscope.sarif input.ll&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;FFI-focused mode:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;omniscope&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; --ffi-only input.ll&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;confidence-and-review-boundaries&quot;&gt;Confidence and review boundaries&lt;&#x2F;h2&gt;
+&lt;p&gt;Confidence is not decorative. Cross-language static analysis can be affected by optimization, missing symbols, debug information quality, wrappers, and custom allocators. Exposing confidence, reason, and trace fields helps reviewers inspect the analyzer’s reasoning instead of relying only on alert color.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;summary&quot;&gt;Summary&lt;&#x2F;h2&gt;
+&lt;p&gt;The reporting path separates analysis from serialization: passes produce structured issues, &lt;code&gt;emitOutput&lt;&#x2F;code&gt; selects the output format, and JSON&#x2F;SARIF make the results usable in engineering workflows.&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
         <title>Architecture Deep Dive: From Facade to Event Store, Snapshot, Analysis, and Render</title>
         <published>2026-05-21T00:00:00+00:00</published>
         <updated>2026-05-21T00:00:00+00:00</updated>

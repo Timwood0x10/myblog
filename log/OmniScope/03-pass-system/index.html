@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="OmniScope organizes analysis logic as passes rather than one large procedure. The relevant implementation questions are how passes share facts, how execution order is resolved, and how the system behaves when one pass fails.">
+
+    <meta property="og:description" content="OmniScope organizes analysis logic as passes rather than one large procedure. The relevant implementation questions are how passes share facts, how execution order is resolved, and how the system behaves when one pass fails.">
+    <meta property="og:title" content="Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/03-pass-system/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="OmniScope organizes analysis logic as passes rather than one large procedure. The relevant implementation questions are how passes share facts, how execution order is resolved, and how the system behaves when one pass fails.">
+    <meta name="twitter:title" content="Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/03-pass-system/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/03-pass-system/">Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="inside-the-pass-system-dependency-ordering-shared-context-and-graceful-degradation">Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation</h1>
+<p>OmniScope organizes analysis logic as passes rather than one large procedure. The relevant implementation questions are how passes share facts, how execution order is resolved, and how the system behaves when one pass fails.</p>
+<h2 id="what-passmanager-owns">What PassManager owns</h2>
+<p><code>PassManager</code> is defined at <code>src/pass/manager.zig:23</code>. It stores registered passes, a name-to-index map, resolved execution order, and cached execution names. Registration starts at <code>src/pass/manager.zig:61</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[registerPass] --&gt; B[passes ArrayList]</span></span>
+<span class="giallo-l"><span>    A --&gt; C[pass_map]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[resolveDependencies]</span></span>
+<span class="giallo-l"><span>    C --&gt; D</span></span>
+<span class="giallo-l"><span>    D --&gt; E[resolved_order]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[run]</span></span></code></pre>
+<p>This keeps scheduling separate from the CLI and from each individual pass.</p>
+<h2 id="dependency-resolution-uses-kahn-topological-sorting">Dependency resolution uses Kahn topological sorting</h2>
+<p>The dependency resolver builds an adjacency list and in-degree table. Passes with zero in-degree enter the queue. Each popped node reduces the in-degree of its successors. If the final result contains fewer nodes than the registered pass count, a cycle is reported.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Passes + dependencies] --&gt; B[Build adjacency / in_degree]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Queue zero in-degree nodes]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[Pop node]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[Reduce successor in-degree]</span></span>
+<span class="giallo-l"><span>    E --&gt; F{Successor reaches zero?}</span></span>
+<span class="giallo-l"><span>    F --&gt;|Yes| C</span></span>
+<span class="giallo-l"><span>    F --&gt;|No| G[Continue]</span></span>
+<span class="giallo-l"><span>    G --&gt; H{All passes resolved?}</span></span>
+<span class="giallo-l"><span>    H --&gt;|Yes| I[resolved_order]</span></span>
+<span class="giallo-l"><span>    H --&gt;|No| J[CycleDetected]</span></span></code></pre>
+<p>This matters because later passes may consume facts produced by earlier passes: risk-path checks need cross-language edges and memory facts; ownership checks need allocation and call information.</p>
+<h2 id="graceful-degradation-is-deliberate">Graceful degradation is deliberate</h2>
+<p>The run loop starts at <code>src/pass/manager.zig:193</code>. If a pass fails, the manager logs a warning, increments a failure counter, and continues executing later passes.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Run pass] --&gt; B{run_fn succeeds?}</span></span>
+<span class="giallo-l"><span>    B --&gt;|Yes| C[Record timing]</span></span>
+<span class="giallo-l"><span>    B --&gt;|No| D[warn + pass_failures++]</span></span>
+<span class="giallo-l"><span>    C --&gt; E{More passes?}</span></span>
+<span class="giallo-l"><span>    D --&gt; E</span></span>
+<span class="giallo-l"><span>    E --&gt;|Yes| A</span></span>
+<span class="giallo-l"><span>    E --&gt;|No| F[Finish analysis]</span></span></code></pre>
+<p>This is useful for real-world IR, which may come from different compilers, optimization levels, or link configurations. A failure in one analysis stage should not necessarily discard unrelated findings.</p>
+<h2 id="passcontext-is-the-fact-bus">PassContext is the fact bus</h2>
+<p><code>PassContext</code> is defined at <code>src/pass/pass.zig:192</code>. It is the shared state through which passes exchange information. CallGraphPass may write <code>cross_lang_edges</code>; PtrLifetimePass may write <code>memory_graph</code>; DangerSurfacePass may write relevance sets; issue-producing passes read those facts.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[CallGraphPass] --&gt;|writes| X[PassContext.cross_lang_edges]</span></span>
+<span class="giallo-l"><span>    B[PtrLifetimePass] --&gt;|writes| Y[PassContext.memory_graph]</span></span>
+<span class="giallo-l"><span>    C[DangerSurfacePass] --&gt;|reads X/Y, writes| Z[relevant sets]</span></span>
+<span class="giallo-l"><span>    D[FFI / Ownership / Memory passes] --&gt;|read Z/Y| E[Issue]</span></span></code></pre><h2 id="diagnosticwriter-and-structured-issues">DiagnosticWriter and structured issues</h2>
+<p>Passes receive both <code>PassContext</code> and <code>DiagnosticWriter</code>. <code>DiagnosticWriter</code> handles logs and diagnostics. Structured findings are added through <code>ctx.addIssue</code>, whose entry point is at <code>src/pass/pass.zig:458</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Pass detects finding] --&gt; B{Diagnostic only?}</span></span>
+<span class="giallo-l"><span>    B --&gt;|Yes| C[DiagnosticWriter]</span></span>
+<span class="giallo-l"><span>    B --&gt;|No| D[Issue.init / initWithReason]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[ctx.addIssue]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[DataFlowGraph issues]</span></span>
+<span class="giallo-l"><span>    F --&gt; G[Pipeline.getIssues]</span></span></code></pre><h2 id="summary">Summary</h2>
+<p>The pass system provides registration, dependency ordering, shared state, graceful degradation, and structured issue collection. The later MemoryGraph, Zone, and Registry mechanisms rely on this shared execution model.</p>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/04-zone-and-registry/">
+                                <span class="button__icon">←</span>&nbsp;
+                                <span class="button__text">Zone Classification and Semantic Registry: Avoiding Blacklist-Style Reporting</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/02-cli-to-pipeline/">
+                                <span class="button__text">Lifecycle of an Analysis Run: CLI, IRLoader, Pipeline, and Output</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>

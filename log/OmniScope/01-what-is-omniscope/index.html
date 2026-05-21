@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="Rust ownership, Zig allocators, Go GC, and C++ RAII are language-level safety models. Across FFI, those models are lowered into ABI-level facts: functions, pointers, integers, layouts, and calling conventions. OmniScope works at this layer because many cross-language issues are difficult to cover from a single language AST alone.">
+
+    <meta property="og:description" content="Rust ownership, Zig allocators, Go GC, and C++ RAII are language-level safety models. Across FFI, those models are lowered into ABI-level facts: functions, pointers, integers, layouts, and calling conventions. OmniScope works at this layer because many cross-language issues are difficult to cover from a single language AST alone.">
+    <meta property="og:title" content="Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/01-what-is-omniscope/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Rust ownership, Zig allocators, Go GC, and C++ RAII are language-level safety models. Across FFI, those models are lowered into ABI-level facts: functions, pointers, integers, layouts, and calling conventions. OmniScope works at this layer because many cross-language issues are difficult to cover from a single language AST alone.">
+    <meta name="twitter:title" content="Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/01-what-is-omniscope/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/01-what-is-omniscope/">Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="why-omniscope-analyzes-cross-language-safety-at-the-llvm-ir-layer">Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer</h1>
+<p>Rust ownership, Zig allocators, Go GC, and C++ RAII are language-level safety models. Across FFI, those models are lowered into ABI-level facts: functions, pointers, integers, layouts, and calling conventions. OmniScope works at this layer because many cross-language issues are difficult to cover from a single language AST alone.</p>
+<h2 id="the-issue-is-not-free-it-is-the-lost-deallocation-protocol">The issue is not <code>free</code>; it is the lost deallocation protocol</h2>
+<p>A common Rust/C boundary pattern is: Rust exposes a pointer through <code>Box::into_raw</code>, then C stores or releases that pointer. In Rust, <code>into_raw</code> is an explicit ownership transfer. In C, <code>free(ptr)</code> is an ordinary deallocation. The problem is that no single compiler verifies the full protocol across both sides.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant R as Rust ownership model</span></span>
+<span class="giallo-l"><span>    participant ABI as C ABI / LLVM IR</span></span>
+<span class="giallo-l"><span>    participant C as C manual memory</span></span>
+<span class="giallo-l"><span>    R-&gt;&gt;ABI: Box::into_raw becomes a raw pointer</span></span>
+<span class="giallo-l"><span>    ABI-&gt;&gt;C: extern C argument passing</span></span>
+<span class="giallo-l"><span>    C-&gt;&gt;C: store / free / callback use</span></span>
+<span class="giallo-l"><span>    C--&gt;&gt;R: Rust cannot verify the C-side protocol</span></span></code></pre>
+<p>At the IR layer, source syntax is gone, but external declarations, call/invoke instructions, allocas, loads/stores, bitcasts, symbol names, and some debug information may remain. The analyzer tries to recover enough ownership and lifetime semantics from these facts.</p>
+<h2 id="what-omniscope-actually-analyzes">What OmniScope actually analyzes</h2>
+<p>OmniScope’s entry point consumes LLVM IR files such as <code>.ll</code> and <code>.bc</code>, not source directories. Argument parsing starts at <code>src/main.zig:73</code>, the main entry is <code>src/main.zig:567</code>, and single-module analysis is driven by <code>runModulePipeline</code> at <code>src/main.zig:171</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Source languages: Rust / C / Zig / Go / C++] --&gt; B[Compiler emits LLVM IR]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[IRLoader obtains ModuleRef]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[Pipeline.setModule]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[PassContext.module]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[Passes iterate functions, blocks, instructions]</span></span></code></pre>
+<p>This also defines the limits. OmniScope can inspect facts that remain in IR and can use symbols and debug information when available. Heavy optimization, missing symbols, or wrapper-heavy code may reduce the amount of recoverable semantics.</p>
+<h2 id="it-is-not-a-dangerous-function-blacklist">It is not a dangerous-function blacklist</h2>
+<p><code>src/registry/semantic_registry.zig:3</code> describes the registry as a function-semantics knowledge base for FFI boundary analysis, not a simple blacklist. <code>src/registry/semantic_registry.zig:8</code> also notes that the same function may carry different risk depending on context.</p>
+<p>For example:</p>
+<ul>
+<li>A local C <code>free</code> may be a normal lifetime endpoint.</li>
+<li>A Rust <code>Box</code> pointer released by C may indicate allocator mismatch or ownership protocol breakage.</li>
+<li>Rust <code>as_ptr</code> used locally may be benign, while passing it to FFI and storing it may create a dangling pointer.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[Function call] --&gt; B{Crosses language boundary?}</span></span>
+<span class="giallo-l"><span>    B --&gt;|No| C[Local semantics]</span></span>
+<span class="giallo-l"><span>    B --&gt;|Yes| D[FFI semantics]</span></span>
+<span class="giallo-l"><span>    C --&gt; E[May be lower priority]</span></span>
+<span class="giallo-l"><span>    D --&gt; F[Check ownership / lifetime / allocator context]</span></span></code></pre><h2 id="main-source-level-pillars">Main source-level pillars</h2>
+<p>The implementation is organized around shared analysis structures:</p>
+<ul>
+<li><code>PassContext</code>: shared state for passes, defined at <code>src/pass/pass.zig:192</code>.</li>
+<li><code>cross_lang_edges</code>: cross-language call edges.</li>
+<li><code>MemoryGraph</code>: memory objects, frees, call arguments, returns, and alias relations.</li>
+<li><code>ZoneKind</code>: <code>safe</code>, <code>unsafe</code>, <code>ffi</code>, <code>runtime_internal</code>, and <code>unknown</code>, defined at <code>src/semantics/zone_classifier.zig:24</code>.</li>
+<li><code>SemanticRegistry</code>: layered function semantics, looked up through <code>src/registry/semantic_registry.zig:90</code>.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TB</span></span>
+<span class="giallo-l"><span>    A[LLVM IR facts] --&gt; B[PassContext]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[CrossLangEdge]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[MemoryGraph]</span></span>
+<span class="giallo-l"><span>    B --&gt; E[Zone cache]</span></span>
+<span class="giallo-l"><span>    B --&gt; F[Registry cache]</span></span>
+<span class="giallo-l"><span>    C --&gt; G[DangerSurface]</span></span>
+<span class="giallo-l"><span>    D --&gt; G</span></span>
+<span class="giallo-l"><span>    E --&gt; G</span></span>
+<span class="giallo-l"><span>    F --&gt; G</span></span>
+<span class="giallo-l"><span>    G --&gt; H[Issue]</span></span></code></pre><h2 id="practical-limits">Practical limits</h2>
+<p>OmniScope performs static recovery and risk classification; it is not a runtime proof system. It depends on:</p>
+<ul>
+<li>Enough call and symbol information remaining in IR.</li>
+<li>Recognizable cross-language declarations and call sites.</li>
+<li>MemoryGraph coverage for relevant pointer flows.</li>
+<li>Zone and Registry rules that cover the project’s FFI patterns.</li>
+</ul>
+<p>A careful description should avoid absolute detection claims. A more accurate framing is: OmniScope reconstructs queryable facts about ownership, lifetime, and allocator protocols at language boundaries, then uses risk-path filtering to prioritize findings.</p>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/02-cli-to-pipeline/">
+                                <span class="button__icon">←</span>&nbsp;
+                                <span class="button__text">Lifecycle of an Analysis Run: CLI, IRLoader, Pipeline, and Output</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/">
+                                <span class="button__text">OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>

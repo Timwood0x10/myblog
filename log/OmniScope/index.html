@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
+
+    <meta property="og:description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
+    <meta property="og:title" content="OmniScope | Timwood0x10">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
+    <meta name="twitter:title" content="OmniScope | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+        <div class="posts">
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/">OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="omniscope-deep-dive-series-from-llvm-ir-to-cross-language-ownership-auditing">OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing</h1>
+<p>This series is a source-level technical walkthrough, not a product pitch. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.</p>
+<p>OmniScope focuses on one concrete question: <strong>after ownership, lifetime, and deallocation protocols cross a language boundary, can a static analyzer recover enough semantics to produce reviewable findings?</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[LLVM IR input] --&gt; B[Module loading]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[PassContext]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[CallGraph / CrossLangEdge]</span></span>
+<span class="giallo-l"><span>    C --&gt; E[MemoryGraph]</span></span>
+<span class="giallo-l"><span>    C --&gt; F[Zone / Registry]</span></span>
+<span class="giallo-l"><span>    D --&gt; G[DangerSurface]</span></span>
+<span class="giallo-l"><span>    E --&gt; G</span></span>
+<span class="giallo-l"><span>    F --&gt; G</span></span>
+<span class="giallo-l"><span>    G --&gt; H[Ownership / Lifetime / FFI rules]</span></span>
+<span class="giallo-l"><span>    H --&gt; I[Issue / JSON / SARIF]</span></span></code></pre><h2 id="articles">Articles</h2>
+<ol>
+<li><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/./01-what-is-omniscope.md">Why OmniScope analyzes cross-language safety at the LLVM IR layer</a></li>
+<li><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/./02-cli-to-pipeline.md">Lifecycle of an analysis run: CLI, IRLoader, Pipeline, and output</a></li>
+<li><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/./03-pass-system.md">Inside the Pass system: dependency ordering, shared context, and graceful degradation</a></li>
+<li><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/./04-zone-and-registry.md">Zone Classification and Semantic Registry: avoiding blacklist-style reporting</a></li>
+<li><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/./05-memory-graph-danger-surface.md">MemoryGraph and DangerSurface: from pointer facts to risk paths</a></li>
+<li><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/./06-rust-ffi-auditor.md">Rust FFI Auditor: reconstructing and checking cross-language ownership protocols</a></li>
+<li><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/./07-output-and-integration.md">Reporting pipeline: Issue objects, JSON, SARIF, and engineering integration</a></li>
+</ol>
+<h2 id="source-reading-map">Source Reading Map</h2>
+<ul>
+<li>Entry and output: <code>src/main.zig:73</code>, <code>src/main.zig:153</code>, <code>src/main.zig:171</code>, <code>src/main.zig:207</code></li>
+<li>Pipeline: <code>src/pipeline/pipeline.zig:27</code>, <code>src/pipeline/pipeline.zig:66</code>, <code>src/pipeline/pipeline.zig:223</code></li>
+<li>Pass system: <code>src/pass/manager.zig:61</code>, <code>src/pass/manager.zig:193</code>, <code>src/pass/pass.zig:192</code></li>
+<li>Semantic layer: <code>src/semantics/zone_classifier.zig:24</code>, <code>src/registry/semantic_registry.zig:90</code></li>
+<li>Risk paths: <code>src/pass/pass.zig:866</code>, <code>src/semantics/memory_graph.zig:892</code>, <code>src/pass/analysis/danger_surface.zig:37</code></li>
+<li>Rust FFI: <code>src/pass/analysis/rust_ffi_auditor.zig:63</code>, <code>src/pass/analysis/rust_ffi_auditor.zig:180</code></li>
+</ul>
+<h2 id="how-to-read">How to Read</h2>
+<p>Read this as a mechanism-by-mechanism walkthrough. Each article follows one implementation path: how input becomes analysis context, how passes exchange facts, how Zone and Registry reduce noise, how MemoryGraph models pointer flow, and how Rust FFI ownership rules are checked.</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/01-what-is-omniscope/">Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="why-omniscope-analyzes-cross-language-safety-at-the-llvm-ir-layer">Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer</h1>
+<p>Rust ownership, Zig allocators, Go GC, and C++ RAII are language-level safety models. Across FFI, those models are lowered into ABI-level facts: functions, pointers, integers, layouts, and calling conventions. OmniScope works at this layer because many cross-language issues are difficult to cover from a single language AST alone.</p>
+<h2 id="the-issue-is-not-free-it-is-the-lost-deallocation-protocol">The issue is not <code>free</code>; it is the lost deallocation protocol</h2>
+<p>A common Rust/C boundary pattern is: Rust exposes a pointer through <code>Box::into_raw</code>, then C stores or releases that pointer. In Rust, <code>into_raw</code> is an explicit ownership transfer. In C, <code>free(ptr)</code> is an ordinary deallocation. The problem is that no single compiler verifies the full protocol across both sides.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant R as Rust ownership model</span></span>
+<span class="giallo-l"><span>    participant ABI as C ABI / LLVM IR</span></span>
+<span class="giallo-l"><span>    participant C as C manual memory</span></span>
+<span class="giallo-l"><span>    R-&gt;&gt;ABI: Box::into_raw becomes a raw pointer</span></span>
+<span class="giallo-l"><span>    ABI-&gt;&gt;C: extern C argument passing</span></span>
+<span class="giallo-l"><span>    C-&gt;&gt;C: store / free / callback use</span></span>
+<span class="giallo-l"><span>    C--&gt;&gt;R: Rust cannot verify the C-side protocol</span></span></code></pre>
+<p>At the IR layer, source syntax is gone, but external declarations, call/invoke instructions, allocas, loads/stores, bitcasts, symbol names, and some debug information may remain. The analyzer tries to recover enough ownership and lifetime semantics from these facts.</p>
+<h2 id="what-omniscope-actually-analyzes">What OmniScope actually analyzes</h2>
+<p>OmniScope’s entry point consumes LLVM IR files such as <code>.ll</code> and <code>.bc</code>, not source directories. Argument parsing starts at <code>src/main.zig:73</code>, the main entry is <code>src/main.zig:567</code>, and single-module analysis is driven by <code>runModulePipeline</code> at <code>src/main.zig:171</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Source languages: Rust / C / Zig / Go / C++] --&gt; B[Compiler emits LLVM IR]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[IRLoader obtains ModuleRef]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[Pipeline.setModule]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[PassContext.module]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[Passes iterate functions, blocks, instructions]</span></span></code></pre>
+<p>This also defines the limits. OmniScope can inspect facts that remain in IR and can use symbols and debug information when available. Heavy optimization, missing symbols, or wrapper-heavy code may reduce the amount of recoverable semantics.</p>
+<h2 id="it-is-not-a-dangerous-function-blacklist">It is not a dangerous-function blacklist</h2>
+<p><code>src/registry/semantic_registry.zig:3</code> describes the registry as a function-semantics knowledge base for FFI boundary analysis, not a simple blacklist. <code>src/registry/semantic_registry.zig:8</code> also notes that the same function may carry different risk depending on context.</p>
+<p>For example:</p>
+<ul>
+<li>A local C <code>free</code> may be a normal lifetime endpoint.</li>
+<li>A Rust <code>Box</code> pointer released by C may indicate allocator mismatch or ownership protocol breakage.</li>
+<li>Rust <code>as_ptr</code> used locally may be benign, while passing it to FFI and storing it may create a dangling pointer.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[Function call] --&gt; B{Crosses language boundary?}</span></span>
+<span class="giallo-l"><span>    B --&gt;|No| C[Local semantics]</span></span>
+<span class="giallo-l"><span>    B --&gt;|Yes| D[FFI semantics]</span></span>
+<span class="giallo-l"><span>    C --&gt; E[May be lower priority]</span></span>
+<span class="giallo-l"><span>    D --&gt; F[Check ownership / lifetime / allocator context]</span></span></code></pre><h2 id="main-source-level-pillars">Main source-level pillars</h2>
+<p>The implementation is organized around shared analysis structures:</p>
+<ul>
+<li><code>PassContext</code>: shared state for passes, defined at <code>src/pass/pass.zig:192</code>.</li>
+<li><code>cross_lang_edges</code>: cross-language call edges.</li>
+<li><code>MemoryGraph</code>: memory objects, frees, call arguments, returns, and alias relations.</li>
+<li><code>ZoneKind</code>: <code>safe</code>, <code>unsafe</code>, <code>ffi</code>, <code>runtime_internal</code>, and <code>unknown</code>, defined at <code>src/semantics/zone_classifier.zig:24</code>.</li>
+<li><code>SemanticRegistry</code>: layered function semantics, looked up through <code>src/registry/semantic_registry.zig:90</code>.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TB</span></span>
+<span class="giallo-l"><span>    A[LLVM IR facts] --&gt; B[PassContext]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[CrossLangEdge]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[MemoryGraph]</span></span>
+<span class="giallo-l"><span>    B --&gt; E[Zone cache]</span></span>
+<span class="giallo-l"><span>    B --&gt; F[Registry cache]</span></span>
+<span class="giallo-l"><span>    C --&gt; G[DangerSurface]</span></span>
+<span class="giallo-l"><span>    D --&gt; G</span></span>
+<span class="giallo-l"><span>    E --&gt; G</span></span>
+<span class="giallo-l"><span>    F --&gt; G</span></span>
+<span class="giallo-l"><span>    G --&gt; H[Issue]</span></span></code></pre><h2 id="practical-limits">Practical limits</h2>
+<p>OmniScope performs static recovery and risk classification; it is not a runtime proof system. It depends on:</p>
+<ul>
+<li>Enough call and symbol information remaining in IR.</li>
+<li>Recognizable cross-language declarations and call sites.</li>
+<li>MemoryGraph coverage for relevant pointer flows.</li>
+<li>Zone and Registry rules that cover the project’s FFI patterns.</li>
+</ul>
+<p>A careful description should avoid absolute detection claims. A more accurate framing is: OmniScope reconstructs queryable facts about ownership, lifetime, and allocator protocols at language boundaries, then uses risk-path filtering to prioritize findings.</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/02-cli-to-pipeline/">Lifecycle of an Analysis Run: CLI, IRLoader, Pipeline, and Output</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="lifecycle-of-an-analysis-run-cli-irloader-pipeline-and-output">Lifecycle of an Analysis Run: CLI, IRLoader, Pipeline, and Output</h1>
+<p>This article follows one OmniScope run from command-line arguments to structured findings. The important part is how the code turns user input into a <code>PassContext</code>, runs analysis passes, and emits reports.</p>
+<h2 id="config-defines-the-external-shape-of-the-run">Config defines the external shape of the run</h2>
+<p><code>Config</code> is defined at <code>src/main.zig:24</code>. It stores input files, output format, output path, visualization flag, user-code focus, FFI-only mode, and stdlib inclusion. Argument parsing starts at <code>src/main.zig:73</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[argv] --&gt; B[parseArgs]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Config]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[input_files]</span></span>
+<span class="giallo-l"><span>    C --&gt; E[output_format: text/json/sarif]</span></span>
+<span class="giallo-l"><span>    C --&gt; F[visualize]</span></span>
+<span class="giallo-l"><span>    C --&gt; G[focus_user_code / ffi_only / include_stdlib]</span></span></code></pre>
+<p>One implementation detail matters: the CLI parses analysis intent, but the exact effect depends on individual pass implementations. For example, some noise-reduction options are instantiated inside specific passes.</p>
+<h2 id="runmodulepipeline-is-the-analysis-loop"><code>runModulePipeline</code> is the analysis loop</h2>
+<p><code>runModulePipeline</code> is located at <code>src/main.zig:171</code>. It initializes the Pipeline, attaches the LLVM module, registers passes, runs static analysis, and collects issues.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant Main as main.zig</span></span>
+<span class="giallo-l"><span>    participant Loader as IRLoader</span></span>
+<span class="giallo-l"><span>    participant Pipe as Pipeline</span></span>
+<span class="giallo-l"><span>    participant PM as PassManager</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Main-&gt;&gt;Pipe: Pipeline.init(allocator)</span></span>
+<span class="giallo-l"><span>    Loader--&gt;&gt;Main: getModule()</span></span>
+<span class="giallo-l"><span>    Main-&gt;&gt;Pipe: setModule(module_ref)</span></span>
+<span class="giallo-l"><span>    Main-&gt;&gt;Pipe: registerAllPasses()</span></span>
+<span class="giallo-l"><span>    Main-&gt;&gt;Pipe: runStaticAnalysis()</span></span>
+<span class="giallo-l"><span>    Pipe-&gt;&gt;PM: run(ctx, diag)</span></span>
+<span class="giallo-l"><span>    PM--&gt;&gt;Pipe: shared facts and issues</span></span>
+<span class="giallo-l"><span>    Pipe--&gt;&gt;Main: PipelineResult</span></span></code></pre>
+<p>Source anchors:</p>
+<ul>
+<li><code>src/main.zig:171</code> initializes <code>Pipeline</code>.</li>
+<li><code>src/main.zig:173</code> obtains the module from <code>IRLoader</code>.</li>
+<li><code>src/main.zig:177</code> registers passes.</li>
+<li><code>src/main.zig:180</code> runs static analysis.</li>
+<li><code>src/main.zig:184</code> reads issues from the pipeline.</li>
+</ul>
+<h2 id="registerallpasses-reveals-the-analysis-sequence"><code>registerAllPasses</code> reveals the analysis sequence</h2>
+<p><code>registerAllPasses</code> is at <code>src/main.zig:153</code>. It registers CallGraph, TaintPropagation, FFI Boundary, FFI Type Mismatch, FFI Body Check, FFI Unsafe, PtrLifetime, DangerSurface, PointerOwnership, CallbackEscape, RustFfiAuditor, ReturnCheck, MemorySafety, FreeValidation, and BufferOverflow.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[CallGraph] --&gt; B[FFI Boundary]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Type / Body / Unsafe]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[PtrLifetime]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[DangerSurface]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[PointerOwnership]</span></span>
+<span class="giallo-l"><span>    F --&gt; G[CallbackEscape / RustFfiAuditor]</span></span>
+<span class="giallo-l"><span>    G --&gt; H[MemorySafety / FreeValidation / BufferOverflow]</span></span></code></pre>
+<p>The registration order is not necessarily the final execution order. The final order is resolved by <code>PassManager</code>, with execution starting at <code>src/pass/manager.zig:193</code>.</p>
+<h2 id="pipeline-run-builds-the-analysis-context"><code>Pipeline.run</code> builds the analysis context</h2>
+<p><code>Pipeline</code> is defined at <code>src/pipeline/pipeline.zig:27</code>. It stores <code>FactStore</code>, <code>QueryEngine</code>, <code>DataFlowGraph</code>, <code>PassManager</code>, and the current module. <code>Pipeline.run</code> creates the <code>PassContext</code> at <code>src/pipeline/pipeline.zig:66</code>.</p>
+<p><code>PassContext</code> contains shared state such as:</p>
+<ul>
+<li>facts and query engine;</li>
+<li>data-flow graph;</li>
+<li>value-id map;</li>
+<li>registry and zone caches;</li>
+<li><code>cross_lang_edges</code>;</li>
+<li><code>global_alloc_tracker</code>;</li>
+<li><code>memory_graph</code>;</li>
+<li><code>danger_surface_relevant</code>, <code>ffi_auto_relevant</code>, and <code>relevant_functions</code>.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TB</span></span>
+<span class="giallo-l"><span>    subgraph Pipeline.run</span></span>
+<span class="giallo-l"><span>        A[Clear DataFlowGraph] --&gt; B[Create PassContext]</span></span>
+<span class="giallo-l"><span>        B --&gt; C[Attach module]</span></span>
+<span class="giallo-l"><span>        B --&gt; D[Initialize caches]</span></span>
+<span class="giallo-l"><span>        B --&gt; E[Initialize MemoryGraph]</span></span>
+<span class="giallo-l"><span>        B --&gt; F[Initialize CrossLangEdges]</span></span>
+<span class="giallo-l"><span>        F --&gt; G[PassManager.run]</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre><h2 id="output-is-part-of-the-design">Output is part of the design</h2>
+<p><code>emitOutput</code> is at <code>src/main.zig:207</code>. It branches into JSON, SARIF, or text output. JSON is produced by <code>formatIssuesAsJson</code>; SARIF is produced by <code>SarifOutput</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[Issue list] --&gt; B[emitOutput]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[JSON: formatIssuesAsJson]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[SARIF: SarifOutput]</span></span>
+<span class="giallo-l"><span>    B --&gt; E[Text]</span></span>
+<span class="giallo-l"><span>    C --&gt; F[stdout / file]</span></span>
+<span class="giallo-l"><span>    D --&gt; F</span></span>
+<span class="giallo-l"><span>    E --&gt; G[terminal]</span></span></code></pre><h2 id="summary">Summary</h2>
+<p>An OmniScope run follows a clear data path: CLI creates configuration, IRLoader supplies a module, Pipeline creates shared analysis context, PassManager executes passes, and <code>emitOutput</code> formats results.</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/03-pass-system/">Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="inside-the-pass-system-dependency-ordering-shared-context-and-graceful-degradation">Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation</h1>
+<p>OmniScope organizes analysis logic as passes rather than one large procedure. The relevant implementation questions are how passes share facts, how execution order is resolved, and how the system behaves when one pass fails.</p>
+<h2 id="what-passmanager-owns">What PassManager owns</h2>
+<p><code>PassManager</code> is defined at <code>src/pass/manager.zig:23</code>. It stores registered passes, a name-to-index map, resolved execution order, and cached execution names. Registration starts at <code>src/pass/manager.zig:61</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[registerPass] --&gt; B[passes ArrayList]</span></span>
+<span class="giallo-l"><span>    A --&gt; C[pass_map]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[resolveDependencies]</span></span>
+<span class="giallo-l"><span>    C --&gt; D</span></span>
+<span class="giallo-l"><span>    D --&gt; E[resolved_order]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[run]</span></span></code></pre>
+<p>This keeps scheduling separate from the CLI and from each individual pass.</p>
+<h2 id="dependency-resolution-uses-kahn-topological-sorting">Dependency resolution uses Kahn topological sorting</h2>
+<p>The dependency resolver builds an adjacency list and in-degree table. Passes with zero in-degree enter the queue. Each popped node reduces the in-degree of its successors. If the final result contains fewer nodes than the registered pass count, a cycle is reported.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Passes + dependencies] --&gt; B[Build adjacency / in_degree]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Queue zero in-degree nodes]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[Pop node]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[Reduce successor in-degree]</span></span>
+<span class="giallo-l"><span>    E --&gt; F{Successor reaches zero?}</span></span>
+<span class="giallo-l"><span>    F --&gt;|Yes| C</span></span>
+<span class="giallo-l"><span>    F --&gt;|No| G[Continue]</span></span>
+<span class="giallo-l"><span>    G --&gt; H{All passes resolved?}</span></span>
+<span class="giallo-l"><span>    H --&gt;|Yes| I[resolved_order]</span></span>
+<span class="giallo-l"><span>    H --&gt;|No| J[CycleDetected]</span></span></code></pre>
+<p>This matters because later passes may consume facts produced by earlier passes: risk-path checks need cross-language edges and memory facts; ownership checks need allocation and call information.</p>
+<h2 id="graceful-degradation-is-deliberate">Graceful degradation is deliberate</h2>
+<p>The run loop starts at <code>src/pass/manager.zig:193</code>. If a pass fails, the manager logs a warning, increments a failure counter, and continues executing later passes.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Run pass] --&gt; B{run_fn succeeds?}</span></span>
+<span class="giallo-l"><span>    B --&gt;|Yes| C[Record timing]</span></span>
+<span class="giallo-l"><span>    B --&gt;|No| D[warn + pass_failures++]</span></span>
+<span class="giallo-l"><span>    C --&gt; E{More passes?}</span></span>
+<span class="giallo-l"><span>    D --&gt; E</span></span>
+<span class="giallo-l"><span>    E --&gt;|Yes| A</span></span>
+<span class="giallo-l"><span>    E --&gt;|No| F[Finish analysis]</span></span></code></pre>
+<p>This is useful for real-world IR, which may come from different compilers, optimization levels, or link configurations. A failure in one analysis stage should not necessarily discard unrelated findings.</p>
+<h2 id="passcontext-is-the-fact-bus">PassContext is the fact bus</h2>
+<p><code>PassContext</code> is defined at <code>src/pass/pass.zig:192</code>. It is the shared state through which passes exchange information. CallGraphPass may write <code>cross_lang_edges</code>; PtrLifetimePass may write <code>memory_graph</code>; DangerSurfacePass may write relevance sets; issue-producing passes read those facts.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[CallGraphPass] --&gt;|writes| X[PassContext.cross_lang_edges]</span></span>
+<span class="giallo-l"><span>    B[PtrLifetimePass] --&gt;|writes| Y[PassContext.memory_graph]</span></span>
+<span class="giallo-l"><span>    C[DangerSurfacePass] --&gt;|reads X/Y, writes| Z[relevant sets]</span></span>
+<span class="giallo-l"><span>    D[FFI / Ownership / Memory passes] --&gt;|read Z/Y| E[Issue]</span></span></code></pre><h2 id="diagnosticwriter-and-structured-issues">DiagnosticWriter and structured issues</h2>
+<p>Passes receive both <code>PassContext</code> and <code>DiagnosticWriter</code>. <code>DiagnosticWriter</code> handles logs and diagnostics. Structured findings are added through <code>ctx.addIssue</code>, whose entry point is at <code>src/pass/pass.zig:458</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Pass detects finding] --&gt; B{Diagnostic only?}</span></span>
+<span class="giallo-l"><span>    B --&gt;|Yes| C[DiagnosticWriter]</span></span>
+<span class="giallo-l"><span>    B --&gt;|No| D[Issue.init / initWithReason]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[ctx.addIssue]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[DataFlowGraph issues]</span></span>
+<span class="giallo-l"><span>    F --&gt; G[Pipeline.getIssues]</span></span></code></pre><h2 id="summary">Summary</h2>
+<p>The pass system provides registration, dependency ordering, shared state, graceful degradation, and structured issue collection. The later MemoryGraph, Zone, and Registry mechanisms rely on this shared execution model.</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/04-zone-and-registry/">Zone Classification and Semantic Registry: Avoiding Blacklist-Style Reporting</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="zone-classification-and-semantic-registry-avoiding-blacklist-style-reporting">Zone Classification and Semantic Registry: Avoiding Blacklist-Style Reporting</h1>
+<p>A static analyzer without semantic layers can easily become a dangerous-function list. OmniScope separates region classification from function semantics before deciding whether a path should be analyzed in depth.</p>
+<h2 id="zonekind-classifies-code-by-risk-region">ZoneKind classifies code by risk region</h2>
+<p><code>ZoneKind</code> is defined at <code>src/semantics/zone_classifier.zig:24</code>. It includes <code>safe</code>, <code>unsafe</code>, <code>ffi</code>, <code>runtime_internal</code>, and <code>unknown</code>. The file-level comment states the operating principle: focus where language guarantees stop.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Function / Instruction / Debug path] --&gt; B[Zone Classifier]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[safe: language guarantees likely apply]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[unsafe: explicit escape]</span></span>
+<span class="giallo-l"><span>    B --&gt; E[ffi: cross-language boundary]</span></span>
+<span class="giallo-l"><span>    B --&gt; F[runtime_internal: stdlib/runtime]</span></span>
+<span class="giallo-l"><span>    B --&gt; G[unknown: conservative handling]</span></span></code></pre>
+<p>This model is not a proof that safe zones are bug-free. It is a prioritization layer. For an FFI-focused analyzer, runtime glue or container internals should usually not have the same weight as user-written unsafe wrappers.</p>
+<h2 id="multi-language-escape-triggers">Multi-language escape triggers</h2>
+<p><code>EscapeTrigger</code> is defined at <code>src/semantics/zone_classifier.zig:45</code>. It represents cross-language escape points across ecosystems: Rust unsafe/extern/raw pointers, Zig pointer casts and C imports, Go cgo and <code>unsafe.Pointer</code>, and C++ extern C, reinterpret casts, and manual memory.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[Rust unsafe / extern C] --&gt; Z[EscapeTrigger]</span></span>
+<span class="giallo-l"><span>    B[Zig @ptrCast / @cImport] --&gt; Z</span></span>
+<span class="giallo-l"><span>    C[Go cgo / unsafe.Pointer] --&gt; Z</span></span>
+<span class="giallo-l"><span>    D[C++ reinterpret_cast / malloc] --&gt; Z</span></span>
+<span class="giallo-l"><span>    Z --&gt; E[ZoneKind unsafe or ffi]</span></span></code></pre>
+<p>This gives the implementation a common vocabulary for multiple language-specific risk boundaries.</p>
+<h2 id="function-level-and-llvm-level-classification">Function-level and LLVM-level classification</h2>
+<p>The classifier includes both name-based and LLVM-function-based entry points:</p>
+<ul>
+<li><code>src/semantics/zone_classifier.zig:347</code> classifies by function name.</li>
+<li><code>src/semantics/zone_classifier.zig:394</code> classifies LLVM functions using declarations, intrinsics, debug information, and path data when available.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[LLVMValueRef function] --&gt; B{External declaration?}</span></span>
+<span class="giallo-l"><span>    B --&gt;|Yes| C[May be ffi]</span></span>
+<span class="giallo-l"><span>    B --&gt;|No| D[Name-based classification]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[Path/debug-info classification]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[ZoneKind]</span></span></code></pre>
+<p>These rules are heuristic. Symbol names and debug information quality can affect classification, so Zone should be described as a risk-prioritization mechanism rather than a formal proof.</p>
+<h2 id="semantic-registry-describes-function-meaning-in-ffi-context">Semantic Registry describes function meaning in FFI context</h2>
+<p><code>SemanticRegistry</code> is defined at <code>src/registry/semantic_registry.zig:48</code>; lookup starts at <code>src/registry/semantic_registry.zig:90</code>. The registry is layered by ecosystem: C standard library, Rust ownership patterns, Go cgo, Zig, C++, JNI, Python C API, POSIX, and dynamic loading.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[func_name] --&gt; B[SemanticRegistry.lookup]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Layer1: C stdlib high-risk]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[Layer2: Rust ownership]</span></span>
+<span class="giallo-l"><span>    B --&gt; E[Layer3: Go cgo]</span></span>
+<span class="giallo-l"><span>    B --&gt; F[Layer5: Zig stdlib]</span></span>
+<span class="giallo-l"><span>    B --&gt; G[Layer6: C++ stdlib]</span></span>
+<span class="giallo-l"><span>    B --&gt; H[JNI / Python C API / POSIX]</span></span>
+<span class="giallo-l"><span>    C --&gt; I[FunctionSemantics]</span></span>
+<span class="giallo-l"><span>    D --&gt; I</span></span>
+<span class="giallo-l"><span>    E --&gt; I</span></span>
+<span class="giallo-l"><span>    F --&gt; I</span></span>
+<span class="giallo-l"><span>    G --&gt; I</span></span>
+<span class="giallo-l"><span>    H --&gt; I</span></span></code></pre>
+<p>The registry helps interpret calls in context. <code>Box::into_raw</code> is not a vulnerability by itself; it changes the ownership protocol. <code>strcpy</code> in local C code and <code>strcpy</code> at a Rust-to-C boundary may require different review priorities.</p>
+<h2 id="zone-registry-danger-path">Zone + Registry + Danger Path</h2>
+<p>Zone and Registry should not produce most findings directly. A more controlled path is: classify the region, look up function semantics, ask whether the pointer or function is on a relevant risk path, then produce an issue if warranted.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[Call / Function] --&gt; B[Zone]</span></span>
+<span class="giallo-l"><span>    A --&gt; C[Registry]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[Region risk]</span></span>
+<span class="giallo-l"><span>    C --&gt; E[Function semantics]</span></span>
+<span class="giallo-l"><span>    D --&gt; F[Danger path]</span></span>
+<span class="giallo-l"><span>    E --&gt; F</span></span>
+<span class="giallo-l"><span>    F --&gt; G{Report?}</span></span>
+<span class="giallo-l"><span>    G --&gt;|Yes| H[Issue]</span></span>
+<span class="giallo-l"><span>    G --&gt;|No| I[Filter or lower priority]</span></span></code></pre><h2 id="summary">Summary</h2>
+<p>OmniScope avoids pure blacklist reporting by splitting a finding into three questions: where is the code located, what does the function mean at an FFI boundary, and does the pointer or function participate in a relevant risk path?</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/05-memory-graph-danger-surface/">MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="memorygraph-and-dangersurface-from-pointer-facts-to-risk-paths">MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths</h1>
+<p>Cross-language memory analysis should not only ask whether <code>malloc</code> or <code>free</code> exists. It should ask whether a pointer crosses FFI, comes from an unsafe region, or propagates through aliases. OmniScope uses <code>MemoryGraph</code> and <code>DangerSurfacePass</code> to connect these facts.</p>
+<h2 id="role-of-memorygraph">Role of MemoryGraph</h2>
+<p><code>MemoryGraph</code> is defined at <code>src/semantics/memory_graph.zig:160</code>. It stores memory-related facts: allocations, frees, call arguments, call returns, alias relations, zones, and language sources.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[trackAlloc] --&gt; M[MemoryGraph]</span></span>
+<span class="giallo-l"><span>    B[trackFree] --&gt; M</span></span>
+<span class="giallo-l"><span>    C[trackCallArg] --&gt; M</span></span>
+<span class="giallo-l"><span>    D[trackCallRet] --&gt; M</span></span>
+<span class="giallo-l"><span>    E[alias relation] --&gt; M</span></span>
+<span class="giallo-l"><span>    F[Zone / Language] --&gt; M</span></span>
+<span class="giallo-l"><span>    M --&gt; G[isOnDangerPath]</span></span></code></pre>
+<p>The graph does not attempt to model every possible program path. It answers a narrower question: is there enough evidence that this pointer is relevant to an FFI/unsafe risk path?</p>
+<h2 id="risk-path-classification">Risk-path classification</h2>
+<p><code>MemoryGraph.isOnDangerPath</code> is implemented around <code>src/semantics/memory_graph.zig:892</code>. It may return categories such as <code>ffi_arg</code>, <code>ffi_ret</code>, and <code>unsafe_alloc</code>. <code>PassContext.isOnDangerPathFull</code> at <code>src/pass/pass.zig:866</code> provides a shared entry point for other passes.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[ptr_val] --&gt; B[PassContext.isOnDangerPathFull]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[MemoryGraph.isOnDangerPath]</span></span>
+<span class="giallo-l"><span>    C --&gt; D{DangerPathKind}</span></span>
+<span class="giallo-l"><span>    D --&gt;|ffi_arg| E[Pointer passed as FFI argument]</span></span>
+<span class="giallo-l"><span>    D --&gt;|ffi_ret| F[Pointer returned from FFI]</span></span>
+<span class="giallo-l"><span>    D --&gt;|unsafe_alloc| G[Allocation in unsafe region]</span></span>
+<span class="giallo-l"><span>    E --&gt; H[Prioritize analysis]</span></span>
+<span class="giallo-l"><span>    F --&gt; H</span></span>
+<span class="giallo-l"><span>    G --&gt; H</span></span></code></pre>
+<p>A shared entry point keeps later passes from inventing inconsistent risk definitions.</p>
+<h2 id="how-dangersurfacepass-marks-relevant-objects">How DangerSurfacePass marks relevant objects</h2>
+<p><code>DangerSurfacePass</code> starts at <code>src/pass/analysis/danger_surface.zig:37</code>. It consumes <code>cross_lang_edges</code> and <code>memory_graph</code>, then updates <code>danger_surface_relevant</code>, <code>ffi_auto_relevant</code>, and <code>relevant_functions</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant CG as CrossLangEdges</span></span>
+<span class="giallo-l"><span>    participant MG as MemoryGraph</span></span>
+<span class="giallo-l"><span>    participant DS as DangerSurfacePass</span></span>
+<span class="giallo-l"><span>    participant Ctx as PassContext</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;CG: Read FFI callees</span></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;MG: Inspect call args / returns</span></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;Ctx: markRelevantAlloc(ptr)</span></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;Ctx: markFfiRelevant(ptr)</span></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;DS: traceAliasClosure(ptr)</span></span>
+<span class="giallo-l"><span>    DS-&gt;&gt;Ctx: markRelevantFunction(func)</span></span></code></pre>
+<p>Two implementation choices are visible in the source: known FFI arguments and returns can be marked directly, while MemoryGraph nodes already on a risk path can be expanded through alias closure.</p>
+<h2 id="why-alias-closure-matters">Why alias closure matters</h2>
+<p><code>traceAliasClosure</code> is at <code>src/pass/analysis/danger_surface.zig:144</code>. In LLVM IR, one memory object may appear through several SSA values after bitcasts, loads, stores, parameters, and returns. Marking only the original pointer may miss later uses.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[ptr0: FFI relevant] --&gt; B[alias set]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[ptr1]</span></span>
+<span class="giallo-l"><span>    B --&gt; D[ptr2]</span></span>
+<span class="giallo-l"><span>    C --&gt; E[markRelevantAlloc]</span></span>
+<span class="giallo-l"><span>    D --&gt; E</span></span>
+<span class="giallo-l"><span>    E --&gt; F[Recursive alias tracing]</span></span></code></pre>
+<p>This is not a full alias analysis. It is a focused propagation step for FFI-related pointer families.</p>
+<h2 id="from-risk-paths-to-prioritized-reporting">From risk paths to prioritized reporting</h2>
+<p>Later passes can use <code>isOnDangerPathFull</code> or relevance sets to filter findings. A local C allocation/free pair may be lower priority, while a pointer crossing FFI through arguments, returns, or callbacks may require review.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[Potential memory issue] --&gt; B{On risk path?}</span></span>
+<span class="giallo-l"><span>    B --&gt;|No| C[Filter / lower priority / local issue]</span></span>
+<span class="giallo-l"><span>    B --&gt;|Yes| D[FFI-relevant issue]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[Higher review priority]</span></span></code></pre><h2 id="summary">Summary</h2>
+<p>MemoryGraph stores pointer facts. DangerSurfacePass turns those facts into relevance sets tied to FFI/unsafe paths. This is the layer that connects low-level IR events with higher-level ownership and lifetime checks.</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/06-rust-ffi-auditor/">Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="rust-ffi-auditor-reconstructing-and-checking-cross-language-ownership-protocols">Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols</h1>
+<p>Rust FFI risk often appears when Rust’s ownership and borrowing protocols cross an ABI boundary. <code>RustFfiAuditor</code> maps those protocols back onto LLVM IR patterns that can be inspected statically.</p>
+<h2 id="rule-surface">Rule surface</h2>
+<p><code>RustFfiAuditor</code> is defined at <code>src/pass/analysis/rust_ffi_auditor.zig:63</code>. Its function-level logic covers Rust-specific patterns and general FFI boundary checks:</p>
+<ul>
+<li><code>into_raw</code> without a matching <code>from_raw</code>;</li>
+<li><code>as_ptr</code> borrow escape;</li>
+<li>Rust allocator and C <code>free</code> mismatch;</li>
+<li>ownership-transfer protocol violations;</li>
+<li>dangling <code>as_ptr</code> after parent object drop;</li>
+<li>unsafe FFI calls;</li>
+<li>stack address escape to <code>extern C</code>.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[RustFfiAuditor] --&gt; B[Box::into_raw / from_raw]</span></span>
+<span class="giallo-l"><span>    A --&gt; C[as_ptr borrow escape]</span></span>
+<span class="giallo-l"><span>    A --&gt; D[allocator mismatch]</span></span>
+<span class="giallo-l"><span>    A --&gt; E[ownership transfer]</span></span>
+<span class="giallo-l"><span>    A --&gt; F[dangling as_ptr]</span></span>
+<span class="giallo-l"><span>    A --&gt; G[unsafe FFI call]</span></span>
+<span class="giallo-l"><span>    A --&gt; H[stack escape]</span></span></code></pre><h2 id="as-ptr-borrow-escape-recovering-a-lifetime-risk-from-ir-calls"><code>as_ptr</code> borrow escape: recovering a lifetime risk from IR calls</h2>
+<p><code>detectAsPtrEscape</code> is implemented at <code>src/pass/analysis/rust_ffi_auditor.zig:180</code>. It iterates LLVM functions, basic blocks, and instructions; handles only <code>LLVMCall</code> and <code>LLVMInvoke</code>; retrieves the callee from the final operand; reads the callee name; and matches Rust <code>as_ptr</code> patterns.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[LLVM Function] --&gt; B[BasicBlock iterator]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Instruction iterator]</span></span>
+<span class="giallo-l"><span>    C --&gt; D{opcode == call/invoke?}</span></span>
+<span class="giallo-l"><span>    D --&gt;|No| C</span></span>
+<span class="giallo-l"><span>    D --&gt;|Yes| E[Read callee operand]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[LLVMGetValueName]</span></span>
+<span class="giallo-l"><span>    F --&gt; G{isRustAsPtrCall?}</span></span>
+<span class="giallo-l"><span>    G --&gt;|No| C</span></span>
+<span class="giallo-l"><span>    G --&gt;|Yes| H[addFinding + ctx.addIssue]</span></span></code></pre>
+<p>The risk is that <code>String</code> or <code>Vec</code> <code>as_ptr</code> returns a borrowed pointer. If C stores it, the Rust object may be dropped while C still holds the address.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant R as Rust local Vec/String</span></span>
+<span class="giallo-l"><span>    participant P as raw pointer from as_ptr</span></span>
+<span class="giallo-l"><span>    participant C as C FFI callee</span></span>
+<span class="giallo-l"><span>    R-&gt;&gt;P: as_ptr()</span></span>
+<span class="giallo-l"><span>    P-&gt;&gt;C: pass pointer</span></span>
+<span class="giallo-l"><span>    R-&gt;&gt;R: local value dropped</span></span>
+<span class="giallo-l"><span>    C-&gt;&gt;P: later use</span></span>
+<span class="giallo-l"><span>    P--&gt;&gt;C: dangling pointer risk</span></span></code></pre>
+<p>At <code>src/pass/analysis/rust_ffi_auditor.zig:212</code>, the rule creates a <code>borrow_escape</code> issue through <code>Issue.initWithReason</code>, with a reason explaining that a local <code>String/Vec</code> pointer passed to extern C may dangle.</p>
+<h2 id="into-raw-from-raw-ownership-transfer-should-close-correctly"><code>into_raw/from_raw</code>: ownership transfer should close correctly</h2>
+<p><code>Box::into_raw</code> converts Rust-managed heap ownership into a raw pointer. The caller must ensure the later deallocation protocol is correct. Missing restoration can leak; double restoration can double free; C-side release can produce allocator mismatch depending on allocation protocol.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[Box&lt;T&gt;] --&gt; B[Box::into_raw]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[*mut T]</span></span>
+<span class="giallo-l"><span>    C --&gt; D{Later protocol}</span></span>
+<span class="giallo-l"><span>    D --&gt;|from_raw exactly once| E[Ownership restored]</span></span>
+<span class="giallo-l"><span>    D --&gt;|Never restored| F[Leak risk]</span></span>
+<span class="giallo-l"><span>    D --&gt;|C free + Rust drop| G[Double free / allocator mismatch]</span></span></code></pre>
+<p><code>into_raw</code> alone is not a vulnerability. The finding depends on the surrounding protocol and subsequent pointer flow.</p>
+<h2 id="cross-language-allocator-mismatch">Cross-language allocator mismatch</h2>
+<p><code>detectCrossLangMismatch</code> starts at <code>src/pass/analysis/rust_ffi_auditor.zig:230</code>. It iterates call/invoke instructions and attempts to identify Rust allocation paired with C deallocation.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant RA as Rust allocator</span></span>
+<span class="giallo-l"><span>    participant IR as LLVM IR pointer</span></span>
+<span class="giallo-l"><span>    participant CF as C free</span></span>
+<span class="giallo-l"><span>    RA-&gt;&gt;IR: allocate / expose pointer</span></span>
+<span class="giallo-l"><span>    IR-&gt;&gt;CF: pointer crosses ABI</span></span>
+<span class="giallo-l"><span>    CF-&gt;&gt;CF: free(pointer)</span></span>
+<span class="giallo-l"><span>    CF--&gt;&gt;RA: allocator ownership contract may be violated</span></span></code></pre>
+<p>The accuracy of this kind of check depends on symbol names, preserved call relationships, wrappers, inlining, and custom allocators.</p>
+<h2 id="general-ffi-checks">General FFI checks</h2>
+<p>The auditor also runs checks that are not Rust-only, such as unsafe FFI call scanning and stack address escape. Stack escape is relevant when a pointer to a local object is passed to C and then stored beyond the call.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[alloca / local stack object] --&gt; B[Take address]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Pass to extern C]</span></span>
+<span class="giallo-l"><span>    C --&gt; D{Does C store it?}</span></span>
+<span class="giallo-l"><span>    D --&gt;|Yes| E[Dangling after return]</span></span>
+<span class="giallo-l"><span>    D --&gt;|No| F[Depends on call-duration use]</span></span></code></pre><h2 id="summary">Summary</h2>
+<p><code>RustFfiAuditor</code> maps Rust ownership and borrowing concepts onto IR-level call and pointer patterns. It should be described as static protocol recovery and checking, with accuracy bounded by available IR information.</p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/07-output-and-integration/">Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="reporting-pipeline-issue-objects-json-sarif-and-engineering-integration">Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration</h1>
+<p>Static analysis results need to be reviewable and machine-readable. OmniScope’s reporting path starts with <code>Issue</code> objects, then emits text, JSON, or SARIF through <code>emitOutput</code>.</p>
+<h2 id="issue-is-the-shared-result-type">Issue is the shared result type</h2>
+<p><code>Issue</code> is defined in <code>src/diag/issue.zig</code>, and issue kinds are exposed from <code>src/common/types.zig:151</code>. The structure carries kind, message, location, severity, confidence, confidence level, reason, FFI boundary, trace, and classification.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>classDiagram</span></span>
+<span class="giallo-l"><span>    class Issue {</span></span>
+<span class="giallo-l"><span>        kind</span></span>
+<span class="giallo-l"><span>        message</span></span>
+<span class="giallo-l"><span>        location</span></span>
+<span class="giallo-l"><span>        severity</span></span>
+<span class="giallo-l"><span>        confidence</span></span>
+<span class="giallo-l"><span>        confidence_level</span></span>
+<span class="giallo-l"><span>        reason</span></span>
+<span class="giallo-l"><span>        ffi_boundary</span></span>
+<span class="giallo-l"><span>        trace</span></span>
+<span class="giallo-l"><span>        classification</span></span>
+<span class="giallo-l"><span>    }</span></span></code></pre>
+<p>These fields support different review needs:</p>
+<ul>
+<li><code>severity</code> helps triage.</li>
+<li><code>confidence</code> and <code>confidence_level</code> distinguish stronger evidence from heuristics.</li>
+<li><code>reason</code> records the rule rationale.</li>
+<li><code>ffi_boundary</code> marks cross-language context.</li>
+<li><code>trace</code> leaves room for evidence paths.</li>
+<li><code>classification</code> separates FFI-boundary findings from local-only findings.</li>
+</ul>
+<h2 id="from-pass-to-issue">From Pass to Issue</h2>
+<p>When a pass finds something reportable, it creates an <code>Issue</code> with constructors such as <code>Issue.init</code> or <code>Issue.initWithReason</code>, then calls <code>ctx.addIssue</code>. The entry point is <code>src/pass/pass.zig:458</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Analysis Pass] --&gt; B[Rule match]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Construct Issue]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[ctx.addIssue]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[DataFlowGraph / Issue store]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[Pipeline.getIssues]</span></span>
+<span class="giallo-l"><span>    F --&gt; G[emitOutput]</span></span></code></pre>
+<p>This decouples rule logic from output format. Passes produce structured findings; the main program decides how to serialize them.</p>
+<h2 id="emitoutput-dispatches-formats"><code>emitOutput</code> dispatches formats</h2>
+<p><code>emitOutput</code> is implemented at <code>src/main.zig:207</code>. The JSON branch calls <code>formatIssuesAsJson</code> at <code>src/main.zig:494</code>; the SARIF branch uses <code>SarifOutput</code>, initialized at <code>src/main.zig:232</code>; file output is controlled by <code>config.output_file</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    A[issues + func_count + time_ms] --&gt; B[emitOutput]</span></span>
+<span class="giallo-l"><span>    B --&gt; C{OutputFormat}</span></span>
+<span class="giallo-l"><span>    C --&gt;|json| D[formatIssuesAsJson]</span></span>
+<span class="giallo-l"><span>    C --&gt;|sarif| E[SarifOutput.generate]</span></span>
+<span class="giallo-l"><span>    C --&gt;|text| F[terminal diagnostics]</span></span>
+<span class="giallo-l"><span>    D --&gt; G[stdout or file]</span></span>
+<span class="giallo-l"><span>    E --&gt; G</span></span>
+<span class="giallo-l"><span>    F --&gt; H[developer console]</span></span></code></pre><h2 id="sarif-integration">SARIF integration</h2>
+<p><code>SarifOutput</code> is defined at <code>src/output/sarif.zig:36</code>, with file writing at <code>src/output/sarif.zig:167</code>. SARIF lets results be consumed by GitHub Code Scanning, CI systems, and security dashboards.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[OmniScope Issue] --&gt; B[SARIF Result]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[sarif.json]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[CI Artifact]</span></span>
+<span class="giallo-l"><span>    C --&gt; E[GitHub Code Scanning]</span></span>
+<span class="giallo-l"><span>    C --&gt; F[Security Dashboard]</span></span></code></pre><h2 id="example-commands">Example commands</h2>
+<p>Local inspection:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">omniscope</span><span style="color: #A6E3A1;"> input.ll</span></span></code></pre>
+<p>Structured JSON:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">omniscope</span><span style="color: #A6E3A1;"> --json -o omniscope-report.json input.ll</span></span></code></pre>
+<p>SARIF for CI or code scanning:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">omniscope</span><span style="color: #A6E3A1;"> --sarif -o omniscope.sarif input.ll</span></span></code></pre>
+<p>FFI-focused mode:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">omniscope</span><span style="color: #A6E3A1;"> --ffi-only input.ll</span></span></code></pre><h2 id="confidence-and-review-boundaries">Confidence and review boundaries</h2>
+<p>Confidence is not decorative. Cross-language static analysis can be affected by optimization, missing symbols, debug information quality, wrappers, and custom allocators. Exposing confidence, reason, and trace fields helps reviewers inspect the analyzer’s reasoning instead of relying only on alert color.</p>
+<h2 id="summary">Summary</h2>
+<p>The reporting path separates analysis from serialization: passes produce structured issues, <code>emitOutput</code> selects the output format, and JSON/SARIF make the results usable in engineering workflows.</p>
+
+        </div>
+
+                </div>
+            <div class="pagination">
+                <div class="pagination__buttons"></div>
+            </div>
+        </div>
+        
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+</body>
+
+</html>
