@@ -1,7 +1,7 @@
 +++
 title = "OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing"
 date = 2026-05-21
-description = "This series is a source-level technical walkthrough, not a product pitch. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++."
+description = "This series explains what OmniScope does, how data moves through the project, and which modules make which decisions. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++."
 weight = 15
 [taxonomies]
 tags = ["Rust", "LLVM", "FFI"]
@@ -12,9 +12,11 @@ series = "OmniScope"
 
 # OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing
 
-This series is a source-level technical walkthrough, not a product pitch. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.
+This series explains what OmniScope does, how data moves through the project, and which modules make which decisions. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.
 
 OmniScope focuses on one concrete question: **after ownership, lifetime, and deallocation protocols cross a language boundary, can a static analyzer recover enough semantics to produce reviewable findings?**
+
+In one sentence: OmniScope reads LLVM IR (`.ll` / `.bc`), turns calls, pointer flows, allocation/free events, language boundaries, and unsafe regions into queryable facts, then reports high-risk paths related to FFI, ownership, and lifetime through text, JSON, or SARIF.
 
 ```mermaid
 flowchart LR
@@ -51,4 +53,34 @@ flowchart LR
 
 ## How to Read
 
-Read this as a mechanism-by-mechanism walkthrough. Each article follows one implementation path: how input becomes analysis context, how passes exchange facts, how Zone and Registry reduce noise, how MemoryGraph models pointer flow, and how Rust FFI ownership rules are checked.
+Read this as a problem chain: first identify where cross-language security auditing gets difficult, then look at why common approaches fall short, and finally see how OmniScope turns those constraints into LLVM IR input, passes, MemoryGraph, Zone, Registry, Rust FFI auditing, and structured output.
+
+Each article follows one implementation path: how input becomes analysis context, how passes exchange facts, how Zone and Registry reduce noise, how MemoryGraph models pointer flow, and how Rust FFI ownership rules are checked.
+
+This series is written as technical explainer content. It starts from implementation constraints, data flow, and module boundaries instead of abstract definitions. Each article follows the same pattern:
+
+1. State the engineering problem first.
+2. Show the source entry points, not just the abstraction.
+3. Break down the data structures that hold analysis facts.
+4. Explain why the design exists and where it breaks down.
+
+If you want to read the code first, start here:
+
+```text
+main.zig
+  └─ runSingleFileAnalysis / runModulePipeline / emitOutput
+pipeline.zig
+  └─ Pipeline.init / Pipeline.run
+pass.zig
+  └─ PassContext / addIssue / isOnDangerPathFull
+manager.zig
+  └─ resolveDependencies / run
+semantics/memory_graph.zig
+  └─ MemoryGraph / isOnDangerPath
+pass/analysis/danger_surface.zig
+  └─ DangerSurfacePass.run
+pass/analysis/rust_ffi_auditor.zig
+  └─ auditFunction / Rust-specific rules / universal FFI rules
+```
+
+The real architecture is not just “uses LLVM IR”. It is the way OmniScope turns low-level IR facts into three reusable semantic layers: `PassContext`, `MemoryGraph`, and `DangerSurface`.

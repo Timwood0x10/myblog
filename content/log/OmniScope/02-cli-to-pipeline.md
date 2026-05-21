@@ -14,6 +14,16 @@ series = "OmniScope"
 
 This article follows one OmniScope run from command-line arguments to structured findings. The important part is how the code turns user input into a `PassContext`, runs analysis passes, and emits reports.
 
+## Start with the problem: an analyzer run is not one rule execution
+
+A cross-language audit begins at the CLI, but the real job is a sequence: load `.ll` or `.bc`, create an LLVM module, identify languages and boundaries, run multiple passes, collect shared facts, and emit results for a terminal, CI system, or security platform.
+
+If those steps are mixed together, each rule ends up parsing input, scanning calls, and printing reports on its own. OmniScope separates them into CLI parsing, IR loading, Pipeline orchestration, PassManager execution, and output formatting so the whole run becomes traceable.
+
+## OmniScope’s entry point: Pipeline owns the analysis lifecycle
+
+The CLI describes how the user wants to run. IRLoader turns input into a module. Pipeline is where the module, shared context, passes, indexes, and output path are assembled. Later structures such as `PassContext`, `CallSiteIndex`, `MemoryGraph`, and `GlobalAllocTracker` appear naturally from this lifecycle.
+
 ## Config defines the external shape of the run
 
 `Config` is defined at `src/main.zig:24`. It stores input files, output format, output path, visualization flag, user-code focus, FFI-only mode, and stdlib inclusion. Argument parsing starts at `src/main.zig:73`.
@@ -121,3 +131,54 @@ flowchart LR
 ## Summary
 
 An OmniScope run follows a clear data path: CLI creates configuration, IRLoader supplies a module, Pipeline creates shared analysis context, PassManager executes passes, and `emitOutput` formats results.
+
+## Source breakdown: why Pipeline builds CallSiteIndex early
+
+`Pipeline.run` performs one important pre-pass optimization: before any analysis pass runs, it walks the LLVM module and indexes callee names to call sites. The code lives around `src/pipeline/pipeline.zig:130`:
+
+```zig
+var func = c.LLVMGetFirstFunction(raw_mod);
+while (@intFromPtr(func) != 0) : (func = c.LLVMGetNextFunction(func)) {
+    if (c.LLVMIsDeclaration(func) != 0) continue;
+    const func_ptr = @as(u64, @intFromPtr(func));
+
+    var bb = c.LLVMGetFirstBasicBlock(func);
+    while (@intFromPtr(bb) != 0) : (bb = c.LLVMGetNextBasicBlock(bb)) {
+        var inst = c.LLVMGetFirstInstruction(bb);
+        while (@intFromPtr(inst) != 0) : (inst = c.LLVMGetNextInstruction(inst)) {
+            if (@intFromPtr(c.LLVMIsACallInst(inst)) == 0) continue;
+            const called_val = c.LLVMGetCalledValue(inst);
+            const called_name = std.mem.span(c.LLVMGetValueName(called_val));
+            const inst_ptr = @as(u64, @intFromPtr(inst));
+            ctx.CallSiteIndex.addCall(self.allocator, called_name, func_ptr, inst_ptr) catch |err| {
+                std.log.warn("[WARN] Failed to add call site for '{s}': {}", .{ called_name, err });
+            };
+        }
+    }
+}
+```
+
+This is more than a micro-optimization. Without this index, every pass that asks “where is this external function called?” would need to rescan functions, basic blocks, and instructions. With `CallSiteIndex`, call-site lookup becomes a shared context query used by FFI boundary detection, danger-surface tracing, and report evidence.
+
+## Pipeline also owns post-pass reduction
+
+After `PassManager.run`, the pipeline scans `GlobalAllocTracker` for unfreed allocations and calls `ctx.isOnDangerPathFull(rec.ptr_id)`. If a leaked pointer reaches an FFI path, severity and confidence are promoted.
+
+This shows that Pipeline is not just a container for passes. It also performs final reduction over facts that only become meaningful after all passes have contributed:
+
+```text
+pass phase
+  -> collect allocations / frees / aliases / ffi edges
+post-pass phase
+  -> inspect unfreed allocations
+  -> query danger path
+  -> convert high-value candidates into issues
+```
+
+The design choice is deliberate: a single pass sees local events, while Pipeline can inspect globally accumulated state.
+
+## Engineering trade-off: lifecycle management is part of the architecture
+
+The `Pipeline.run` path contains many `defer` and `errdefer` blocks for `PassContext`, hash maps, `MemoryGraph`, and semantic call graph cleanup. That is not incidental. A Zig-based analyzer processes large IR modules and allocates many maps, lists, and strings. If context ownership is unclear, the analyzer itself becomes unreliable in batch scans and CI.
+
+So the Pipeline has three concrete responsibilities: assemble the shared context, turn expensive repeated scans into indexes, and run post-pass reduction over global facts.

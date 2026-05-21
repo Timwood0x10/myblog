@@ -14,6 +14,16 @@ series = "OmniScope"
 
 Cross-language memory analysis should not only ask whether `malloc` or `free` exists. It should ask whether a pointer crosses FFI, comes from an unsafe region, or propagates through aliases. OmniScope uses `MemoryGraph` and `DangerSurfacePass` to connect these facts.
 
+## Start with the problem: memory risk lives on paths, not names
+
+A pointer can start as Rust `Box::into_raw`, become `void*` through a bitcast, pass into C, get stored in a global structure, and later be released by another function. Each step can look like an ordinary IR event. The risk only appears when the path is connected.
+
+This is where simple rule scanning loses information: it can see calls but not pointer families, allocators but not aliases, FFI boundaries but not which pointer actually crossed them.
+
+## OmniScope’s entry point: build MemoryGraph, then narrow with DangerSurface
+
+`MemoryGraph` stores allocations, frees, call arguments, returns, and aliases in one graph. `DangerSurfacePass` starts from FFI/unsafe boundaries and marks the pointers and functions worth deeper analysis. Reports then follow risky paths rather than isolated APIs.
+
 ## Role of MemoryGraph
 
 `MemoryGraph` is defined at `src/semantics/memory_graph.zig:160`. It stores memory-related facts: allocations, frees, call arguments, call returns, alias relations, zones, and language sources.
@@ -102,3 +112,77 @@ flowchart LR
 ## Summary
 
 MemoryGraph stores pointer facts. DangerSurfacePass turns those facts into relevance sets tied to FFI/unsafe paths. This is the layer that connects low-level IR events with higher-level ownership and lifetime checks.
+
+## Source breakdown: `isOnDangerPath` is the central question
+
+`MemoryGraph.isOnDangerPath` lives around `src/semantics/memory_graph.zig:892`. The source comment calls it the ONE question that decides whether a pointer matters. It checks call edges first, allocation-node facts second, and alias closure last.
+
+```zig
+pub fn isOnDangerPath(
+    graph: *MemoryGraph,
+    ptr_val: u64,
+    ffi_boundaries: []const MemoryGraph.DangerSurface,
+    visited: *std.AutoHashMap(u64, void),
+    ffi_set: ?*const std.StringHashMap(void),
+) DangerPathKind {
+    if (visited.contains(ptr_val)) return .none;
+    visited.put(ptr_val, {}) catch return .none;
+
+    const arg_indices = graph.getCallArgsForPtr(ptr_val);
+    for (arg_indices) |idx| {
+        const arg_edge = &graph.call_args.items[idx];
+        if (set.contains(arg_edge.callee_name)) {
+            return .ffi_arg;
+        }
+    }
+
+    const ret_indices = graph.getCallRetsForPtr(ptr_val);
+    for (ret_indices) |idx| {
+        const ret_edge = &graph.call_rets.items[idx];
+        if (set.contains(ret_edge.callee_name)) {
+            return .ffi_ret;
+        }
+    }
+
+    const node = graph.nodes.get(ptr_val) orelse return .none;
+    if (node.zone == .unsafe) return .unsafe_alloc;
+    if (node.freed and node.alloc_lang != node.free_lang.?) return .cross_lang_lifecycle;
+    // alias closure follows...
+}
+```
+
+The order matters. Call edges must come before allocation nodes because many FFI arguments have no allocation record: they may come from function parameters, external returns, or sources that earlier passes could not recover. Requiring an `AllocNode` first would miss the most important boundary-flow cases.
+
+## Source breakdown: DangerSurfacePass is a pruning pass
+
+`DangerSurfacePass.run` in `src/pass/analysis/danger_surface.zig:37` takes `ctx.getCrossLangEdges()`, extracts FFI boundaries, and marks relevant arguments, returns, functions, and aliases.
+
+```zig
+for (ffis) |surface| {
+    const arg_indices = mg.getCallArgsForCallee(surface.callee_name);
+    for (arg_indices) |arg_idx| {
+        const arg_ptr_val = mg.call_args.items[arg_idx].arg_ptr;
+        try ctx.markRelevantAlloc(arg_ptr_val);
+        try ctx.markFfiRelevant(arg_ptr_val);
+        ctx.markFunctionFromInst(mg.call_args.items[arg_idx].caller_inst);
+        try traceAliasClosure(mg, arg_ptr_val, ctx, diag, &visited);
+    }
+
+    const ret_indices = mg.getCallRetsFromCallee(surface.callee_name);
+    for (ret_indices) |ret_idx| {
+        const ret_ptr_val = mg.call_rets.items[ret_idx].ret_ptr;
+        try ctx.markRelevantAlloc(ret_ptr_val);
+        try ctx.markFfiRelevant(ret_ptr_val);
+        ctx.markFunctionFromInst(mg.call_rets.items[ret_idx].caller_inst);
+        try traceAliasClosure(mg, ret_ptr_val, ctx, diag, &visited);
+    }
+}
+```
+
+It does not emit issues directly. Its output is a set of relevance maps: `danger_surface_relevant`, `ffi_auto_relevant`, and `relevant_functions`. Later passes use those maps to decide whether to run strict checks or filter local noise.
+
+## How it works: build the fact graph first, then define the danger surface
+
+Instead of reporting immediately on malloc/free-like events, OmniScope records allocations, frees, call arguments, call returns, and aliases in `MemoryGraph`. Then it asks which graph nodes are close to FFI or unsafe boundaries.
+
+That gives three benefits: rules reuse one pointer-fact layer, future danger-path kinds can be added centrally, and reports can distinguish local-only issues from boundary-relevant issues. The cost is also clear: the quality of `MemoryGraph` bounds the quality of every downstream pass.

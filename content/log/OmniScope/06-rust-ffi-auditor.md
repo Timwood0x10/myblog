@@ -14,6 +14,16 @@ series = "OmniScope"
 
 Rust FFI risk often appears when Rust’s ownership and borrowing protocols cross an ABI boundary. `RustFfiAuditor` maps those protocols back onto LLVM IR patterns that can be inspected statically.
 
+## Start with the problem: Rust cannot verify what C does later
+
+Inside Rust, `Box`, borrow, and drop have clear semantics. Once `extern "C"` exposes a raw pointer, those semantics become a protocol between two sides. C can store the pointer, release it later, call `free`, or pass it back through a callback. The Rust compiler no longer verifies those actions.
+
+Rust FFI auditing therefore looks past “is there unsafe?” and asks whether the ownership protocol closes: who reclaims an `into_raw` pointer, whether an `as_ptr` borrow escapes, whether a stack address outlives the function, and whether allocation and deallocation use the same protocol.
+
+## OmniScope’s entry point: Rust-specific rules plus universal FFI rules
+
+`RustFfiAuditor` splits its rules into two layers. Rust-specific rules run on Rust modules and recover `into_raw/from_raw`, `as_ptr`, and borrow-dangling semantics. Universal FFI rules run on all modules and catch stack escape or unsafe boundary calls.
+
 ## Rule surface
 
 `RustFfiAuditor` is defined at `src/pass/analysis/rust_ffi_auditor.zig:63`. Its function-level logic covers Rust-specific patterns and general FFI boundary checks:
@@ -119,3 +129,65 @@ flowchart TD
 ## Summary
 
 `RustFfiAuditor` maps Rust ownership and borrowing concepts onto IR-level call and pointer patterns. It should be described as static protocol recovery and checking, with accuracy bounded by available IR information.
+
+## Source breakdown: Rust rules and universal FFI rules are intentionally separated
+
+`RustFfiAuditor.auditFunction` around `src/pass/analysis/rust_ffi_auditor.zig:120` splits rules into Rust-specific and universal FFI boundary checks.
+
+```zig
+fn auditFunction(self: *RustFfiAuditor, func: c.LLVMValueRef, ctx: *PassContext, diag: *DiagnosticWriter) !void {
+    const func_name = getFunctionName(func);
+    const is_rust = ctx.isRustModule();
+
+    if (is_rust) {
+        if (ctx.rust_into_raw_set.contains(@intFromPtr(c.LLVMGetValueName(func)))) {
+            if (ctx.rust_from_raw_set.count() == 0) {
+                try self.addFinding(.{
+                    .issue_type = .unpaired_into_raw,
+                    .severity = .high,
+                    .confidence = 0.75,
+                    .reason = "into_raw() called but no matching from_raw() in module",
+                    .location = Location.init(func_name),
+                });
+            }
+        }
+
+        try self.detectAsPtrEscape(func, ctx, diag);
+        try self.detectCrossLangMismatch(func, ctx, diag);
+        try self.detectOwnershipTransferViolations(func, ctx, diag);
+        try self.detectAsPtrDangling(func, ctx, diag);
+    }
+
+    try self.detectUnsafeFfiCalls(func);
+    try self.detectStackEscapeToFFI(func, ctx, diag);
+}
+```
+
+This split matters. `as_ptr`, `into_raw`, and `from_raw` are Rust semantics. Forcing those rules onto C or Zig modules would create noise. By contrast, stack-address escape and unsafe FFI calls are cross-language risks and should run on every module.
+
+## How it works: language gating is precision, not conservatism
+
+At LLVM level many values become pointers, but the source-level semantics still differ. OmniScope uses `ctx.isRustModule()` to match rules with semantic origin:
+
+```text
+Rust module
+  -> ownership transfer / borrow escape / from_raw pairing
+Any module
+  -> FFI boundary / stack escape / unsafe call surface
+```
+
+That is also why `PassContext` stores `module_language`, and why the Pipeline calls `ctx.initModuleLanguage(self.module)` before any pass runs. Language detection is not a UI label; it is a rule selector.
+
+## Evidence chain: a finding is not the final report
+
+`RustFfiAuditor` first produces `RustFfiFinding` records with `func_name`, `issue_type`, `severity`, `confidence`, `reason`, and `location`. That is an internal semantic layer, not the final output. Only later does the unified issue path convert it into the shared `Issue` schema.
+
+That two-stage structure matters because the auditor can keep Rust-specific meaning such as unpaired `into_raw`, borrow escape, or stack escape, while the output layer preserves a consistent schema shared with the rest of OmniScope.
+
+## One concrete rule: unpaired `into_raw`
+
+The problem with `Box::into_raw` is not “raw pointers are dangerous” in the abstract. It is that Rust intentionally gives up automatic drop and transfers release responsibility into an external protocol. A safe recovery path requires a matching `from_raw` or equivalent reclamation.
+
+That is why the code checks for module-level pairing: if `into_raw` semantics exist but no `from_raw` semantics exist anywhere in the module, OmniScope emits `unpaired_into_raw`. It is a protocol-completeness check, not a function blacklist.
+
+The rule still has limits: if the release path lives in another shared library, another module, or a wrapper function, a static module-local check must lower confidence. That is why the code uses `0.75` instead of `1.0`.
