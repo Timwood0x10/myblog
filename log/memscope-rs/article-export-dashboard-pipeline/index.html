@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Export and Dashboard Pipeline: Turning Memory Events into Reports | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="Collecting memory data is only useful if developers can inspect it.">
+
+    <meta property="og:description" content="Collecting memory data is only useful if developers can inspect it.">
+    <meta property="og:title" content="Export and Dashboard Pipeline: Turning Memory Events into Reports | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-export-dashboard-pipeline/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Collecting memory data is only useful if developers can inspect it.">
+    <meta name="twitter:title" content="Export and Dashboard Pipeline: Turning Memory Events into Reports | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-export-dashboard-pipeline/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-export-dashboard-pipeline/">Export and Dashboard Pipeline: Turning Memory Events into Reports</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memscope-rs/">#memscope-rs</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="export-and-dashboard-pipeline-turning-memory-events-into-reports">Export and Dashboard Pipeline: Turning Memory Events into Reports</h1>
+<p>Collecting memory data is only useful if developers can inspect it.</p>
+<p><code>memscope-rs</code> exports both machine-readable JSON and HTML dashboards. The export pipeline is not a thin wrapper around one report; it combines snapshots, passports, async task data, ownership graphs, system resources, and task graphs.</p>
+<p>This article explains what the export pipeline actually writes and how it is assembled.</p>
+<hr />
+<h2 id="1-export-starts-from-the-event-store">1. Export Starts from the Event Store</h2>
+<p>The main export entry point is <code>export_all_json()</code>.</p>
+<p>The first step is to read events from the tracker’s event store:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> events</span><span style="color: #94E2D5;"> =</span><span> tracker</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">event_store</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">snapshot</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> allocations</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> rebuild_allocations_from_events</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>events</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> snapshot</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> MemorySnapshot</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from_allocation_infos</span><span style="color: #9399B2;">(</span><span>allocations</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">());</span></span></code></pre>
+<p>This is important:</p>
+<blockquote>
+<p>export does not only use a live allocation map; it rebuilds report data from the event stream.</p>
+</blockquote>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[EventStore] --&gt; B[snapshot]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[rebuild_allocations_from_events]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[MemorySnapshot]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[JSON Reports]</span></span>
+<span class="giallo-l"><span>    D --&gt; F[Dashboard Context]</span></span></code></pre>
+<hr />
+<h2 id="2-what-export-all-json-writes">2. What <code>export_all_json()</code> Writes</h2>
+<p>The export pipeline writes multiple files:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">export_snapshot_to_json</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>snapshot</span><span style="color: #9399B2;">,</span><span> path_ref</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>options</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">export_memory_passports_json</span><span style="color: #9399B2;">(</span><span>path_ref</span><span style="color: #9399B2;">,</span><span> passport_tracker</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">export_leak_detection_json</span><span style="color: #9399B2;">(</span><span>path_ref</span><span style="color: #9399B2;">,</span><span> passport_tracker</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">export_unsafe_ffi_json</span><span style="color: #9399B2;">(</span><span>path_ref</span><span style="color: #9399B2;">,</span><span> passport_tracker</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">export_system_resources_json</span><span style="color: #9399B2;">(</span><span>path_ref</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">export_async_analysis_json</span><span style="color: #9399B2;">(</span><span>path_ref</span><span style="color: #9399B2;">,</span><span> async_tracker</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">export_ownership_graph_json</span><span style="color: #9399B2;">(</span><span>path_ref</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>typed_allocations</span><span style="color: #9399B2;">,</span><span> tracker</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">event_store</span><span style="color: #9399B2;">())</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">export_task_graph_json</span><span style="color: #9399B2;">(</span><span>path_ref</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p>The actual outputs include:</p>
+<ul>
+<li>memory snapshot JSON;</li>
+<li>memory passport JSON;</li>
+<li>leak detection JSON;</li>
+<li>unsafe/FFI JSON;</li>
+<li>system resources JSON;</li>
+<li>async analysis JSON;</li>
+<li>ownership graph JSON;</li>
+<li>task graph JSON.</li>
+</ul>
+<p>This makes the export pipeline one of the main integration points in the project.</p>
+<hr />
+<h2 id="3-memory-passport-export">3. Memory Passport Export</h2>
+<p>Passport export summarizes lifecycle records:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #F9E2AF;">serde_json</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">json!</span><span style="color: #9399B2;">({</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;passport_id&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span>passport_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;allocation_ptr&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #89B4FA;font-style: italic;"> format!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;0x</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">:x</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #94E2D5;">.</span><span>allocation_ptr</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;size_bytes&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span>size_bytes</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;created_at&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span>created_at</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;lifecycle_events&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span>lifecycle_events</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">len</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;status&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #89B4FA;font-style: italic;"> format!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">:?</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #94E2D5;">.</span><span>status_at_shutdown</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">})</span></span></code></pre>
+<p>This is intentionally a summary. It does not dump every internal detail by default.</p>
+<hr />
+<h2 id="4-unsafe-ffi-export">4. Unsafe/FFI Export</h2>
+<p>Unsafe/FFI export filters passports by FFI-relevant status:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> ffi_reports</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span>_</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span> passports</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">values</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">filter</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>p</span><span style="color: #94E2D5;">|</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span>            p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">status_at_shutdown</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">            PassportStatus</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HandoverToFfi</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                |</span><span style="color: #F9E2AF;"> PassportStatus</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InForeignCustody</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                |</span><span style="color: #F9E2AF;"> PassportStatus</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">FreedByForeign</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        )</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">collect</span><span style="color: #9399B2;">();</span></span></code></pre>
+<p>This means <code>unsafe_ffi.json</code> is not just a raw memory dump. It is a filtered report focused on boundary-related memory.</p>
+<hr />
+<h2 id="5-async-export">5. Async Export</h2>
+<p>Async export writes <code>async_analysis.json</code> with summary, task profiles, and active allocations.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> async_data</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> json!</span><span style="color: #9399B2;">({</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;summary&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;total_tasks&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>total_tasks</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;active_tasks&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>active_tasks</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;total_allocations&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>total_allocations</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;total_memory_bytes&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>total_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;active_memory_bytes&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>active_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;peak_memory_bytes&quot;</span><span style="color: #94E2D5;">:</span><span> stats</span><span style="color: #94E2D5;">.</span><span>peak_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    },</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;task_profiles&quot;</span><span style="color: #94E2D5;">:</span><span> profiles</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>p</span><span style="color: #94E2D5;">|</span><span style="color: #89B4FA;font-style: italic;"> json!</span><span style="color: #9399B2;">({</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;task_id&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">task_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;task_name&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">task_name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;current_memory&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">current_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;peak_memory&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">peak_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;total_allocations&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">total_allocations</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;total_deallocations&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">total_deallocations</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;is_completed&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">is_completed</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;has_potential_leak&quot;</span><span style="color: #94E2D5;">:</span><span> p</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">has_potential_leak</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;allocations&quot;</span><span style="color: #94E2D5;">:</span><span> snapshot</span><span style="color: #94E2D5;">.</span><span>allocations</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>a</span><span style="color: #94E2D5;">|</span><span style="color: #89B4FA;font-style: italic;"> json!</span><span style="color: #9399B2;">({</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;ptr&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #89B4FA;font-style: italic;"> format!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;0x</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">:x</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> a</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">ptr</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;size&quot;</span><span style="color: #94E2D5;">:</span><span> a</span><span style="color: #94E2D5;">.</span><span>size</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;task_id&quot;</span><span style="color: #94E2D5;">:</span><span> a</span><span style="color: #94E2D5;">.</span><span>task_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;var_name&quot;</span><span style="color: #94E2D5;">:</span><span> a</span><span style="color: #94E2D5;">.</span><span>var_name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;type_name&quot;</span><span style="color: #94E2D5;">:</span><span> a</span><span style="color: #94E2D5;">.</span><span>type_name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">});</span></span></code></pre>
+<p>This is the bridge between runtime async attribution and offline analysis.</p>
+<hr />
+<h2 id="6-ownership-graph-export">6. Ownership Graph Export</h2>
+<p>Ownership graph export includes nodes and edges.</p>
+<p>Node export:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">json!</span><span style="color: #9399B2;">({</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;id&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #89B4FA;font-style: italic;"> format!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;0x</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">:x</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> node</span><span style="color: #94E2D5;">.</span><span>id</span><span style="color: #94E2D5;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;type_name&quot;</span><span style="color: #94E2D5;">:</span><span> node</span><span style="color: #94E2D5;">.</span><span>type_name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;size&quot;</span><span style="color: #94E2D5;">:</span><span> node</span><span style="color: #94E2D5;">.</span><span>size</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;stack_ptr&quot;</span><span style="color: #94E2D5;">:</span><span> node</span><span style="color: #94E2D5;">.</span><span>stack_ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>p</span><span style="color: #94E2D5;">|</span><span style="color: #89B4FA;font-style: italic;"> format!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;0x</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">:x</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #9399B2;">)),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">})</span></span></code></pre>
+<p>Edge export:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #A6E3A1;">&quot;kind&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> match</span><span> edge</span><span style="color: #94E2D5;">.</span><span>op </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Owns</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;Owns&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Contains</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;Contains&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Borrows</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;Borrows&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">RcClone</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;RcClone&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ArcClone</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;ArcClone&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Move</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;Move&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">SharedBorrow</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;SharedBorrow&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MutBorrow</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;MutBorrow&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This output is only as accurate as the underlying relation inference. It should be read as an analysis graph, not a compiler proof.</p>
+<hr />
+<h2 id="7-dashboard-rendering">7. Dashboard Rendering</h2>
+<p>The HTML dashboard path builds a dashboard context from tracker data and renders it with a template.</p>
+<p>The export function chooses a dashboard template:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">match</span><span> template</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DashboardTemplate</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Final</span><span style="color: #94E2D5;"> =&gt;</span><span> renderer</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">render_final_dashboard</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>context</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DashboardTemplate</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Unified</span><span style="color: #94E2D5;"> =&gt;</span><span> renderer</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">render_unified_dashboard</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>context</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The dashboard is therefore a rendered view over the same reconstructed data used by JSON export.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[Tracker + EventStore] --&gt; B[Dashboard Context]</span></span>
+<span class="giallo-l"><span>    C[Passport Tracker] --&gt; B</span></span>
+<span class="giallo-l"><span>    D[Async Tracker] --&gt; B</span></span>
+<span class="giallo-l"><span>    B --&gt; E[Handlebars Renderer]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[Unified Dashboard HTML]</span></span></code></pre>
+<hr />
+<h2 id="8-practical-value">8. Practical Value</h2>
+<p>The export pipeline matters because it gives different audiences different entry points:</p>
+<ul>
+<li>JSON for tooling and CI;</li>
+<li>HTML dashboard for human inspection;</li>
+<li>ownership graph JSON for visual relation analysis;</li>
+<li>async JSON for task-level diagnosis;</li>
+<li>passport JSON for unsafe/FFI audit trails.</li>
+</ul>
+<hr />
+<h2 id="9-limitations">9. Limitations</h2>
+<ul>
+<li>Exported reports are derived from recorded events; missing events mean missing report data.</li>
+<li>Some reports summarize data rather than dumping every internal detail.</li>
+<li>Ownership graph export includes inferred relations.</li>
+<li>Async export depends on explicit async context attribution.</li>
+<li>Unsafe/FFI export depends on passports being created and updated.</li>
+</ul>
+<hr />
+<h2 id="10-summary">10. Summary</h2>
+<p>The export and dashboard pipeline is the point where <code>memscope-rs</code> becomes usable as a developer tool.</p>
+<p>It turns event streams into:</p>
+<ul>
+<li>snapshots;</li>
+<li>JSON files;</li>
+<li>ownership graphs;</li>
+<li>async task reports;</li>
+<li>memory passport reports;</li>
+<li>dashboards.</li>
+</ul>
+<p>The most accurate description is:</p>
+<blockquote>
+<p>export is not just serialization; it is the integration layer that combines runtime facts, explicit metadata, and analysis results into inspectable artifacts.</p>
+</blockquote>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-ownership-graph-relation-inference/">
+                                <span class="button__icon">←</span>&nbsp;
+                                <span class="button__text">Ownership Graph and Relation Inference: From Memory Events to Rust Semantics</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-architecture-facade-pipeline/">
+                                <span class="button__text">Architecture Deep Dive: From Facade to Event Store, Snapshot, Analysis, and Render</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>

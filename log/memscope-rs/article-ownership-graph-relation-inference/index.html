@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Ownership Graph and Relation Inference: From Memory Events to Rust Semantics | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="The previous articles focused on data collection:">
+
+    <meta property="og:description" content="The previous articles focused on data collection:">
+    <meta property="og:title" content="Ownership Graph and Relation Inference: From Memory Events to Rust Semantics | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-ownership-graph-relation-inference/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="The previous articles focused on data collection:">
+    <meta name="twitter:title" content="Ownership Graph and Relation Inference: From Memory Events to Rust Semantics | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-ownership-graph-relation-inference/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-ownership-graph-relation-inference/">Ownership Graph and Relation Inference: From Memory Events to Rust Semantics</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memscope-rs/">#memscope-rs</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="ownership-graph-and-relation-inference-from-memory-events-to-rust-semantics">Ownership Graph and Relation Inference: From Memory Events to Rust Semantics</h1>
+<p>The previous articles focused on data collection:</p>
+<ul>
+<li>single-thread tracking records allocation facts and Rust-level metadata;</li>
+<li>lockfree tracking handles concurrent event capture;</li>
+<li>memory passports describe unsafe and FFI lifecycles;</li>
+<li><code>StackOwner</code> makes <code>Arc/Rc</code> shared ownership observable;</li>
+<li>async attribution connects allocations to logical tasks.</li>
+</ul>
+<p>This article focuses on the next layer:</p>
+<blockquote>
+<p>How does <code>memscope-rs</code> turn collected memory records into relationships?</p>
+</blockquote>
+<p>This is where raw events become a graph of ownership, containment, sharing, slices, clones, and inferred relations.</p>
+<p>The key word is <strong>inferred</strong>. This graph is not a compiler proof of Rust ownership. It is a post-analysis structure built from runtime facts, explicit metadata, memory scanning, and heuristics.</p>
+<hr />
+<h2 id="1-why-a-relation-graph-exists">1. Why a Relation Graph Exists</h2>
+<p>Raw allocation records are useful, but they do not explain structure.</p>
+<p>An allocation list can tell us:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>ptr=0x1000 size=1024 type=Vec&lt;T&gt;</span></span>
+<span class="giallo-l"><span>ptr=0x5000 size=64   type=HashMap&lt;K,V&gt;</span></span>
+<span class="giallo-l"><span>ptr=0x9000 size=24   type=Arc&lt;T&gt;</span></span></code></pre>
+<p>But it does not directly answer:</p>
+<ul>
+<li>Which object owns another object?</li>
+<li>Which container likely contains which heap allocations?</li>
+<li>Which <code>Arc/Rc</code> values share the same heap data?</li>
+<li>Which object is a slice/view into another?</li>
+<li>Which allocations look like clones?</li>
+<li>Are there cycles in the relationship graph?</li>
+</ul>
+<p>The relation graph exists to answer those questions as an analysis layer.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[MemoryEvent Stream] --&gt; B[Snapshot]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[Active Allocations]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[Inference Records]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[Relation Detectors]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    E --&gt; F[Owns]</span></span>
+<span class="giallo-l"><span>    E --&gt; G[Contains]</span></span>
+<span class="giallo-l"><span>    E --&gt; H[Shares]</span></span>
+<span class="giallo-l"><span>    E --&gt; I[Slice]</span></span>
+<span class="giallo-l"><span>    E --&gt; J[Clone]</span></span>
+<span class="giallo-l"><span>    E --&gt; K[ArcClone / RcClone]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    F --&gt; L[RelationGraph]</span></span>
+<span class="giallo-l"><span>    G --&gt; L</span></span>
+<span class="giallo-l"><span>    H --&gt; L</span></span>
+<span class="giallo-l"><span>    I --&gt; L</span></span>
+<span class="giallo-l"><span>    J --&gt; L</span></span>
+<span class="giallo-l"><span>    K --&gt; L</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L --&gt; M[Diagnostics]</span></span>
+<span class="giallo-l"><span>    L --&gt; N[JSON Export]</span></span>
+<span class="giallo-l"><span>    L --&gt; O[Dashboard]</span></span></code></pre>
+<hr />
+<h2 id="2-relation-types">2. Relation Types</h2>
+<p>The relation inference module defines the core relationship types:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> Relation</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Owns</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Contains</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Shares</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Slice</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Clone</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Evolution</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ArcClone</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    RcClone</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ImmutableBorrow</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MutableBorrow</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>These represent analysis edges between allocation records.</p>
+<p>The important distinction is that not all of these relations have the same confidence level.</p>
+<p>For example:</p>
+<ul>
+<li><code>Owns</code> can be inferred from pointer scanning.</li>
+<li><code>Contains</code> is inferred from <code>Container</code> metadata and temporal locality.</li>
+<li><code>ArcClone</code> can be inferred from <code>StackOwner</code> records sharing a <code>heap_ptr</code>.</li>
+<li><code>Clone</code> is inferred from type, size, call stack, time window, and content similarity.</li>
+<li>borrow/move-related edges are higher-level semantic approximations, not direct runtime hooks.</li>
+</ul>
+<hr />
+<h2 id="3-the-builder-pipeline">3. The Builder Pipeline</h2>
+<p>The main pipeline is in <code>RelationGraphBuilder::build()</code>.</p>
+<p>At a high level, it does this:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> build</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    allocations</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">ActiveAllocation</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    config</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">GraphBuilderConfig</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> RelationGraph</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> scan_results</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> HeapScanner</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">scan</span><span style="color: #9399B2;">(</span><span>allocations</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> records</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">InferenceRecord</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span> allocations</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">enumerate</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span style="color: #9399B2;">(</span><span>id</span><span style="color: #9399B2;">,</span><span> alloc</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">|</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            InferenceRecord</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                ptr</span><span style="color: #94E2D5;">:</span><span> alloc</span><span style="color: #94E2D5;">.</span><span>ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap_or</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>                size</span><span style="color: #94E2D5;">:</span><span> alloc</span><span style="color: #94E2D5;">.</span><span>size</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                memory</span><span style="color: #94E2D5;">:</span><span> scanned_memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                type_kind</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                confidence</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                call_stack_hash</span><span style="color: #94E2D5;">:</span><span> alloc</span><span style="color: #94E2D5;">.</span><span>call_stack_hash</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                alloc_time</span><span style="color: #94E2D5;">:</span><span> alloc</span><span style="color: #94E2D5;">.</span><span>allocated_at</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                stack_ptr</span><span style="color: #94E2D5;">:</span><span> alloc</span><span style="color: #94E2D5;">.</span><span>stack_ptr</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        })</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">collect</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> range_map</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> RangeMap</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span>allocations</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> graph</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> RelationGraph</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> record</span><span style="color: #CBA6F7;"> in</span><span style="color: #94E2D5;"> &amp;</span><span>records</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">add_edges</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">detect_owner</span><span style="color: #9399B2;">(</span><span>record</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>range_map</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">add_edges</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">detect_slice</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>records</span><span style="color: #9399B2;">,</span><span> allocations</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>range_map</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span>    graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">add_edges</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">detect_clones</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>records</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>config</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">clone_config</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span>    graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">add_edges</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">detect_containers</span><span style="color: #9399B2;">(</span><span>allocations</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>config</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">container_config</span><span style="color: #9399B2;">)));</span></span>
+<span class="giallo-l"><span>    graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">add_edges</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">detect_variable_evolution</span><span style="color: #9399B2;">(</span><span>allocations</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span>    graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">add_edges</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">detect_shared</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>records</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">edges</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    graph</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The real implementation runs these steps:</p>
+<ol>
+<li>scan heap memory;</li>
+<li>build inference records;</li>
+<li>build an address range map;</li>
+<li>detect owner relations;</li>
+<li>detect slice relations;</li>
+<li>detect clone relations;</li>
+<li>detect container relations;</li>
+<li>detect variable evolution;</li>
+<li>detect shared ownership.</li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    A[ActiveAllocation List] --&gt; B[HeapScanner]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[ScanResult]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[UTI / Type Inference]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[InferenceRecord]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[RangeMap]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    F --&gt; G[Owner Detector]</span></span>
+<span class="giallo-l"><span>    F --&gt; H[Slice Detector]</span></span>
+<span class="giallo-l"><span>    E --&gt; I[Clone Detector]</span></span>
+<span class="giallo-l"><span>    A --&gt; J[Container Detector]</span></span>
+<span class="giallo-l"><span>    A --&gt; K[Variable Evolution]</span></span>
+<span class="giallo-l"><span>    E --&gt; L[Shared Detector]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    G --&gt; M[RelationGraph]</span></span>
+<span class="giallo-l"><span>    H --&gt; M</span></span>
+<span class="giallo-l"><span>    I --&gt; M</span></span>
+<span class="giallo-l"><span>    J --&gt; M</span></span>
+<span class="giallo-l"><span>    K --&gt; M</span></span>
+<span class="giallo-l"><span>    L --&gt; M</span></span></code></pre>
+<hr />
+<h2 id="4-inferencerecord-the-analysis-unit">4. <code>InferenceRecord</code>: The Analysis Unit</h2>
+<p>The relation builder converts runtime allocations into inference records.</p>
+<p>The fields include:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">InferenceRecord</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">:</span><span> alloc</span><span style="color: #94E2D5;">.</span><span>ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap_or</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>    size</span><span style="color: #94E2D5;">:</span><span> alloc</span><span style="color: #94E2D5;">.</span><span>size</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    memory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    type_kind</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    confidence</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    call_stack_hash</span><span style="color: #94E2D5;">:</span><span> alloc</span><span style="color: #94E2D5;">.</span><span>call_stack_hash</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    alloc_time</span><span style="color: #94E2D5;">:</span><span> alloc</span><span style="color: #94E2D5;">.</span><span>allocated_at</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    stack_ptr</span><span style="color: #94E2D5;">:</span><span> alloc</span><span style="color: #94E2D5;">.</span><span>stack_ptr</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This record is the bridge between raw memory data and relation inference.</p>
+<p>It may contain:</p>
+<ul>
+<li>pointer address;</li>
+<li>allocation size;</li>
+<li>scanned memory bytes;</li>
+<li>inferred type kind;</li>
+<li>inference confidence;</li>
+<li>call stack hash;</li>
+<li>allocation timestamp;</li>
+<li><code>stack_ptr</code> for <code>StackOwner</code> values such as <code>Arc/Rc</code>.</li>
+</ul>
+<p>This is also where confidence boundaries begin. If memory cannot be scanned, type inference and pointer-based relation detection become less informative.</p>
+<hr />
+<h2 id="5-owner-detection-pointer-scanning">5. Owner Detection: Pointer Scanning</h2>
+<p>Owner detection scans an allocation’s memory for pointer-sized values that point into another allocation.</p>
+<p>Simplified:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> detect_owner</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">record</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">InferenceRecord</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> range_map</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">RangeMap</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">RelationEdge</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> memory</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> match</span><span style="color: #94E2D5;"> &amp;</span><span>record</span><span style="color: #94E2D5;">.</span><span>memory </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Some</span><span style="color: #9399B2;">(</span><span>m</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span> m</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        None</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> offset</span><span style="color: #CBA6F7;"> in</span><span style="color: #9399B2;"> (</span><span style="color: #FAB387;">0</span><span style="color: #94E2D5;">..</span><span>memory</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">len</span><span style="color: #9399B2;">())</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">step_by</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">size_of</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">usize</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">()) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>ptr_val</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> memory</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">read_usize</span><span style="color: #9399B2;">(</span><span>offset</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            continue</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        };</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> ptr_val</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;"> ||</span><span> ptr_val</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #FAB387;"> MIN_VALID_POINTER</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            continue</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>target_id</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> range_map</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">find_containing</span><span style="color: #9399B2;">(</span><span>ptr_val</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>            relations</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">RelationEdge</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                from</span><span style="color: #94E2D5;">:</span><span> record</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                to</span><span style="color: #94E2D5;">:</span><span> target_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                relation</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> Relation</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Owns</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            });</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    relations</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is a useful heuristic: if allocation A contains a pointer into allocation B, A may own or reference B.</p>
+<p>But it is still a heuristic. A pointer-looking value in memory does not always mean Rust ownership.</p>
+<hr />
+<h2 id="6-slice-detection">6. Slice Detection</h2>
+<p>Slice detection looks for records whose pointer falls inside another allocation rather than at the beginning.</p>
+<p>Conceptually:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> ptr</span><span style="color: #94E2D5;"> !=</span><span> target_start</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> ptr</span><span style="color: #94E2D5;"> &gt;=</span><span> target_start</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> ptr</span><span style="color: #94E2D5;"> +</span><span> size</span><span style="color: #94E2D5;"> &lt;=</span><span> target_end</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    relations</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">RelationEdge</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        from</span><span style="color: #94E2D5;">:</span><span> record</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        to</span><span style="color: #94E2D5;">:</span><span> target_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        relation</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> Relation</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Slice</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    });</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is useful for views such as slices or sub-regions.</p>
+<p>The interpretation should be conservative:</p>
+<blockquote>
+<p>This allocation looks like a view into another allocation.</p>
+</blockquote>
+<p>Not:</p>
+<blockquote>
+<p>This is definitely a Rust slice with exact lifetime semantics.</p>
+</blockquote>
+<hr />
+<h2 id="7-clone-detection">7. Clone Detection</h2>
+<p>Clone detection groups allocations and compares content similarity within a time window.</p>
+<p>The configuration includes:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> CloneConfig</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> max_time_diff_ns</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> compare_bytes</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> min_similarity</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> f64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> min_similarity_no_stack_hash</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> f64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> max_clone_edges_per_node</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> detect_smart_pointers</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> arc_threshold</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> f64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> rc_threshold</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> f64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The module comments describe the grouping strategy as:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>(type, size, stack_hash) + sliding time window + content similarity</span></span></code></pre>
+<p>This is explicitly probabilistic. It reduces false positives with thresholds, but it is not a compiler-level clone hook.</p>
+<hr />
+<h2 id="8-container-detection">8. Container Detection</h2>
+<p>Containers such as <code>HashMap</code>, <code>BTreeMap</code>, and <code>VecDeque</code> often do not expose a stable user-level heap pointer.</p>
+<p><code>memscope-rs</code> tracks them as <code>TrackKind::Container</code> metadata, then infers <code>Contains</code> relations using temporal locality and filters.</p>
+<p>The container detector algorithm is described in the source as:</p>
+<ol>
+<li>filter allocations into containers and heap owners;</li>
+<li>for each container, examine subsequent heap owners within a time window;</li>
+<li>apply thread affinity and size-ratio filters;</li>
+<li>add <code>Contains</code> edges for candidates.</li>
+</ol>
+<p>Simplified:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> container</span><span style="color: #CBA6F7;"> in</span><span> containers</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> candidate</span><span style="color: #CBA6F7;"> in</span><span style="color: #89B4FA;font-style: italic;"> heap_owners_after</span><span style="color: #9399B2;">(</span><span>container</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> container</span><span style="color: #94E2D5;">.</span><span>thread_id </span><span style="color: #94E2D5;">!=</span><span> candidate</span><span style="color: #94E2D5;">.</span><span>thread_id </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            continue</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> time_diff</span><span style="color: #94E2D5;"> &gt;</span><span> config</span><span style="color: #94E2D5;">.</span><span>time_window_ns </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            break</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> candidate</span><span style="color: #94E2D5;">.</span><span>size</span><span style="color: #94E2D5;"> &gt;</span><span> container</span><span style="color: #94E2D5;">.</span><span>size </span><span style="color: #94E2D5;">*</span><span> config</span><span style="color: #94E2D5;">.</span><span>size_ratio </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            continue</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>        edges</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">RelationEdge</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            from</span><span style="color: #94E2D5;">:</span><span> container_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            to</span><span style="color: #94E2D5;">:</span><span> candidate_id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            relation</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> Relation</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Contains</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        });</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is one of the places where the tool is intentionally honest: <code>Contains</code> is inferred from metadata and timing, not directly proven from Rust internals.</p>
+<hr />
+<h2 id="9-shared-ownership-detection">9. Shared Ownership Detection</h2>
+<p>Shared ownership detection has two strategies.</p>
+<p>The first strategy looks for multiple owner edges into a target that looks like <code>Arc/Rc</code>-like data.</p>
+<p>The second strategy is more important for the newer <code>StackOwner</code> model:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> stack_owners</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">usize</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">)</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span style="color: #9399B2;"> (</span><span>i</span><span style="color: #9399B2;">,</span><span> record</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> in</span><span> records</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">enumerate</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>stack_ptr</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> record</span><span style="color: #94E2D5;">.</span><span>stack_ptr </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> stack_ptr</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0x1000</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            stack_owners</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">((</span><span>i</span><span style="color: #9399B2;">,</span><span> record</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">ptr</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> heap_to_records</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">usize</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">usize</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span style="color: #9399B2;"> (</span><span>record_id</span><span style="color: #9399B2;">,</span><span> heap_ptr</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> in</span><span> stack_owners</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    heap_to_records</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">entry</span><span style="color: #9399B2;">(</span><span>heap_ptr</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">or_default</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span>record_id</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span style="color: #9399B2;"> (</span><span>_heap_ptr</span><span style="color: #9399B2;">,</span><span> record_ids</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> in</span><span> heap_to_records</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> record_ids</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">len</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> &gt;=</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // emit ArcClone edges</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is the same principle explained in the <code>StackOwner</code> article:</p>
+<blockquote>
+<p>multiple tracked smart pointer values pointing to the same heap data imply observed shared ownership.</p>
+</blockquote>
+<hr />
+<h2 id="10-variable-evolution">10. Variable Evolution</h2>
+<p>The builder also has a variable evolution step.</p>
+<p>The source comment describes it as:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>For allocations with the same variable name, infer evolution relationships indicating that the same variable was tracked multiple times.</span></span></code></pre>
+<p>Examples include:</p>
+<ul>
+<li>a growing <code>Vec</code>;</li>
+<li>a reallocated buffer;</li>
+<li>a container tracked multiple times over time.</li>
+</ul>
+<p>This is useful for timeline-style interpretation, but it should be described as variable evolution inference, not exact move semantics.</p>
+<hr />
+<h2 id="11-relationgraph-vs-ownershipgraph">11. RelationGraph vs OwnershipGraph</h2>
+<p>There are two related but distinct graph concepts.</p>
+<h3 id="relationgraph"><code>RelationGraph</code></h3>
+<p><code>RelationGraph</code> is the direct output of relation inference:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> RelationGraph</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> edges</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">RelationEdge</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>It is centered on inferred relationships between allocation records.</p>
+<h3 id="ownershipgraph"><code>OwnershipGraph</code></h3>
+<p><code>OwnershipGraph</code> is a higher-level post-analysis graph:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> Node</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> id</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> ObjectId</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> type_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> stack_ptr</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">usize</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> EdgeKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Owns</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Contains</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Borrows</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    RcClone</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ArcClone</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Move</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    SharedBorrow</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MutBorrow</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The ownership graph is designed for diagnostics and visualization. It can report clone edges, cycles, and possible clone storms.</p>
+<hr />
+<h2 id="12-exporting-the-ownership-graph">12. Exporting the Ownership Graph</h2>
+<p>The render/export layer builds an ownership graph from allocation records and event store data.</p>
+<p>The export includes:</p>
+<ul>
+<li>nodes;</li>
+<li>edges;</li>
+<li>cycles;</li>
+<li>diagnostics;</li>
+<li>borrow history.</li>
+</ul>
+<p>Node export looks like:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">json!</span><span style="color: #9399B2;">({</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;id&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #89B4FA;font-style: italic;"> format!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;0x</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">:x</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> node</span><span style="color: #94E2D5;">.</span><span>id</span><span style="color: #94E2D5;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;type_name&quot;</span><span style="color: #94E2D5;">:</span><span> node</span><span style="color: #94E2D5;">.</span><span>type_name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;size&quot;</span><span style="color: #94E2D5;">:</span><span> node</span><span style="color: #94E2D5;">.</span><span>size</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;stack_ptr&quot;</span><span style="color: #94E2D5;">:</span><span> node</span><span style="color: #94E2D5;">.</span><span>stack_ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>p</span><span style="color: #94E2D5;">|</span><span style="color: #89B4FA;font-style: italic;"> format!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;0x</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">:x</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #9399B2;">)),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">})</span></span></code></pre>
+<p>Edge export maps internal edge kinds to strings:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #A6E3A1;">&quot;kind&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> match</span><span> edge</span><span style="color: #94E2D5;">.</span><span>op </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Owns</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;Owns&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Contains</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;Contains&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Borrows</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;Borrows&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">RcClone</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;RcClone&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ArcClone</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;ArcClone&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Move</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;Move&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">SharedBorrow</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;SharedBorrow&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EdgeKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MutBorrow</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;MutBorrow&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is what makes the graph consumable by dashboards and JSON-based tooling.</p>
+<hr />
+<h2 id="13-a-practical-view-of-confidence">13. A Practical View of Confidence</h2>
+<p>Not all graph edges should be interpreted equally.</p>
+<p>High-confidence inputs:</p>
+<ul>
+<li>pointer addresses from allocation tracking;</li>
+<li>allocation sizes;</li>
+<li>explicit <code>track!</code> metadata;</li>
+<li><code>StackOwner.stack_ptr</code> and <code>heap_ptr</code> when tracked;</li>
+<li>explicit memory passport lifecycle events.</li>
+</ul>
+<p>Medium-confidence relations:</p>
+<ul>
+<li><code>ArcClone</code> from multiple <code>StackOwner</code> records sharing a <code>heap_ptr</code>;</li>
+<li><code>Contains</code> from container metadata and temporal locality;</li>
+<li><code>Slice</code> from pointer-in-range detection.</li>
+</ul>
+<p>Heuristic relations:</p>
+<ul>
+<li><code>Clone</code> from content similarity;</li>
+<li><code>Owns</code> from memory pointer scanning;</li>
+<li>variable <code>Evolution</code> from repeated variable names;</li>
+<li>borrow/move approximations.</li>
+</ul>
+<p>The graph is most useful when these confidence levels are understood.</p>
+<hr />
+<h2 id="14-what-this-can-do">14. What This Can Do</h2>
+<p>The relation and ownership graph layers can help answer:</p>
+<ul>
+<li>Which allocations appear connected?</li>
+<li>Which tracked smart pointers share heap data?</li>
+<li>Which containers likely own or group nearby heap allocations?</li>
+<li>Which allocations look like slices or sub-regions?</li>
+<li>Which allocations appear cloned?</li>
+<li>Are there graph cycles?</li>
+<li>Are there many <code>ArcClone</code> edges suggesting a clone storm candidate?</li>
+</ul>
+<p>This is valuable for debugging and exploration.</p>
+<hr />
+<h2 id="15-what-this-cannot-prove">15. What This Cannot Prove</h2>
+<p>The graph cannot prove:</p>
+<ul>
+<li>full Rust ownership correctness;</li>
+<li>exact borrow lifetimes;</li>
+<li>exact move semantics;</li>
+<li>every clone call site;</li>
+<li>all container internals;</li>
+<li>semantic ownership across untracked variables;</li>
+<li>correctness of unsafe or foreign code.</li>
+</ul>
+<p>It is a runtime-informed analysis graph, not a Rust compiler or formal verifier.</p>
+<hr />
+<h2 id="16-summary">16. Summary</h2>
+<p>The ownership graph layer is where <code>memscope-rs</code> starts to connect raw memory behavior back to Rust semantics.</p>
+<p>It combines:</p>
+<ul>
+<li>allocation records;</li>
+<li>heap scanning;</li>
+<li>type inference;</li>
+<li>range maps;</li>
+<li><code>TrackKind</code> metadata;</li>
+<li><code>StackOwner</code> metadata;</li>
+<li>container metadata;</li>
+<li>memory passport events;</li>
+<li>relation detectors.</li>
+</ul>
+<p>The most accurate description is:</p>
+<blockquote>
+<p><code>memscope-rs</code> builds an explainable, runtime-informed relationship graph. It is not a compiler proof, but it can make memory structure visible enough to debug real Rust programs.</p>
+</blockquote>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-benchmark-deep-dive/">
+                                <span class="button__icon">←</span>&nbsp;
+                                <span class="button__text">Benchmark Deep Dive: What the Numbers Actually Say</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-export-dashboard-pipeline/">
+                                <span class="button__text">Export and Dashboard Pipeline: Turning Memory Events into Reports</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>

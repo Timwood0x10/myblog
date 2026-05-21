@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Benchmark Deep Dive: What the Numbers Actually Say | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="robots" content="noodp"/>
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <meta name="description" content="Performance claims are easy to overstate. This article keeps the interpretation narrow and tied to the benchmark source and log that exist in the repository.">
+
+    <meta property="og:description" content="Performance claims are easy to overstate. This article keeps the interpretation narrow and tied to the benchmark source and log that exist in the repository.">
+    <meta property="og:title" content="Benchmark Deep Dive: What the Numbers Actually Say | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-benchmark-deep-dive/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Performance claims are easy to overstate. This article keeps the interpretation narrow and tied to the benchmark source and log that exist in the repository.">
+    <meta name="twitter:title" content="Benchmark Deep Dive: What the Numbers Actually Say | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-benchmark-deep-dive/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
+    </head>
+
+<body class="">
+<div class="container">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                            Timwood0x10
+                        
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="post">
+  
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-benchmark-deep-dive/">Benchmark Deep Dive: What the Numbers Actually Say</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memscope-rs/">#memscope-rs</a></span>
+    
+
+  <div class="post-content">
+            <h1 id="benchmark-deep-dive-what-the-numbers-actually-say">Benchmark Deep Dive: What the Numbers Actually Say</h1>
+<p>Performance claims are easy to overstate. This article keeps the interpretation narrow and tied to the benchmark source and log that exist in the repository.</p>
+<p>The benchmark suite is in:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>benches/comprehensive_benchmarks.rs</span></span></code></pre>
+<p>The raw benchmark log reviewed here is:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>benches/run.log</span></span></code></pre>
+<p>The goal is not to claim that <code>memscope-rs</code> is always fast. The goal is to identify which operations are currently cheap, which operations scale linearly, and where the log already shows regressions.</p>
+<hr />
+<h2 id="1-benchmark-coverage">1. Benchmark Coverage</h2>
+<p>The benchmark source includes groups such as:</p>
+<ul>
+<li>tracker creation;</li>
+<li>single variable tracking;</li>
+<li>multiple variable tracking;</li>
+<li>analysis;</li>
+<li>stats;</li>
+<li>backend alloc/dealloc/realloc/move;</li>
+<li>type classification;</li>
+<li>concurrent tracking;</li>
+<li>parallel tracking;</li>
+<li>shared tracker concurrent tracking;</li>
+<li>allocation patterns;</li>
+<li>analysis operations;</li>
+<li>tracking stats;</li>
+<li>IO operations.</li>
+</ul>
+<p>This is broad coverage, but not every feature has an isolated benchmark. For example, there is no standalone benchmark specifically isolating <code>StackOwner</code> grouping or async attribution overhead.</p>
+<hr />
+<h2 id="2-tracker-creation">2. Tracker Creation</h2>
+<p>The log reports:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>tracker_creation time: [867.65 ns 873.02 ns 879.91 ns]</span></span>
+<span class="giallo-l"><span>change: [+551.47% +559.50% +568.23%]</span></span>
+<span class="giallo-l"><span>Performance has regressed.</span></span></code></pre>
+<p>Interpretation:</p>
+<ul>
+<li>absolute time is still sub-microsecond;</li>
+<li>relative performance regressed significantly against the previous baseline;</li>
+<li>this should not be described as an unqualified win.</li>
+</ul>
+<hr />
+<h2 id="3-single-variable-tracking">3. Single Variable Tracking</h2>
+<p>Representative results:</p>
+<table><thead><tr><th>Benchmark</th><th style="text-align: right">Approximate Median</th></tr></thead><tbody>
+<tr><td><code>track_single/vec/64</code></td><td style="text-align: right">653.02 ns</td></tr>
+<tr><td><code>track_single/vec/256</code></td><td style="text-align: right">662.81 ns</td></tr>
+<tr><td><code>track_single/vec/1024</code></td><td style="text-align: right">666.22 ns</td></tr>
+<tr><td><code>track_single/vec/4096</code></td><td style="text-align: right">725.49 ns</td></tr>
+<tr><td><code>track_single/vec/65536</code></td><td style="text-align: right">1.1087 µs</td></tr>
+<tr><td><code>track_single/vec/1048576</code></td><td style="text-align: right">4.9307 µs</td></tr>
+</tbody></table>
+<p>The small-object tracking path is sub-microsecond, but the log marks several of these as regressions relative to earlier runs.</p>
+<p>Interpretation:</p>
+<ul>
+<li>single tracking overhead is practically usable for profiling;</li>
+<li>overhead is not zero;</li>
+<li>recent changes appear to have increased latency for smaller payloads.</li>
+</ul>
+<hr />
+<h2 id="4-multiple-variable-tracking">4. Multiple Variable Tracking</h2>
+<p>Representative results:</p>
+<table><thead><tr><th style="text-align: right">Variables</th><th style="text-align: right">Approximate Median</th></tr></thead><tbody>
+<tr><td style="text-align: right">10</td><td style="text-align: right">6.5364 µs</td></tr>
+<tr><td style="text-align: right">50</td><td style="text-align: right">33.240 µs</td></tr>
+<tr><td style="text-align: right">100</td><td style="text-align: right">66.963 µs</td></tr>
+<tr><td style="text-align: right">1000</td><td style="text-align: right">669.67 µs</td></tr>
+<tr><td style="text-align: right">5000</td><td style="text-align: right">3.3126 ms</td></tr>
+<tr><td style="text-align: right">10000</td><td style="text-align: right">6.5949 ms</td></tr>
+</tbody></table>
+<p>This is close to linear scaling.</p>
+<p>Interpretation:</p>
+<ul>
+<li>batch tracking cost grows predictably;</li>
+<li>the per-item cost is roughly stable;</li>
+<li>the log marks these paths as regressions against the prior baseline.</li>
+</ul>
+<hr />
+<h2 id="5-analysis-cost">5. Analysis Cost</h2>
+<p>Representative analysis results:</p>
+<table><thead><tr><th style="text-align: right">Records</th><th style="text-align: right">Approximate Median</th></tr></thead><tbody>
+<tr><td style="text-align: right">10</td><td style="text-align: right">5.2939 µs</td></tr>
+<tr><td style="text-align: right">50</td><td style="text-align: right">16.028 µs</td></tr>
+<tr><td style="text-align: right">100</td><td style="text-align: right">29.759 µs</td></tr>
+<tr><td style="text-align: right">1000</td><td style="text-align: right">285.64 µs</td></tr>
+<tr><td style="text-align: right">5000</td><td style="text-align: right">1.5684 ms</td></tr>
+<tr><td style="text-align: right">10000</td><td style="text-align: right">4.1880 ms</td></tr>
+<tr><td style="text-align: right">50000</td><td style="text-align: right">33.887 ms</td></tr>
+</tbody></table>
+<p>Interpretation:</p>
+<ul>
+<li>small and medium analysis is fast enough for interactive use;</li>
+<li>large analysis becomes millisecond-scale;</li>
+<li>50,000 records is tens of milliseconds;</li>
+<li>several larger analysis cases show significant relative regressions.</li>
+</ul>
+<hr />
+<h2 id="6-backend-event-construction">6. Backend Event Construction</h2>
+<p>Representative backend allocation times:</p>
+<table><thead><tr><th>Backend</th><th style="text-align: right">Alloc Median</th></tr></thead><tbody>
+<tr><td>Core</td><td style="text-align: right">23.022 ns</td></tr>
+<tr><td>Lockfree</td><td style="text-align: right">39.265 ns</td></tr>
+<tr><td>Async</td><td style="text-align: right">23.008 ns</td></tr>
+<tr><td>Unified</td><td style="text-align: right">39.512 ns</td></tr>
+</tbody></table>
+<p>Representative deallocation times:</p>
+<table><thead><tr><th>Backend</th><th style="text-align: right">Dealloc Median</th></tr></thead><tbody>
+<tr><td>Core</td><td style="text-align: right">22.859 ns</td></tr>
+<tr><td>Lockfree</td><td style="text-align: right">38.586 ns</td></tr>
+<tr><td>Async</td><td style="text-align: right">22.632 ns</td></tr>
+<tr><td>Unified</td><td style="text-align: right">39.147 ns</td></tr>
+</tbody></table>
+<p>Interpretation:</p>
+<ul>
+<li>backend event construction is nanosecond-scale;</li>
+<li>Core and Async are similar in this benchmark;</li>
+<li>Lockfree and Unified are slower, roughly in the high-30ns range;</li>
+<li>this benchmark measures event construction, not full end-to-end application overhead.</li>
+</ul>
+<hr />
+<h2 id="7-concurrent-tracking">7. Concurrent Tracking</h2>
+<p>Representative concurrent tracking results:</p>
+<table><thead><tr><th style="text-align: right">Threads</th><th style="text-align: right">Approximate Median</th></tr></thead><tbody>
+<tr><td style="text-align: right">1</td><td style="text-align: right">19.174 µs</td></tr>
+<tr><td style="text-align: right">2</td><td style="text-align: right">40.599 µs</td></tr>
+<tr><td style="text-align: right">4</td><td style="text-align: right">55.303 µs</td></tr>
+<tr><td style="text-align: right">8</td><td style="text-align: right">134.74 µs</td></tr>
+<tr><td style="text-align: right">16</td><td style="text-align: right">372.96 µs</td></tr>
+<tr><td style="text-align: right">32</td><td style="text-align: right">961.58 µs</td></tr>
+<tr><td style="text-align: right">64</td><td style="text-align: right">1.8646 ms</td></tr>
+<tr><td style="text-align: right">128</td><td style="text-align: right">4.6714 ms</td></tr>
+</tbody></table>
+<p>Interpretation:</p>
+<ul>
+<li>concurrency works;</li>
+<li>scaling is not linear;</li>
+<li>thread scheduling and shared state costs are visible;</li>
+<li>48-thread results show regression, while some larger thread-count cases show improvement against the previous baseline.</li>
+</ul>
+<hr />
+<h2 id="8-shared-tracker-concurrent-tracking">8. Shared Tracker Concurrent Tracking</h2>
+<p>Representative shared tracker results:</p>
+<table><thead><tr><th style="text-align: right">Threads</th><th style="text-align: right">Approximate Median</th></tr></thead><tbody>
+<tr><td style="text-align: right">1</td><td style="text-align: right">98.300 µs</td></tr>
+<tr><td style="text-align: right">2</td><td style="text-align: right">231.96 µs</td></tr>
+<tr><td style="text-align: right">4</td><td style="text-align: right">363.82 µs</td></tr>
+<tr><td style="text-align: right">8</td><td style="text-align: right">924.19 µs</td></tr>
+<tr><td style="text-align: right">16</td><td style="text-align: right">1.8448 ms</td></tr>
+<tr><td style="text-align: right">32</td><td style="text-align: right">3.5680 ms</td></tr>
+<tr><td style="text-align: right">64</td><td style="text-align: right">7.0581 ms</td></tr>
+</tbody></table>
+<p>Interpretation:</p>
+<ul>
+<li>sharing one tracker across many threads is a stress scenario;</li>
+<li>costs grow clearly with thread count;</li>
+<li>the log shows improvements against previous runs, but absolute shared-state cost remains visible.</li>
+</ul>
+<hr />
+<h2 id="9-allocation-patterns">9. Allocation Patterns</h2>
+<p>Representative results:</p>
+<table><thead><tr><th>Pattern</th><th style="text-align: right">Approximate Median</th><th>Log Status</th></tr></thead><tbody>
+<tr><td>many small allocations</td><td style="text-align: right">809.84 µs</td><td>regressed</td></tr>
+<tr><td>few large allocations</td><td style="text-align: right">96.308 µs</td><td>improved</td></tr>
+<tr><td>mixed size allocations</td><td style="text-align: right">111.44 µs</td><td>regressed</td></tr>
+<tr><td>burst allocations</td><td style="text-align: right">789.08 µs</td><td>no significant change</td></tr>
+</tbody></table>
+<p>Interpretation:</p>
+<ul>
+<li>many small allocations remain expensive compared with few large allocations;</li>
+<li>allocation pattern matters;</li>
+<li>performance should be discussed by workload shape, not one global number.</li>
+</ul>
+<hr />
+<h2 id="10-tracking-stats">10. Tracking Stats</h2>
+<p>Some statistics operations are extremely cheap:</p>
+<table><thead><tr><th>Operation</th><th style="text-align: right">Approximate Median</th></tr></thead><tbody>
+<tr><td><code>stats_record_attempt</code></td><td style="text-align: right">1.8200 ns</td></tr>
+<tr><td><code>stats_record_success</code></td><td style="text-align: right">1.8211 ns</td></tr>
+<tr><td><code>stats_record_miss</code></td><td style="text-align: right">3.2607 ns</td></tr>
+<tr><td><code>stats_get_completeness</code></td><td style="text-align: right">548.58 ps</td></tr>
+<tr><td><code>stats_get_detailed_stats</code></td><td style="text-align: right">1.6463 ns</td></tr>
+</tbody></table>
+<p>These are tiny operations, but they should not be confused with full tracking or analysis cost.</p>
+<hr />
+<h2 id="11-what-the-benchmark-does-not-prove">11. What the Benchmark Does Not Prove</h2>
+<p>The benchmark log does not prove:</p>
+<ul>
+<li>production overhead under all workloads;</li>
+<li>async attribution overhead in isolation;</li>
+<li><code>StackOwner</code> grouping cost in isolation;</li>
+<li>dashboard rendering cost under large reports;</li>
+<li>memory overhead under long-running services;</li>
+<li>correctness of relation inference.</li>
+</ul>
+<p>Benchmarks measure performance of specific paths, not the whole tool in every environment.</p>
+<hr />
+<h2 id="12-honest-summary">12. Honest Summary</h2>
+<p>The accurate performance story is:</p>
+<ul>
+<li>core event construction is nanosecond-scale;</li>
+<li>explicit variable tracking is usually sub-microsecond for small values;</li>
+<li>batch tracking scales roughly linearly;</li>
+<li>analysis becomes millisecond-scale for large record counts;</li>
+<li>concurrency is supported but not free;</li>
+<li>shared tracker scenarios show real contention cost;</li>
+<li>benchmark logs include both improvements and regressions.</li>
+</ul>
+<p>The most honest phrasing is:</p>
+<blockquote>
+<p><code>memscope-rs</code> has practical profiling overhead for many measured paths, but it is not zero-cost and the benchmark log shows active performance evolution.</p>
+</blockquote>
+
+        </div>
+
+  
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/article-ownership-graph-relation-inference/">
+                                <span class="button__text">Ownership Graph and Relation Inference: From Memory Events to Rust Semantics</span>&nbsp;
+                                <span class="button__icon">→</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>© 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+
+
+</body>
+
+</html>
