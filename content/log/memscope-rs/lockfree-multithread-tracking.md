@@ -4,9 +4,11 @@ date = 2026-05-20
 description = "Single-thread memory tracking answers the first question: can we collect useful allocation data?"
 weight = 2
 [taxonomies]
-tags = ["Rust", "multithread"]
+tags = ["Rust", "multithread", "memscope-rs"]
+series = ["memscope-rs"]
 [extra]
 toc = true
+series = "memscope-rs"
 +++
 
 # Lockfree Tracking: How `memscope-rs` Handles Concurrent Memory Events

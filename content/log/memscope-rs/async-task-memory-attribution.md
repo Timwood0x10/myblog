@@ -4,9 +4,11 @@ date = 2026-05-20
 description = "Rust async applications often run many logical tasks on a small number of runtime worker threads."
 weight = 3
 [taxonomies]
-tags = ["Rust"]
+tags = ["Rust", "memscope-rs"]
+series = ["memscope-rs"]
 [extra]
 toc = true
+series = "memscope-rs"
 +++
 
 # Async Task Memory Attribution: Tracking Memory Beyond Threads

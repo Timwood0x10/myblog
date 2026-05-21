@@ -1,6 +1,5 @@
 +++
 title = "Log"
-paginate_by = 10
-sort_by = "weight"
-template = "index.html"
 +++
+
+All articles belong to the [memscope-rs](/log/memscope-rs/) series.

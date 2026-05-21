@@ -4,9 +4,11 @@ date = 2026-05-20
 description = "Arc<T> and Rc<T> are safe Rust abstractions, but they make ownership harder to observe."
 weight = 4
 [taxonomies]
-tags = ["Rust"]
+tags = ["Rust", "memscope-rs"]
+series = ["memscope-rs"]
 [extra]
 toc = true
+series = "memscope-rs"
 +++
 
 # Arc/Rc Clone Detection: Why `StackOwner` Matters

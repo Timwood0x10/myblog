@@ -1,62 +1,42 @@
-{% extends "base.html" %}
-{%- import 'macros/seo.html' as macros_seo %}
-{%- import "macros/macros.html" as macros %}
-{%- set i18n = load_data(path="i18n/" ~ lang ~ '.toml', required=false) -%}
-{%- if not i18n -%}{%- set i18n = load_data(path="themes/abridge/i18n/" ~ lang ~ ".toml", required=false) -%}{%- endif %}
+{% extends "index.html" %}
 
-{%- block seo %}
-  {{- super() }}
-  {%- set title_addition = "" %}
-
-  {%- if page.title and config.title %}
-    {%- set title = page.title %}
-    {%- set title_addition = title_separator ~ config.title %}
-  {%- elif section.title and config.title %}
-    {%- set title = section.title %}
-    {%- set title_addition = title_separator ~ config.title %}
-  {%- elif page.title %}
-    {%- set title = page.title %}
-  {%- elif section.title %}
-    {%- set title = section.title %}
-  {%- else %}
-    {%- set title = config.title %}
-  {%- endif %}
-
-  {%- if page.description %}
-    {%- set description = page.description %}
-  {%- elif section.description %}
-    {%- set description = section.description %}
-  {%- else %}
-    {%- set description = config.description %}
-  {%- endif %}
-
-  {{- macros_seo::seo(config=config, title=title, title_addition=title_addition, description=description) }}
-{%- endblock seo %}
-
-{%- block content %}
-    <div>
-
-{%- if page.content %}
-{{ page.content | safe }}
-{%- elif section.content %}
-{{ section.content | safe }}
-{%- endif %}
-
+{% block content %}
+<div class="posts">
+  {%- if section.content %}
+  <div class="post on-list">
+    <div class="post-content">
+      {{ section.content | safe }}
     </div>
+  </div>
+  {% endif %}
 
-    {%- set log_section = get_section(path="log/_index.md", lang=lang) %}
-    <div class="sblock">
-      <div class="blockdiv">
-        <span class="b s150">Recent Posts</span>
-        {%- for page in log_section.pages | slice(end=5) %}
-        <div class="tpad">
-          <a href="{{ page.permalink | safe }}">{{ page.title | markdown(inline=true) | safe }}</a>
-          <br><span class="s90">{{ page.date | date(format="%B %d, %Y") }}</span>
-        </div>
-        {%- endfor %}
-        <div class="tpad">
-          <a href="{{ get_url(path="log", lang=lang) }}/">{{ macros::translate(key="more", default="more", i18n=i18n) }}...</a>
-        </div>
+  {%- set all_series = get_taxonomy(kind="series") %}
+  {%- for term in all_series.items %}
+  <div class="post on-list">
+    <h2 class="post-title">Series: {{ term.name }}</h2>
+    <div class="post-content">
+      {%- for page in term.pages %}
+      <div style="margin-bottom:0.5em;">
+        <a href="{{ page.permalink | safe }}">{{ page.title }}</a>
+        <br><span style="font-size:0.9em;color:var(--date-color);">
+          {{ page.date | date(format="%B %d, %Y") }}
+          {%- if page.taxonomies and page.taxonomies.tags %}
+          ::
+          {%- for tag in page.taxonomies.tags | sort | unique %}
+          <a href="{{ get_taxonomy_url(kind='tags', name=tag) | safe }}">#{{ tag }}</a>
+          {%- endfor %}
+          {% endif %}
+        </span>
       </div>
+      {%- endfor %}
     </div>
-{%- endblock content %}
+  </div>
+  {%- endfor %}
+</div>
+{% endblock content %}
+
+{% block extra_body %}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>document.addEventListener("DOMContentLoaded",function(){var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});</script>
+{{ super() }}
+{% endblock extra_body %}

@@ -4,9 +4,11 @@ date = 2026-05-20
 description = "Rust is safe until you cross the boundary."
 weight = 5
 [taxonomies]
-tags = ["Rust", "unsafe/ffi"]
+tags = ["Rust", "unsafe/ffi", "memscope-rs"]
+series = ["memscope-rs"]
 [extra]
 toc = true
+series = "memscope-rs"
 +++
 
 # Unsafe and FFI Memory Passport: Tracking Memory Across Rust’s Trust Boundary

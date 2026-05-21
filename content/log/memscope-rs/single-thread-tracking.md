@@ -4,9 +4,11 @@ date = 2026-05-20
 description = "How memscope-rs combines GlobalAlloc runtime tracking with Rust-level semantic metadata for single-thread memory analysis."
 weight = 1
 [taxonomies]
-tags = ["Rust", "Memory"]
+tags = ["Rust", "Memory", "memscope-rs"]
+series = ["memscope-rs"]
 [extra]
 toc = true
+series = "memscope-rs"
 +++
 
 # Single-Thread Tracking: From `GlobalAlloc` to Rust-Level Memory Semantics
