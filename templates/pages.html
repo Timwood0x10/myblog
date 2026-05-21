@@ -10,6 +10,72 @@
   </div>
   {% endif %}
 
+  {# === Reading Path === #}
+  {%- if config.extra.series_order %}
+  <div class="post on-list">
+    <h2 class="post-title">Reading Path</h2>
+    <div class="post-content">
+
+    {# Global overview graph #}
+    <p><strong>Overview</strong></p>
+<pre><code data-lang="mermaid">graph LR
+{% for slug in config.extra.series_order %}
+{% set info = config.extra.series_info[slug] %}
+classDef {{ slug | slugify }} fill:{{ info.color }},stroke:{{ info.color }},color:#fff
+{% endfor %}
+{% for slug in config.extra.series_order %}
+{% set info = config.extra.series_info[slug] %}
+    {{ slug | slugify }}["{{ slug }}&lt;br/&gt;{{ info.desc }}"]:::{{ slug | slugify }}{% endfor %}
+{% for edge in config.extra.series_edges %}
+    {{ edge.from | slugify }} -.->|"{{ edge.label }}"| {{ edge.to | slugify }}{% endfor %}
+</code></pre>
+
+    {# Per-series subgraphs #}
+{% for slug in config.extra.series_order %}
+{% set info = config.extra.series_info[slug] %}
+{% set section = get_section(path="log/" ~ slug ~ "/_index.md") %}
+{% set pages = section.pages %}
+    <p><strong>{{ slug }}</strong></p>
+<pre><code data-lang="mermaid">
+graph TB
+    classDef {{ slug | slugify }} fill:{{ info.color }},stroke:{{ info.color }},color:#fff
+    subgraph {{ slug }}{% set_global odd_node = "" %}{% set_global odd_short = "" %}{% set_global odd_url = "" %}
+{% for page in pages %}
+{% set num = loop.index %}
+{% set short = page.title | split(pat=": ") | last | split(pat=" — ") | first %}
+{% if num % 2 == 1 %}
+{% set_global odd_node = "w" ~ num %}
+{% set_global odd_short = short %}
+{% set_global odd_url = page.permalink %}{% else %}
+        {{ odd_node }}["{{ num - 1 }} · {{ odd_short }}"]:::{{ slug | slugify }} --> {{ "w" ~ num }}["{{ num }} · {{ short }}"]:::{{ slug | slugify }}
+        click {{ odd_node }} "{{ odd_url | safe }}"
+        click {{ "w" ~ num }} "{{ page.permalink | safe }}"
+{% if num >= 4 %}
+{% set prev_even = num - 2 %}
+{% set prev_odd = num - 1 %}
+        {{ "w" ~ prev_even }} --> {{ "w" ~ prev_odd }}
+{% endif %}{% endif %}
+{% endfor %}
+{% if pages | length % 2 == 1 %}
+{% set last = pages | last %}
+{% set last_short = last.title | split(pat=": ") | last | split(pat=" — ") | first %}
+{% set last_num = pages | length %}
+        {{ odd_node }}["{{ last_num }} · {{ last_short }}"]:::{{ slug | slugify }}
+        click {{ odd_node }} "{{ odd_url | safe }}"
+{% if pages | length >= 3 %}
+{% set prev_even = pages | length - 1 %}
+        {{ "w" ~ prev_even }} --> {{ odd_node }}
+{% endif %}{% endif %}
+    end
+</code></pre>
+{% endfor %}
+
+    </div>
+  </div>
+  {%- endif %}
+  {# === End Reading Path === #}
+
+  {# === Series listing (collapsible) === #}
   {%- set all_series = get_taxonomy(kind="series") %}
   {%- for term in all_series.items %}
   {%- set series_id = term.name | slugify %}
@@ -42,7 +108,20 @@
 {% endblock content %}
 
 {% block extra_body %}
+<style>
+.mermaid svg { background: transparent !important; }
+.mermaid .cluster rect { fill: transparent !important; stroke: rgba(255,255,255,.15) !important; stroke-width: 1px !important; }
+.mermaid .node rect { stroke: rgba(255,255,255,.5) !important; stroke-width: 1.5px !important; rx: 6px !important; }
+.mermaid .node .label { color: #fff !important; }
+.mermaid .node .label span { color: #fff !important; }
+.mermaid .cluster-label span { color: rgba(255,255,255,.6) !important; }
+.mermaid .edgePath .path { stroke: rgba(255,255,255,.7) !important; stroke-width: 2px !important; }
+.mermaid .edgePath .arrowheadPath { fill: rgba(255,255,255,.7) !important; }
+.mermaid .edgeLabel { color: rgba(255,255,255,.6) !important; background: transparent !important; }
+.mermaid .edgeLabel rect { fill: transparent !important; }
+.mermaid .edge-pattern-dashed { stroke-dasharray: 7 5 !important; }
+</style>
 <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-<script>document.addEventListener("DOMContentLoaded",function(){var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});document.querySelectorAll(".series-toggle").forEach(function(btn){btn.addEventListener("click",function(e){e.preventDefault();var s=this.dataset.series;var hidden=document.querySelectorAll('.series-entry[data-series="'+s+'"]');hidden.forEach(function(el){el.style.display=""});this.style.display="none"})});</script>
+<script>document.addEventListener("DOMContentLoaded",function(){mermaid.initialize({theme:"base",themeVariables:{background:"transparent",primaryColor:"#ffffff",primaryBorderColor:"rgba(255,255,255,.3)",lineColor:"rgba(255,255,255,.7)",fontSize:"14px",tertiaryColor:"transparent"}});var nodes=[];document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){var pre=el.parentElement;var div=document.createElement("div");div.className="mermaid";div.textContent=el.textContent;pre.parentNode.replaceChild(div,pre);nodes.push(div)});if(nodes.length)mermaid.run({nodes:nodes})});document.querySelectorAll(".series-toggle").forEach(function(btn){btn.addEventListener("click",function(e){e.preventDefault();var s=this.dataset.series;var hidden=document.querySelectorAll('.series-entry[data-series="'+s+'"]');hidden.forEach(function(el){el.style.display=""});this.style.display="none"})});</script>
 {{ super() }}
 {% endblock extra_body %}

@@ -34,13 +34,13 @@ flowchart LR
 
 ## Articles
 
-1. [Why OmniScope analyzes cross-language safety at the LLVM IR layer](./01-what-is-omniscope.md)
-2. [Lifecycle of an analysis run: CLI, IRLoader, Pipeline, and output](./02-cli-to-pipeline.md)
-3. [Inside the Pass system: dependency ordering, shared context, and graceful degradation](./03-pass-system.md)
-4. [Zone Classification and Semantic Registry: avoiding blacklist-style reporting](./04-zone-and-registry.md)
-5. [MemoryGraph and DangerSurface: from pointer facts to risk paths](./05-memory-graph-danger-surface.md)
-6. [Rust FFI Auditor: reconstructing and checking cross-language ownership protocols](./06-rust-ffi-auditor.md)
-7. [Reporting pipeline: Issue objects, JSON, SARIF, and engineering integration](./07-output-and-integration.md)
+1. [Why OmniScope analyzes cross-language safety at the LLVM IR layer](@/log/OmniScope/01-what-is-omniscope.md)
+2. [Lifecycle of an analysis run: CLI, IRLoader, Pipeline, and output](@/log/OmniScope/02-cli-to-pipeline.md)
+3. [Inside the Pass system: dependency ordering, shared context, and graceful degradation](@/log/OmniScope/03-pass-system.md)
+4. [Zone Classification and Semantic Registry: avoiding blacklist-style reporting](@/log/OmniScope/04-zone-and-registry.md)
+5. [MemoryGraph and DangerSurface: from pointer facts to risk paths](@/log/OmniScope/05-memory-graph-danger-surface.md)
+6. [Rust FFI Auditor: reconstructing and checking cross-language ownership protocols](@/log/OmniScope/06-rust-ffi-auditor.md)
+7. [Reporting pipeline: Issue objects, JSON, SARIF, and engineering integration](@/log/OmniScope/07-output-and-integration.md)
 
 ## Source Reading Map
 
