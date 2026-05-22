@@ -1,5 +1,7 @@
 +++
 title = "GoAgent Source Deep Dive Series"
+date = 2026-05-21
+weight = 0
 +++
 
 # GoAgent Source Deep Dive Series
