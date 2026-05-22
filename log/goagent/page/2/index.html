@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+
+    <meta name="description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
+
+    <meta property="og:description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
+    <meta property="og:title" content="goagent | Timwood0x10">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/goagent/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
+    <meta name="twitter:title" content="goagent | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/goagent/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container ">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+        <div class="posts">
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/09-embedding-service/">GoAgent Source Deep Dive 09: Embedding Service — The Engineering Boundary of Vector Generation</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="goagent-source-deep-dive-09-embedding-service-the-engineering-boundary-of-vector-generation">GoAgent Source Deep Dive 09: Embedding Service — The Engineering Boundary of Vector Generation</h1>
+<h2 id="the-problem-how-do-you-turn-text-into-vectors">The Problem: How Do You Turn Text Into Vectors</h2>
+<p>GoAgent's retrieval depends on vector similarity search. PostgreSQL + pgvector can do vector search, but you need vectors first. How does text become a vector?</p>
+<h2 id="limitations-of-existing-approaches">Limitations of Existing Approaches</h2>
+<p><strong>CGO bindings for vector models in Go</strong> — Complex compilation, cross-platform difficulties, Go's ML ecosystem is immature.
+<strong>Python subprocess from Go</strong> — High latency, complex process management.
+<strong>External API (OpenAI Embedding)</strong> — External dependency, network latency and cost, not suitable for local deployment.</p>
+<p>All three have engineering pain points. What GoAgent needs: <strong>vector generation decoupled from the Go main program, supporting local deployment and flexible backend switching</strong>.</p>
+<h2 id="goagent-s-approach">GoAgent's Approach</h2>
+<p>Deploy embedding as an independent HTTP service:</p>
+<ul>
+<li>Python FastAPI implementation, leveraging Python's ML ecosystem.</li>
+<li>Go calls via HTTP, no CGO or subprocess dependency.</li>
+<li>Supports Ollama and SentenceTransformers backends, switchable via environment variable.</li>
+<li>Optional Redis cache, L2 normalization for retrieval consistency.</li>
+</ul>
+<div class="mermaid-direct" data-series="goagent">flowchart LR
+    subgraph "Go Main Program"
+        Retrieval[RetrievalService]
+        Client[EmbeddingClient]
+    end
+
+    subgraph "Embedding Service"
+        FastAPI[FastAPI]
+        Cache[Redis]
+    end
+
+    subgraph "Backends"
+        Ollama[Ollama]
+        ST[SentenceTransformers]
+    end
+
+    Retrieval --> Client
+    Client -->|HTTP| FastAPI
+    FastAPI --> Cache
+    FastAPI --> Ollama
+    FastAPI --> ST
+</div><h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
+<h3 id="go-side-embeddingclient">Go Side: EmbeddingClient</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EmbeddingClient</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    baseURL</span><span style="color: #CBA6F7;">    string</span></span>
+<span class="giallo-l"><span>    httpClient</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">http</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Client</span></span>
+<span class="giallo-l"><span>    retries</span><span style="color: #CBA6F7;">    int</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Two core methods: <code>Embed</code> (single text) and <code>EmbedBatch</code> (batch). Constructs JSON, POSTs to <code>/embed</code> or <code>/embed_batch</code>, parses response.</p>
+<h3 id="python-side-fastapi-service">Python Side: FastAPI Service</h3>
+<p>Three endpoints: <code>/embed</code>, <code>/embed_batch</code>, <code>/health</code>.</p>
+<p>Single text flow: check cache → generate vector → L2 normalize → write cache → return.
+Batch flow: filter cached → batch generate uncached → normalize and cache each → return.</p>
+<h3 id="backend-switching">Backend Switching</h3>
+<p><code>EMBEDDING_BACKEND</code> environment variable switches Ollama or SentenceTransformers. No code changes. Dev uses sentence-transformers (zero config), production uses Ollama (high performance).</p>
+<h3 id="vector-normalization">Vector Normalization</h3>
+<p>All vectors L2-normalized before return (norm = 1). After normalization, cosine similarity equals dot product — faster. Without normalization, long text vectors may have larger magnitudes, causing retrieval bias.</p>
+<h3 id="cache">Cache</h3>
+<p>Redis optional: same text doesn't recompute, reduces backend pressure. Service works without Redis, just uncached.</p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<ul>
+<li><strong>Independent service vs embedded</strong>: Extra network hop and deployment component, but language decoupling, independent scaling, flexible backend.</li>
+<li><strong>HTTP vs gRPC</strong>: Easy debugging, language-agnostic. For request-response patterns, HTTP overhead acceptable.</li>
+<li><strong>Optional vs mandatory cache</strong>: Zero config for dev, on-demand for production. Service availability independent of Redis.</li>
+</ul>
+<h2 id="summary">Summary</h2>
+<p>The Embedding Service is the prerequisite for GoAgent's retrieval. Deploying independently is the trade-off between engineering complexity and operational flexibility. Architecture naturally emerged from "how does text become vectors" — Python ecosystem for vector generation, Go for business logic, HTTP as the bridge.</p>
+
+        </div>
+
+                </div>
+            <div class="pagination">
+                <div class="pagination__buttons">
+                    <span class="button previous">
+                        <a href="https://Timwood0x10.github.io/myblog/log/goagent/">
+                            <span class="button__icon">&#8592;</span>&nbsp;
+                            <span class="button__text">Newer posts</span>
+                        </a>
+                    </span>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+</body>
+
+</html>
