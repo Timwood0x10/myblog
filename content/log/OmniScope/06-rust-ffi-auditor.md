@@ -18,7 +18,7 @@ Rust FFI risk often appears when Rust’s ownership and borrowing protocols cros
 
 Inside Rust, `Box`, borrow, and drop have clear semantics. Once `extern "C"` exposes a raw pointer, those semantics become a protocol between two sides. C can store the pointer, release it later, call `free`, or pass it back through a callback. The Rust compiler no longer verifies those actions.
 
-Rust FFI auditing therefore looks past “is there unsafe?” and asks whether the ownership protocol closes: who reclaims an `into_raw` pointer, whether an `as_ptr` borrow escapes, whether a stack address outlives the function, and whether allocation and deallocation use the same protocol.
+Rust FFI auditing therefore looks past "is there unsafe?" and asks whether the ownership protocol closes: who reclaims an `into_raw` pointer, whether an `as_ptr` borrow escapes, whether a stack address outlives the function, and whether allocation and deallocation use the same protocol.
 
 ## OmniScope’s entry point: Rust-specific rules plus universal FFI rules
 
@@ -186,7 +186,7 @@ That two-stage structure matters because the auditor can keep Rust-specific mean
 
 ## One concrete rule: unpaired `into_raw`
 
-The problem with `Box::into_raw` is not “raw pointers are dangerous” in the abstract. It is that Rust intentionally gives up automatic drop and transfers release responsibility into an external protocol. A safe recovery path requires a matching `from_raw` or equivalent reclamation.
+The problem with `Box::into_raw` is not "raw pointers are dangerous" in the abstract. It is that Rust intentionally gives up automatic drop and transfers release responsibility into an external protocol. A safe recovery path requires a matching `from_raw` or equivalent reclamation.
 
 That is why the code checks for module-level pairing: if `into_raw` semantics exist but no `from_raw` semantics exist anywhere in the module, OmniScope emits `unpaired_into_raw`. It is a protocol-completeness check, not a function blacklist.
 

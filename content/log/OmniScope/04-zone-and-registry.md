@@ -18,7 +18,7 @@ A static analyzer without semantic layers can easily become a dangerous-function
 
 Reporting whenever `free`, `strcpy`, or `dlopen` appears is simple, but it becomes noisy in cross-language auditing. An allocator inside runtime glue may be expected; the same allocator in a user-written FFI wrapper may indicate ownership crossing a language boundary.
 
-The question is not only “is this function dangerous?” It is also: which code region is it in, runtime/internal or user boundary code? Does the function represent allocation, deallocation, borrow escape, or ordinary library behavior in an FFI context?
+The question is not only "is this function dangerous?" It is also: which code region is it in, runtime/internal or user boundary code? Does the function represent allocation, deallocation, borrow escape, or ordinary library behavior in an FFI context?
 
 ## OmniScope’s entry point: Zone answers where, Registry answers what
 
@@ -187,4 +187,4 @@ Keeping Zone and Registry separate avoids two common mistakes:
 - Zone alone tells you where code lives, but not what the function means.
 - Registry alone tells you a function looks like an allocator or deallocator, but not whether it sits on a local path or a cross-language path.
 
-OmniScope lets Zone answer “where”, Registry answer “what”, and MemoryGraph/DangerSurface answer “does it flow into a dangerous path”. Once those questions are separated, false-positive control becomes actionable.
+OmniScope lets Zone answer "where", Registry answer "what", and MemoryGraph/DangerSurface answer "does it flow into a dangerous path". Once those questions are separated, false-positive control becomes actionable.

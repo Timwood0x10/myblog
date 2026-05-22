@@ -162,7 +162,7 @@ while new_active > current_peak {
 }
 ```
 
-This is not academic “everything is lock-free” purity. It is an engineering tradeoff: keep hot updates lightweight, but avoid wasting CPU under contention.
+This is not academic "everything is lock-free" purity. It is an engineering tradeoff: keep hot updates lightweight, but avoid wasting CPU under contention.
 
 ---
 

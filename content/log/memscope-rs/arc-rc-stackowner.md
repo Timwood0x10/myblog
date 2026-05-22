@@ -42,10 +42,10 @@ flowchart TD
     C --> H
 
     G[GlobalAlloc] --> H
-    G -. cannot directly see .-> B
+    G -. "cannot directly see" .-> B
 {% end %}
 
-The question is not just “where was memory allocated?” but:
+The question is not just "where was memory allocated?" but:
 
 > Which tracked smart pointers point to the same heap object?
 

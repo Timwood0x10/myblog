@@ -158,7 +158,7 @@ while (@intFromPtr(func) != 0) : (func = c.LLVMGetNextFunction(func)) {
 }
 ```
 
-This is more than a micro-optimization. Without this index, every pass that asks “where is this external function called?” would need to rescan functions, basic blocks, and instructions. With `CallSiteIndex`, call-site lookup becomes a shared context query used by FFI boundary detection, danger-surface tracing, and report evidence.
+This is more than a micro-optimization. Without this index, every pass that asks "where is this external function called?" would need to rescan functions, basic blocks, and instructions. With `CallSiteIndex`, call-site lookup becomes a shared context query used by FFI boundary detection, danger-surface tracing, and report evidence.
 
 ## Pipeline also owns post-pass reduction
 

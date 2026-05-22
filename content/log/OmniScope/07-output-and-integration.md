@@ -202,4 +202,4 @@ Keeping these fields in `Issue`, rather than scattering them across JSON/SARIF f
 
 Terminal output is useful for demos, but engineering systems need stable structure. CI needs artifacts, security platforms need SARIF, secondary tooling needs JSON, and developers need reason and trace. OmniScope’s `Issue -> JSON/SARIF/Text` path keeps those consumers on the same semantics.
 
-The important part is bigger than “supports JSON and SARIF”:  OmniScope models cross-language findings as structured issues with confidence, CWE, location, FFI classification, and explanatory evidence, then serializes that contract into machine-consumable formats.
+The important part is bigger than "supports JSON and SARIF":  OmniScope models cross-language findings as structured issues with confidence, CWE, location, FFI classification, and explanatory evidence, then serializes that contract into machine-consumable formats.

@@ -156,6 +156,6 @@ This is a pragmatic static analysis design. It does not aim for formal proof; it
 
 ## The line between OmniScope and blacklist scanners
 
-A blacklist scanner can only say “this dangerous API appears”. OmniScope asks a narrower question: does this pointer cross an FFI boundary, come from unsafe code, violate ownership across languages, or flow through alias paths to a boundary?
+A blacklist scanner can only say "this dangerous API appears". OmniScope asks a narrower question: does this pointer cross an FFI boundary, come from unsafe code, violate ownership across languages, or flow through alias paths to a boundary?
 
-That is why `MemoryGraph.isOnDangerPath` becomes the core question in later articles. It changes the unit of analysis from “dangerous function present” to “pointer on a dangerous path”. That is the fundamental difference between OmniScope and a rule list.
+That is why `MemoryGraph.isOnDangerPath` becomes the core question in later articles. It changes the unit of analysis from "dangerous function present" to "pointer on a dangerous path". That is the fundamental difference between OmniScope and a rule list.

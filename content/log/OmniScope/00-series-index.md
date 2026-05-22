@@ -83,4 +83,4 @@ pass/analysis/rust_ffi_auditor.zig
   └─ auditFunction / Rust-specific rules / universal FFI rules
 ```
 
-The real architecture is not just “uses LLVM IR”. It is the way OmniScope turns low-level IR facts into three reusable semantic layers: `PassContext`, `MemoryGraph`, and `DangerSurface`.
+The real architecture is not just "uses LLVM IR". It is the way OmniScope turns low-level IR facts into three reusable semantic layers: `PassContext`, `MemoryGraph`, and `DangerSurface`.

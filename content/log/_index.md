@@ -1,5 +1,6 @@
 +++
 title = "Log"
+template = "section.html"
 +++
 
 Articles are organized into series:
