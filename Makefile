@@ -1,14 +1,12 @@
-THEME_DIR = themes/terminimal
-THEME_REPO = https://github.com/pawroman/zola-theme-terminimal.git
+# terminal-zen blog — Makefile
 
-build: $(THEME_DIR)/.git
+build:
 	zola build
 
-$(THEME_DIR)/.git:
-	rm -rf $(THEME_DIR)
-	git clone --depth 1 $(THEME_REPO) $(THEME_DIR)
-
 clean:
-	rm -rf public $(THEME_DIR)
+	rm -rf public
 
-.PHONY: build clean
+serve:
+	zola serve
+
+.PHONY: build clean serve

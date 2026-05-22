@@ -84,66 +84,12 @@ document.addEventListener("DOMContentLoaded",function(){
       nodes.forEach(function(el){
         mermaid.run({nodes:[el]}).then(function(){
           el.classList.add("mermaid-ready");
-          applyCyberpunkStyle(el);
         }).catch(function(err){
           console.warn("Mermaid: skip one diagram (syntax error)", err);
           el.style.display="none";
         });
       });
     }
-  }
-
-  // ============================================
-  // Cyberpunk terminal-style post-processing
-  // Sharp angles, neon borders, terminal aesthetic
-  // ============================================
-  function applyCyberpunkStyle(container){
-    var svg=container.querySelector("svg");
-    if(!svg)return;
-
-    // 1. Convert rects to sharp-angled terminal shapes (slanted corners)
-    svg.querySelectorAll(".node rect, .cluster rect").forEach(function(rect){
-      var w=parseFloat(rect.getAttribute("width")||0);
-      var h=parseFloat(rect.getAttribute("height")||0);
-      var x=parseFloat(rect.getAttribute("x")||0);
-      var y=parseFloat(rect.getAttribute("y")||0);
-      if(w<2||h<2)return;
-      var cut=Math.min(6,w/8,h/8);
-      var path="M"+(x+cut)+","+y+" L"+(x+w-cut)+","+y+" L"+(x+w)+","+(y+cut)+" L"+(x+w)+","+(y+h-cut)+" L"+(x+w-cut)+","+(y+h)+" L"+(x+cut)+","+(y+h)+" L"+x+","+(y+h-cut)+" L"+x+","+(y+cut)+"Z";
-      var pathEl=document.createElementNS("http://www.w3.org/2000/svg","path");
-      pathEl.setAttribute("d",path);
-      copyAttrs(rect,pathEl,["fill","stroke","stroke-width","fill-opacity","stroke-opacity"]);
-      rect.parentNode.replaceChild(pathEl,rect);
-    });
-
-    // 2. Add corner accent lines to nodes (terminal bracket style)
-    svg.querySelectorAll(".node").forEach(function(node){
-      var path=node.querySelector("path");
-      if(!path)return;
-      var bbox=path.getBBox?path.getBBox():{x:0,y:0,width:0,height:0};
-      if(bbox.width<10)return;
-      var g=node.querySelector("g")||node;
-      var accent=document.createElementNS("http://www.w3.org/2000/svg","path");
-      var ax=bbox.x,ay=bbox.y,aw=bbox.width,ah=bbox.height,c=4;
-      var d="M"+ax+","+(ay+c)+" L"+ax+","+ay+" L"+(ax+c)+","+ay;
-      d+=" M"+(ax+aw-c)+","+ay+" L"+(ax+aw)+","+ay+" L"+(ax+aw)+","+(ay+c);
-      d+=" M"+(ax+aw)+","+(ay+ah-c)+" L"+(ax+aw)+","+(ay+ah)+" L"+(ax+aw-c)+","+(ay+ah);
-      d+=" M"+(ax+c)+","+(ay+ah)+" L"+ax+","+(ay+ah)+" L"+ax+","+(ay+ah-c);
-      accent.setAttribute("d",d);
-      accent.setAttribute("fill","none");
-      accent.setAttribute("stroke",path.getAttribute("stroke")||"#fff");
-      accent.setAttribute("stroke-width","1.5");
-      accent.setAttribute("stroke-opacity",".6");
-      g.appendChild(accent);
-    });
-  }
-
-  // Copy specified attributes from source to target element
-  function copyAttrs(src,tgt,attrs){
-    attrs.forEach(function(a){
-      var v=src.getAttribute(a);
-      if(v!==null)tgt.setAttribute(a,v);
-    });
   }
 
   // ============================================
