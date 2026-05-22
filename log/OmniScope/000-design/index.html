@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>OmniScope Design Concept | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+
+    <meta name="description" content="">
+
+    <meta property="og:description" content="">
+    <meta property="og:title" content="OmniScope Design Concept | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/000-design/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="">
+    <meta name="twitter:title" content="OmniScope Design Concept | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/000-design/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/000-design/">OmniScope Design Concept</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2025-01-01
+        </span>
+
+    </div>
+
+    
+
+    <div class="post-content">
+            <h1 id="omniscope-design-concept">OmniScope Design Concept</h1>
+<p>Hi, previously, I only gave a brief overview of this project. Now, I'll break down the architecture and share my design insights.</p>
+<p>This project aims to solve memory leak issues in cross-language calls. Unlike general-purpose security detection tools, my design focuses 90% of my effort on analyzing unsafe/ffi code, and only 10% (and perhaps even less) on general security detection.</p>
+<h2 id="why-zig">Why zig?</h2>
+<p>Initially, I didn't know what to do, choosing between Rust and C++. However, Rust's compilation speed was too slow, and although it has an excellent memory management model, analyzing unsafe code might require a lot of unsafe code, which deterred me. As for C++, I'm sorry, I'm not very good at it. So I switched to Zig, and this was my first attempt at creating a small tool using Zig.</p>
+<h2 id="why-ir">Why IR?</h2>
+<p>I've been thinking that many FIF implementations aren't limited to Rust ←-&gt; C, but also include C ←&gt; C++, and Go ← → C. If I were to adapt for each language, it would be a catastrophic workload. So, I realized that the commonality among these languages is that they all use LLVM as their compiler backend. Therefore, I started researching (yes, I'm not a very competent developer; I don't even understand compilers very well). I dissected the compiler and realized that the Instructions Repository (IR) contains a large amount of information about the program; this might be my breakthrough point.</p>
+<p>Then I started designing the architecture. Besides researching on my own, I consulted senior development engineers and various AIs (GPT, CC). I started by creating a simple demo, for example, zig ←-&gt; C. So I looked at the zig source code to find out how zig and C interact… and did all sorts of other work, also taking various compiler notes (but that's another story). Then the first version of the code was runnable. I also designed various bugs in the project, namely red team vs. blue team battles, to test the TP and FP of this demo. The first run results were pretty good, at least not too bad, which was a good start for me.</p>
+<h2 id="how-to-abstract">How to abstract?</h2>
+<p>After successfully running the Zig←-&gt;C demo, my confidence soared, and I switched to Rust←-&gt;C. Little did I know this would be the beginning of a nightmare. The Rust compiler generated a massive amount of intermediate results, storing them all in the Instructions Redirect (IR). The project's TP remained consistently low, below 20%, and I even considered giving up at one point.</p>
+<p>For a long time afterward, I didn't want to touch this project until I thought of something: since so many intermediate products are generated, why don't I just ignore them, assume they are trustworthy, and only analyze the content in the user-defined program?</p>
+<p>Then, I excitedly opened the Rust source code and, with the help of AI, read the Rust compiler source code. The goal was to find what the compiler produced, and use that as a safe zone (this is how Java, Python, etc., were designed later).</p>
+<h2 id="why-memory-diagram">Why Memory diagram?</h2>
+<p>With this idea in mind, I started working on the project. Zone filtering was successful, but the TP (True Positive Rate) was still low. After analysis, I realized the issue was with the program's context awareness. I consulted the AI, which suggested adding a whitelist, a suggestion I initially agreed to. However, after implementing it, I discovered that maintaining a very large whitelist was necessary, which wasn't what I wanted. So I went back to my previous notes…</p>
+<p>Since there's a deficiency in context awareness, I might as well build a memory graph and a call graph during IR scanning, recording the complete call stack, and then analyze the graph. I'll only focus on the FHI part; I don't care about the other parts.</p>
+<p>I got right to it, and the results were surprisingly good. My confidence soared, and I started challenging existing open-source projects, relentlessly adding various red team and blue team tests.</p>
+<p>From the initial sqlite3 to various Rust-based cryptographic libraries and game libraries, all the actual analysis data is documented in the project documentation.</p>
+<p>When memory-safe languages meet legacy C code, the safety net usually tears at the FFI boundary. OmniScope is built to continuous-stitch this gap.</p>
+<p>This is the entire development process of the project. I hope this tool can be helpful to you. It may not be perfect, but your feedback is appreciated. Thank you.</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/00-series-index/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">OmniScope Deep-Dive Series: From LLVM IR to Cross-Language Ownership Auditing</span>
+                            </a>
+                        </span>
+                    
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

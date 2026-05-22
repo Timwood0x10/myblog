@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Red&#x2F;Blue Team Testing Guide | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+
+    <meta name="description" content="">
+
+    <meta property="og:description" content="">
+    <meta property="og:title" content="Red/Blue Team Testing Guide | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/08-log-read/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="">
+    <meta name="twitter:title" content="Red/Blue Team Testing Guide | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/08-log-read/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/OmniScope/08-log-read/">Red&#x2F;Blue Team Testing Guide</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2025-03-01
+        </span>
+
+    </div>
+
+    
+
+    <div class="post-content">
+            <h1 id="red-blue-team-testing-guide">Red/Blue Team Testing Guide</h1>
+<p><strong>Version</strong>: v0.1.9
+<strong>Purpose</strong>: Validate OmniScope's detection rate (red team) and false positive rate (blue team) against the <code>corpus/</code> test suite.</p>
+<h2 id="quick-start">Quick Start</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">make</span><span style="color: #A6E3A1;"> red-team</span><span style="color: #9399B2;font-style: italic;">       # Adversarial: does the tool detect known bugs?</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">make</span><span style="color: #A6E3A1;"> blue-team</span><span style="color: #9399B2;font-style: italic;">      # Defensive: does the tool avoid false alarms?</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">make</span><span style="color: #A6E3A1;"> corpus-test</span><span style="color: #9399B2;font-style: italic;">    # Run both</span></span></code></pre>
+<hr />
+<h2 id="part-1-red-team-adversarial-detection-test">Part 1: Red Team — Adversarial Detection Test</h2>
+<h3 id="what-it-does">What It Does</h3>
+<p>Runs OmniScope against crafted test files in <code>corpus/red_team_test/</code> that contain <strong>known bugs</strong> (memory leaks, double frees, use-after-free, FFI boundary violations). Measures <strong>recall</strong> — how many injected bugs the tool actually catches.</p>
+<h3 id="run-log-real-output">Run Log (Real Output)</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>╔════════════════════════════════════════════════════════════════╗</span></span>
+<span class="giallo-l"><span>║                    RED TEAM TEST                              ║</span></span>
+<span class="giallo-l"><span>║  Adversarial: detect known bugs in crafted test cases         ║</span></span>
+<span class="giallo-l"><span>╚════════════════════════════════════════════════════════════════╝</span></span>
+<span class="giallo-l"><span>  ✅ red_team_bugs.ll                         25 issues</span></span>
+<span class="giallo-l"><span>  ✅ ffi_boundary_bugs.ll                     18 issues</span></span>
+<span class="giallo-l"><span>  ✅ cross_lang_free_bugs.ll                  12 issues</span></span>
+<span class="giallo-l"><span>  ✅ cross_lang_free_complete.ll              15 issues</span></span>
+<span class="giallo-l"><span>  ✅ subtle_ffi_bugs.ll                        8 issues</span></span>
+<span class="giallo-l"><span>  ✅ python_c_api_bugs.ll                     10 issues</span></span>
+<span class="giallo-l"><span>  ✅ posix_ffi_bugs.ll                         6 issues</span></span>
+<span class="giallo-l"><span>────────────────────────────────────────────────────────</span></span>
+<span class="giallo-l"><span>  Red Team: 7 files, 94 total issues detected</span></span>
+<span class="giallo-l"><span>  ✅ Detection threshold met</span></span></code></pre><h3 id="line-by-line-interpretation">Line-by-Line Interpretation</h3>
+<h4 id="header">Header</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>╔════════════════════════════════════════════════════════════════╗</span></span>
+<span class="giallo-l"><span>║                    RED TEAM TEST                              ║</span></span>
+<span class="giallo-l"><span>╚════════════════════════════════════════════════════════════════╝</span></span></code></pre>
+<p>This is the test banner. The Makefile target <code>red-team</code> (defined in <code>Makefile:640</code>) triggers <code>build</code> first, then iterates over <code>RED_IR_FILES</code>.</p>
+<h4 id="per-file-result">Per-File Result</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>  ✅ red_team_bugs.ll                         25 issues</span></span></code></pre><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>✅</code></td><td>File produced ≥1 issue (pass)</td></tr>
+<tr><td><code>❌</code></td><td>File produced 0 issues (miss — potential regression)</td></tr>
+<tr><td><code>red_team_bugs.ll</code></td><td>Test file name</td></tr>
+<tr><td><code>25 issues</code></td><td>Total issues detected by OmniScope</td></tr>
+</tbody></table>
+<p><strong>How to locate the source</strong>: Each <code>.ll</code> file is compiled from a <code>.c</code> file in the same directory. For example:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>corpus/red_team_test/red_team_bugs.c      ← Source code with injected bugs</span></span>
+<span class="giallo-l"><span>corpus/red_team_test/red_team_bugs.ll     ← Compiled LLVM IR (what OmniScope analyzes)</span></span></code></pre><h4 id="summary-line">Summary Line</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>  Red Team: 7 files, 94 total issues detected</span></span></code></pre>
+<ul>
+<li><code>7 files</code> — how many <code>.ll</code> files existed and were analyzed</li>
+<li><code>94 total issues</code> — sum of all issues across all files</li>
+</ul>
+<h4 id="threshold-check">Threshold Check</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>  ✅ Detection threshold met</span></span></code></pre>
+<p>If <code>total_issues &lt; 10</code>, the test reports <code>⚠️ LOW detection count — investigate regressions</code>. This is a coarse sanity check, not a precise benchmark. For precise detection rates, use <code>make benchmark</code>.</p>
+<h3 id="drilling-into-a-single-file">Drilling Into a Single File</h3>
+<p>To see the full OmniScope output for one test file:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">./zig-out/bin/OmniScope</span><span style="color: #A6E3A1;"> corpus/red_team_test/red_team_bugs_O0.ll</span><span style="color: #94E2D5;"> 2&gt;&amp;1</span></span></code></pre><h4 id="startup-phase">Startup Phase</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>info: [INFO] === OmniScope IR Analysis ===</span></span>
+<span class="giallo-l"><span>info: [INFO] File: corpus/red_team_test/red_team_bugs_O0.ll</span></span>
+<span class="giallo-l"><span>info: [INFO] Loaded: 35 functions</span></span></code></pre><table><thead><tr><th>Line</th><th>What It Means</th></tr></thead><tbody>
+<tr><td><code>=== OmniScope IR Analysis ===</code></td><td>Analysis session started</td></tr>
+<tr><td><code>File: ...</code></td><td>Input LLVM IR file path</td></tr>
+<tr><td><code>Loaded: 35 functions</code></td><td>Number of functions parsed from the IR</td></tr>
+</tbody></table>
+<h4 id="language-detection">Language Detection</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>info: [INFO] LANG-DETECT: module language = c, confidence = 100.0%, method = sampling</span></span></code></pre><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>module language = c</code></td><td>Dominant language in the module</td></tr>
+<tr><td><code>confidence = 100.0%</code></td><td>How certain (sampling counts function name patterns)</td></tr>
+<tr><td><code>method = sampling</code></td><td><code>sampling</code> = statistical; <code>personality</code> = DWARF debug info</td></tr>
+</tbody></table>
+<p>The <code>sampling</code> method iterates all function names and counts language-specific patterns (<code>_ZN</code> for C++/Rust, <code>_R</code> for Rust v0, <code>Go.</code> for Go, etc.).</p>
+<h4 id="pre-pass-scanners">Pre-Pass Scanners</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>info: [INFO] MallocCheck: Analyzed functions, found 9 unchecked allocations</span></span>
+<span class="giallo-l"><span>info: [INFO] IntegerOverflow: Analyzed functions, found 0 potential overflows</span></span>
+<span class="giallo-l"><span>info: [INFO] BufferOverflow: No buffer overflow issues detected</span></span>
+<span class="giallo-l"><span>info: [INFO] ReturnCheck: Analyzed functions, found 1 unchecked return values</span></span>
+<span class="giallo-l"><span>info: [INFO] RustFfiFilter: analyzed 17 funcs, 0 findings (0 stack escapes)</span></span></code></pre><table><thead><tr><th>Scanner</th><th>What It Checks</th></tr></thead><tbody>
+<tr><td><code>MallocCheck</code></td><td><code>malloc()</code> return value not null-checked</td></tr>
+<tr><td><code>IntegerOverflow</code></td><td>Arithmetic ops that may overflow</td></tr>
+<tr><td><code>BufferOverflow</code></td><td>Array index out of bounds</td></tr>
+<tr><td><code>ReturnCheck</code></td><td>Return values of FFI calls not checked</td></tr>
+<tr><td><code>RustFfiFilter</code></td><td>Rust functions without FFI relevance (skipped)</td></tr>
+</tbody></table>
+<h4 id="cross-language-edge-extraction">Cross-Language Edge Extraction</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>info: [INFO] CallGraph: extracted 15 cross-language edges</span></span>
+<span class="giallo-l"><span>info: [INFO] CallGraph: built semantics CallGraph with 35 nodes, 63 edges for BFS traversal</span></span></code></pre><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>15 cross-language edges</code></td><td>Calls where caller and callee are in different languages</td></tr>
+<tr><td><code>35 nodes, 63 edges</code></td><td>Call graph size for BFS reachability analysis</td></tr>
+</tbody></table>
+<p>Each edge records <code>(caller_name, callee_name, caller_lang, callee_lang)</code>. An edge is "cross-language" when <code>caller_lang != callee_lang</code>.</p>
+<h4 id="danger-surface-pass">Danger Surface Pass</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>info: [INFO] [P1-1] DangerSurfacePass: 15 FFI, 0 allocs, 0 funcs | Phase1=0ms (args=0 rets=0 alias_traces=0) Phase2=0ms (cross_lang_free=0)</span></span></code></pre><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>15 FFI</code></td><td>Number of FFI boundary nodes in MemoryGraph</td></tr>
+<tr><td><code>Phase1</code></td><td>Time spent tracing call args/rets through FFI boundaries</td></tr>
+<tr><td><code>Phase2</code></td><td>Time spent scanning for cross-language free violations</td></tr>
+<tr><td><code>cross_lang_free=0</code></td><td>Cross-language alloc/free mismatches found</td></tr>
+</tbody></table>
+<h4 id="pointer-ownership-analysis">Pointer Ownership Analysis</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>info: [INFO] PointerOwnership: Source 1 (MemoryGraph) — 59 unfreed + 23 freed = 82 total nodes</span></span>
+<span class="giallo-l"><span>info: [INFO] PointerOwnership: Source 2 (GlobalAllocTracker) — 9 records, 0 freed</span></span>
+<span class="giallo-l"><span>info: [INFO] PointerOwnership: Source 3 (IR scan) added 32 frees — total now 32</span></span>
+<span class="giallo-l"><span>info: [INFO] PointerOwnership: Pre-populated from MemoryGraph + GlobalAllocTracker + IR-scan — 59 allocs, 32 frees</span></span></code></pre>
+<p>This is the <strong>three-source data fusion</strong>:</p>
+<table><thead><tr><th>Source</th><th>What It Provides</th></tr></thead><tbody>
+<tr><td>Source 1: MemoryGraph</td><td>Allocation sites + freed status from upstream passes</td></tr>
+<tr><td>Source 2: GlobalAllocTracker</td><td>Supplementary free tracking</td></tr>
+<tr><td>Source 3: IR scan</td><td>Direct LLVM IR scan for <code>free</code>/<code>dealloc</code> call instructions (fallback)</td></tr>
+</tbody></table>
+<p><strong>How to interpret</strong>: <code>59 unfreed</code> means 59 allocations were not matched with a corresponding free. These are potential memory leaks. The tool then applies filters (RAII, Meyers singleton, ref-counted containers) to reduce false positives.</p>
+<h4 id="vulnerability-lines">Vulnerability Lines</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>info: [ERROR] VULNERABILITY OMI-001 [medium] [Confidence: MEDIUM]</span></span>
+<span class="giallo-l"><span>info: [ERROR] Type: tainted_path_to_sink</span></span>
+<span class="giallo-l"><span>info: [ERROR] Reason: Untrusted data flows to sensitive sink without validation</span></span>
+<span class="giallo-l"><span>info: [ERROR] Path:</span></span>
+<span class="giallo-l"><span>info: [ERROR]   [Sink] printf()</span></span>
+<span class="giallo-l"><span>info: [ERROR]   [Source] main() - initial taint source</span></span></code></pre><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>OMI-001</code></td><td>Auto-incremented issue ID (unique per analysis run)</td></tr>
+<tr><td><code>[medium]</code></td><td>Severity: <code>critical</code> &gt; <code>high</code> &gt; <code>medium</code> &gt; <code>low</code></td></tr>
+<tr><td><code>[Confidence: MEDIUM]</code></td><td><code>HIGH</code> / <code>MEDIUM</code> / <code>LOW</code></td></tr>
+<tr><td><code>Type: tainted_path_to_sink</code></td><td>Issue category (20+ types)</td></tr>
+<tr><td><code>Reason:</code></td><td>Human-readable explanation of the problem</td></tr>
+<tr><td><code>Path:</code></td><td>Data flow path from source to sink</td></tr>
+</tbody></table>
+<p><strong>How to locate the problem in YOUR code</strong>:</p>
+<p><strong>Step 1: Identify the function.</strong> The output always includes a function name (mangled). For example:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>info: [ERROR]   in _Z37bug_cpp_05_unique_ptr_callback_escapev</span></span></code></pre>
+<p>Demangle it:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># C++ (Itanium ABI)</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;font-style: italic;">echo</span><span style="color: #A6E3A1;"> &quot;_Z37bug_cpp_05_unique_ptr_callback_escapev&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #89B4FA;font-style: italic;"> c++filt</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># → bug_cpp_05_unique_ptr_callback_escape()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># Rust (v0)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">rustfilt</span><span style="color: #A6E3A1;"> &quot;_ZN4core3ptr13drop_in_place17h1234E&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># → core::ptr::drop_in_place&lt;Type&gt;</span></span></code></pre>
+<p>Then <code>grep</code> for the demangled name in your source:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">grep</span><span style="color: #A6E3A1;"> -rn &quot;bug_cpp_05_unique_ptr_callback_escape&quot; src/</span></span></code></pre>
+<p><strong>Step 2: Use debug info for exact line.</strong> If you compiled with <code>-g</code>, the JSON output includes <code>file</code> and <code>line</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">./zig-out/bin/OmniScope</span><span style="color: #A6E3A1;"> target.ll --json</span><span style="color: #94E2D5;"> |</span><span style="color: #89B4FA;font-style: italic;"> jq</span><span style="color: #A6E3A1;"> &#39;.issues[] | {function: .location.function, file: .location.file, line: .location.line}&#39;</span></span></code></pre>
+<p>Without <code>-g</code>, you only get the function name. <strong>Always compile with <code>-g</code> for actionable reports.</strong></p>
+<p><strong>Step 3: Understand the issue type.</strong> Each type points to a specific source pattern:</p>
+<table><thead><tr><th>Issue Type</th><th>What to look for in YOUR code</th></tr></thead><tbody>
+<tr><td><code>memory_leak</code></td><td><code>malloc</code>/<code>new</code>/<code>Box::new</code> without matching <code>free</code>/<code>delete</code>/<code>drop</code></td></tr>
+<tr><td><code>use_after_free</code></td><td>Pointer used after <code>free()</code> or <code>Box::from_raw()</code></td></tr>
+<tr><td><code>double_free</code></td><td>Same pointer freed twice</td></tr>
+<tr><td><code>cross_lang_free_mismatch</code></td><td>Allocated in Rust (<code>Box::into_raw</code>), freed in C (<code>free</code>) — or vice versa</td></tr>
+<tr><td><code>borrow_escape</code></td><td>Stack pointer or <code>&amp;mut</code> passed to FFI function that outlives the scope</td></tr>
+<tr><td><code>tainted_path_to_sink</code></td><td>User input reaches <code>system()</code>/<code>exec()</code>/<code>printf()</code> without validation</td></tr>
+<tr><td><code>null_dereference</code></td><td>Pointer used without null check after <code>malloc</code> or FFI call</td></tr>
+<tr><td><code>buffer_overflow</code></td><td>Array access with unchecked index</td></tr>
+<tr><td><code>ffi_unsafe_call</code></td><td>Calling an FFI function with wrong pointer type or lifetime</td></tr>
+<tr><td><code>format_string</code></td><td>Non-literal format string in <code>printf</code>/<code>sprintf</code></td></tr>
+</tbody></table>
+<p><strong>Step 4: Use <code>--sarif</code> for IDE integration.</strong> SARIF output maps directly to source files and opens in VS Code / GitHub Code Scanning with inline annotations.</p>
+<h4 id="performance-profile">Performance Profile</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>info: Operation                           Calls   Total (ms)     Avg (us)     Max (us)</span></span>
+<span class="giallo-l"><span>info: --------------------------------------------------------------------------------</span></span>
+<span class="giallo-l"><span>info: init                                    1         7.77      7770.96      7770.96</span></span>
+<span class="giallo-l"><span>info: analysis                                1         5.89      5888.63      5888.63</span></span>
+<span class="giallo-l"><span>info: detect                                  2         3.75      1877.17      1909.58</span></span>
+<span class="giallo-l"><span>info: total                                   1         7.78      7775.04      7775.04</span></span></code></pre><table><thead><tr><th>Phase</th><th>What Happens</th></tr></thead><tbody>
+<tr><td><code>init</code></td><td>Load module, initialize data structures</td></tr>
+<tr><td><code>analysis</code></td><td>Main function traversal + ownership tracking</td></tr>
+<tr><td><code>detect</code></td><td>Violation detection (leaks, double-free, UAF)</td></tr>
+<tr><td><code>total</code></td><td>End-to-end wall clock time</td></tr>
+</tbody></table>
+<h4 id="final-summary">Final Summary</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>info: [INFO] Analysis complete</span></span>
+<span class="giallo-l"><span>info: [INFO] Functions processed: 35</span></span>
+<span class="giallo-l"><span>info: [INFO] Facts generated: 54</span></span>
+<span class="giallo-l"><span>info: [INFO] Time: 24ms</span></span>
+<span class="giallo-l"><span>info: [INFO] Issues detected: 25</span></span></code></pre><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>Functions processed</code></td><td>Number of functions analyzed (after zone/noise filtering)</td></tr>
+<tr><td><code>Facts generated</code></td><td>Number of facts emitted to the fact store (alias, taint, ownership)</td></tr>
+<tr><td><code>Time</code></td><td>Total analysis wall clock time</td></tr>
+<tr><td><code>Issues detected</code></td><td>Total issues found (this is what the red team counts)</td></tr>
+</tbody></table>
+<hr />
+<h2 id="part-2-blue-team-false-positive-audit">Part 2: Blue Team — False Positive Audit</h2>
+<h3 id="what-it-does-1">What It Does</h3>
+<p>Runs OmniScope against the <code>corpus/{small,medium,ffi-dense}</code> test files and compares detected issue counts against expected in-scope thresholds. Measures <strong>precision</strong> — whether the tool over-reports.</p>
+<h3 id="run-log-real-output-1">Run Log (Real Output)</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>╔════════════════════════════════════════════════════════════════╗</span></span>
+<span class="giallo-l"><span>║                    BLUE TEAM TEST                             ║</span></span>
+<span class="giallo-l"><span>║  Defensive: false positive audit on corpus                    ║</span></span>
+<span class="giallo-l"><span>╚════════════════════════════════════════════════════════════════╝</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>── small/ (expected ≤13 in-scope issues)</span></span>
+<span class="giallo-l"><span>  ✅ small/:        11 issues (expected ≤13, ok)</span></span>
+<span class="giallo-l"><span>── medium/ (expected ≤20 in-scope issues)</span></span>
+<span class="giallo-l"><span>  ✅ medium/:       16 issues (expected ≤20, ok)</span></span>
+<span class="giallo-l"><span>── ffi-dense/ (expected ≤26 in-scope issues)</span></span>
+<span class="giallo-l"><span>  ✅ ffi-dense/:    28 issues (expected ≤26, OVER)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>────────────────────────────────────────────────────────</span></span>
+<span class="giallo-l"><span>  Blue Team: 2 passed, 1 failed</span></span>
+<span class="giallo-l"><span>  ⚠️  False positive regression detected</span></span></code></pre><h3 id="line-by-line-interpretation-1">Line-by-Line Interpretation</h3>
+<h4 id="directory-header">Directory Header</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>── small/ (expected ≤13 in-scope issues)</span></span></code></pre>
+<p>This tells you which corpus directory is being tested and the expected upper bound. The bounds come from <code>corpus/EXPECTED_RESULTS.md</code>:</p>
+<table><thead><tr><th>Directory</th><th>Expected In-Scope</th><th>Source</th></tr></thead><tbody>
+<tr><td><code>small/</code></td><td>13 issues (4 files × ~3 issues each)</td><td><code>EXPECTED_RESULTS.md:198</code></td></tr>
+<tr><td><code>medium/</code></td><td>20 issues (1 file, 14 in-scope + 6 out-of-scope)</td><td><code>EXPECTED_RESULTS.md:202</code></td></tr>
+<tr><td><code>ffi-dense/</code></td><td>26 issues (4 files, 4+6+6+6 in-scope)</td><td><code>EXPECTED_RESULTS.md:204-207</code></td></tr>
+</tbody></table>
+<h4 id="pass-fail-result">Pass/Fail Result</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>  ✅ small/:        11 issues (expected ≤13, ok)</span></span></code></pre><table><thead><tr><th>Symbol</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>✅</code></td><td>Issue count is within expected bound</td></tr>
+<tr><td><code>❌</code></td><td>Issue count exceeds expected bound (possible false positive regression)</td></tr>
+</tbody></table>
+<p>The threshold has a <strong>margin of ~50%</strong> above expected to account for legitimate detections that may vary across versions. The point is to catch <strong>gross inflation</strong>, not minor fluctuations.</p>
+<h4 id="summary">Summary</h4>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>  Blue Team: 2 passed, 1 failed</span></span>
+<span class="giallo-l"><span>  ⚠️  False positive regression detected</span></span></code></pre>
+<p>If any directory fails, the overall blue team result is a warning. Investigate by running OmniScope on individual files:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">./zig-out/bin/OmniScope</span><span style="color: #A6E3A1;"> corpus/ffi-dense/output/sqlite_binding.ll</span><span style="color: #94E2D5;"> 2&gt;&amp;1</span></span></code></pre>
+<p>Compare the issue list against <code>corpus/EXPECTED_RESULTS.md</code> to identify which issues are real and which are false positives.</p>
+<hr />
+<h2 id="part-3-contributor-reference-omniscope-internals">Part 3: Contributor Reference — OmniScope Internals</h2>
+<blockquote>
+<p><strong>Note</strong>: This section is for OmniScope developers/contributors. If you're a <strong>user</strong> trying to find issues in your own code, see the <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/08-log-read/#vulnerability-lines">Vulnerability Lines</a> section above.</p>
+</blockquote>
+<h3 id="where-each-log-line-originates-omniscope-source">Where Each Log Line Originates (OmniScope Source)</h3>
+<table><thead><tr><th>Log Pattern</th><th>OmniScope Source File</th><th>Function</th></tr></thead><tbody>
+<tr><td><code>=== OmniScope IR Analysis ===</code></td><td><code>src/main.zig</code></td><td><code>runSingleFileAnalysis</code></td></tr>
+<tr><td><code>LANG-DETECT: module language</code></td><td><code>src/semantics/language_detector.zig</code></td><td><code>detectModuleLanguage</code></td></tr>
+<tr><td><code>MallocCheck: Analyzed functions</code></td><td><code>src/pass/analysis/malloc_check.zig</code></td><td><code>run</code></td></tr>
+<tr><td><code>IntegerOverflow: Analyzed functions</code></td><td><code>src/pass/analysis/issue/integer_overflow.zig</code></td><td><code>run</code></td></tr>
+<tr><td><code>CallGraph: extracted N cross-language edges</code></td><td><code>src/pass/analysis/call_graph.zig</code></td><td><code>extractCrossLangEdges</code></td></tr>
+<tr><td><code>DangerSurfacePass: N FFI</code></td><td><code>src/pass/analysis/danger_surface.zig</code></td><td><code>run</code></td></tr>
+<tr><td><code>FFITypeMismatch: analyzed N calls</code></td><td><code>src/pass/analysis/ffi_type_mismatch.zig</code></td><td><code>run</code></td></tr>
+<tr><td><code>PointerOwnership: Source 1</code></td><td><code>src/pass/analysis/pointer_ownership.zig</code></td><td><code>run</code> (line 265)</td></tr>
+<tr><td><code>VULNERABILITY OMI-NNN</code></td><td><code>src/diag/issue.zig</code></td><td><code>Issue.init</code></td></tr>
+<tr><td><code>Issues detected: N</code></td><td><code>src/main.zig</code></td><td><code>emitOutput</code></td></tr>
+<tr><td><code>GlobalAllocTracker: N memory leaks</code></td><td><code>src/semantics/global_alloc_tracker.zig</code></td><td><code>confirmLeaks</code></td></tr>
+</tbody></table>
+<h3 id="issue-type-detection-pass-omniscope-internals">Issue Type → Detection Pass (OmniScope Internals)</h3>
+<table><thead><tr><th>Issue Type</th><th>Detection Pass</th></tr></thead><tbody>
+<tr><td><code>memory_leak</code></td><td><code>pointer_ownership.zig:detectViolations</code></td></tr>
+<tr><td><code>cross_lang_free_mismatch</code></td><td><code>cpp_fp_reduction.zig:detectCrossLangAllocMismatch</code></td></tr>
+<tr><td><code>use_after_free</code></td><td><code>cpp_fp_reduction.zig:detectUseAfterFree</code></td></tr>
+<tr><td><code>double_free</code></td><td><code>cpp_fp_reduction.zig:detectDoubleFree</code></td></tr>
+<tr><td><code>null_dereference</code></td><td><code>pointer_ownership.zig:detectNullDereferences</code></td></tr>
+<tr><td><code>borrow_escape</code></td><td><code>pointer_ownership.zig:detectAsPtrBorrowEscape</code></td></tr>
+<tr><td><code>tainted_path_to_sink</code></td><td><code>taint.zig</code></td></tr>
+<tr><td><code>ffi_unsafe_call</code></td><td><code>ffi_boundary.zig:checkCallForFFI</code></td></tr>
+<tr><td><code>buffer_overflow</code></td><td><code>buffer_overflow.zig</code></td></tr>
+<tr><td><code>integer_overflow</code></td><td><code>issue/integer_overflow.zig</code></td></tr>
+<tr><td><code>format_string</code></td><td><code>format_string.zig</code></td></tr>
+</tbody></table>
+<h3 id="corpus-file-source-code-mapping">Corpus File → Source Code Mapping</h3>
+<table><thead><tr><th>IR File</th><th>Source File</th><th>Bugs Injected</th></tr></thead><tbody>
+<tr><td><code>red_team_bugs_O0.ll</code></td><td><code>red_team_bugs.c</code></td><td>Memory leak, UAF, double-free, null deref, format string</td></tr>
+<tr><td><code>ffi_boundary_bugs.ll</code></td><td><code>ffi_boundary_bugs.c</code></td><td>FFI boundary violations, stack escape</td></tr>
+<tr><td><code>cross_lang_free_bugs.ll</code></td><td><code>cross_lang_free_bugs.c</code></td><td>Rust→C, C→C++ free mismatches</td></tr>
+<tr><td><code>subtle_ffi_bugs.ll</code></td><td><code>subtle_ffi_bugs.c</code></td><td>Subtle FFI patterns (realloc, partial cleanup)</td></tr>
+<tr><td><code>python_c_api_bugs.ll</code></td><td><code>python_c_api_bugs.c</code></td><td>Python C API misuse (Py_DECREF, refcount)</td></tr>
+<tr><td><code>posix_ffi_bugs.ll</code></td><td><code>posix_ffi_bugs.c</code></td><td>POSIX API misuse (FILE*, fd leak)</td></tr>
+<tr><td><code>cpp_ffi_simple.ll</code></td><td><code>cpp_ffi_simple.cpp</code></td><td>C++ new/delete mismatch, RAII escape</td></tr>
+<tr><td><code>boundary_test.ll</code></td><td><code>boundary_test.c</code></td><td>Null deref at FFI boundary, circular ownership</td></tr>
+<tr><td><code>stress_patterns.ll</code></td><td><code>stress_patterns.c</code></td><td>70 bugs: alloc leaks, cross-lang mismatches, chains</td></tr>
+<tr><td><code>sqlite_binding.ll</code></td><td><code>sqlite_binding.c</code></td><td>SQLite resource leaks, dangling pointers</td></tr>
+<tr><td><code>openssl_wrapper.ll</code></td><td><code>openssl_wrapper.c</code></td><td>OpenSSL ctx/bio/key leaks</td></tr>
+<tr><td><code>zlib_binding.ll</code></td><td><code>zlib_binding.c</code></td><td>zlib stream leaks, double-free, UAF</td></tr>
+</tbody></table>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/OmniScope/07-output-and-integration/">
+                                <span class="button__text">Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

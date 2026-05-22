@@ -4700,4 +4700,320 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 </content>
         
     </entry>
+    <entry xml:lang="en">
+        <title>Red&#x2F;Blue Team Testing Guide</title>
+        <published>2025-03-01T00:00:00+00:00</published>
+        <updated>2025-03-01T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/OmniScope/08-log-read/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/OmniScope/08-log-read/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/OmniScope/08-log-read/">&lt;h1 id=&quot;red-blue-team-testing-guide&quot;&gt;Red&#x2F;Blue Team Testing Guide&lt;&#x2F;h1&gt;
+&lt;p&gt;&lt;strong&gt;Version&lt;&#x2F;strong&gt;: v0.1.9
+&lt;strong&gt;Purpose&lt;&#x2F;strong&gt;: Validate OmniScope&#x27;s detection rate (red team) and false positive rate (blue team) against the &lt;code&gt;corpus&#x2F;&lt;&#x2F;code&gt; test suite.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;quick-start&quot;&gt;Quick Start&lt;&#x2F;h2&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;make&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; red-team&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;       # Adversarial: does the tool detect known bugs?&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;make&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; blue-team&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;      # Defensive: does the tool avoid false alarms?&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;make&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; corpus-test&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;    # Run both&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;part-1-red-team-adversarial-detection-test&quot;&gt;Part 1: Red Team — Adversarial Detection Test&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;what-it-does&quot;&gt;What It Does&lt;&#x2F;h3&gt;
+&lt;p&gt;Runs OmniScope against crafted test files in &lt;code&gt;corpus&#x2F;red_team_test&#x2F;&lt;&#x2F;code&gt; that contain &lt;strong&gt;known bugs&lt;&#x2F;strong&gt; (memory leaks, double frees, use-after-free, FFI boundary violations). Measures &lt;strong&gt;recall&lt;&#x2F;strong&gt; — how many injected bugs the tool actually catches.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;run-log-real-output&quot;&gt;Run Log (Real Output)&lt;&#x2F;h3&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;╔════════════════════════════════════════════════════════════════╗&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;║                    RED TEAM TEST                              ║&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;║  Adversarial: detect known bugs in crafted test cases         ║&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;╚════════════════════════════════════════════════════════════════╝&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ red_team_bugs.ll                         25 issues&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ ffi_boundary_bugs.ll                     18 issues&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ cross_lang_free_bugs.ll                  12 issues&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ cross_lang_free_complete.ll              15 issues&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ subtle_ffi_bugs.ll                        8 issues&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ python_c_api_bugs.ll                     10 issues&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ posix_ffi_bugs.ll                         6 issues&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;────────────────────────────────────────────────────────&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Red Team: 7 files, 94 total issues detected&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ Detection threshold met&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h3 id=&quot;line-by-line-interpretation&quot;&gt;Line-by-Line Interpretation&lt;&#x2F;h3&gt;
+&lt;h4 id=&quot;header&quot;&gt;Header&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;╔════════════════════════════════════════════════════════════════╗&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;║                    RED TEAM TEST                              ║&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;╚════════════════════════════════════════════════════════════════╝&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This is the test banner. The Makefile target &lt;code&gt;red-team&lt;&#x2F;code&gt; (defined in &lt;code&gt;Makefile:640&lt;&#x2F;code&gt;) triggers &lt;code&gt;build&lt;&#x2F;code&gt; first, then iterates over &lt;code&gt;RED_IR_FILES&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;per-file-result&quot;&gt;Per-File Result&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ red_team_bugs.ll                         25 issues&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Field&lt;&#x2F;th&gt;&lt;th&gt;Meaning&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;✅&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;File produced ≥1 issue (pass)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;❌&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;File produced 0 issues (miss — potential regression)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;red_team_bugs.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Test file name&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;25 issues&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Total issues detected by OmniScope&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;How to locate the source&lt;&#x2F;strong&gt;: Each &lt;code&gt;.ll&lt;&#x2F;code&gt; file is compiled from a &lt;code&gt;.c&lt;&#x2F;code&gt; file in the same directory. For example:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;corpus&#x2F;red_team_test&#x2F;red_team_bugs.c      ← Source code with injected bugs&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;corpus&#x2F;red_team_test&#x2F;red_team_bugs.ll     ← Compiled LLVM IR (what OmniScope analyzes)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h4 id=&quot;summary-line&quot;&gt;Summary Line&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Red Team: 7 files, 94 total issues detected&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;7 files&lt;&#x2F;code&gt; — how many &lt;code&gt;.ll&lt;&#x2F;code&gt; files existed and were analyzed&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;94 total issues&lt;&#x2F;code&gt; — sum of all issues across all files&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h4 id=&quot;threshold-check&quot;&gt;Threshold Check&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ Detection threshold met&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;If &lt;code&gt;total_issues &amp;lt; 10&lt;&#x2F;code&gt;, the test reports &lt;code&gt;⚠️ LOW detection count — investigate regressions&lt;&#x2F;code&gt;. This is a coarse sanity check, not a precise benchmark. For precise detection rates, use &lt;code&gt;make benchmark&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;drilling-into-a-single-file&quot;&gt;Drilling Into a Single File&lt;&#x2F;h3&gt;
+&lt;p&gt;To see the full OmniScope output for one test file:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;.&#x2F;zig-out&#x2F;bin&#x2F;OmniScope&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; corpus&#x2F;red_team_test&#x2F;red_team_bugs_O0.ll&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; 2&amp;gt;&amp;amp;1&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h4 id=&quot;startup-phase&quot;&gt;Startup Phase&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] === OmniScope IR Analysis ===&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] File: corpus&#x2F;red_team_test&#x2F;red_team_bugs_O0.ll&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] Loaded: 35 functions&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Line&lt;&#x2F;th&gt;&lt;th&gt;What It Means&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;=== OmniScope IR Analysis ===&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Analysis session started&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;File: ...&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Input LLVM IR file path&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Loaded: 35 functions&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Number of functions parsed from the IR&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;h4 id=&quot;language-detection&quot;&gt;Language Detection&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] LANG-DETECT: module language = c, confidence = 100.0%, method = sampling&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Field&lt;&#x2F;th&gt;&lt;th&gt;Meaning&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;module language = c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Dominant language in the module&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;confidence = 100.0%&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;How certain (sampling counts function name patterns)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;method = sampling&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;sampling&lt;&#x2F;code&gt; = statistical; &lt;code&gt;personality&lt;&#x2F;code&gt; = DWARF debug info&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;The &lt;code&gt;sampling&lt;&#x2F;code&gt; method iterates all function names and counts language-specific patterns (&lt;code&gt;_ZN&lt;&#x2F;code&gt; for C++&#x2F;Rust, &lt;code&gt;_R&lt;&#x2F;code&gt; for Rust v0, &lt;code&gt;Go.&lt;&#x2F;code&gt; for Go, etc.).&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;pre-pass-scanners&quot;&gt;Pre-Pass Scanners&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] MallocCheck: Analyzed functions, found 9 unchecked allocations&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] IntegerOverflow: Analyzed functions, found 0 potential overflows&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] BufferOverflow: No buffer overflow issues detected&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] ReturnCheck: Analyzed functions, found 1 unchecked return values&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] RustFfiFilter: analyzed 17 funcs, 0 findings (0 stack escapes)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Scanner&lt;&#x2F;th&gt;&lt;th&gt;What It Checks&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;MallocCheck&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;malloc()&lt;&#x2F;code&gt; return value not null-checked&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;IntegerOverflow&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Arithmetic ops that may overflow&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;BufferOverflow&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Array index out of bounds&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;ReturnCheck&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Return values of FFI calls not checked&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;RustFfiFilter&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Rust functions without FFI relevance (skipped)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;h4 id=&quot;cross-language-edge-extraction&quot;&gt;Cross-Language Edge Extraction&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] CallGraph: extracted 15 cross-language edges&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] CallGraph: built semantics CallGraph with 35 nodes, 63 edges for BFS traversal&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Field&lt;&#x2F;th&gt;&lt;th&gt;Meaning&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;15 cross-language edges&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Calls where caller and callee are in different languages&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;35 nodes, 63 edges&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Call graph size for BFS reachability analysis&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;Each edge records &lt;code&gt;(caller_name, callee_name, caller_lang, callee_lang)&lt;&#x2F;code&gt;. An edge is &quot;cross-language&quot; when &lt;code&gt;caller_lang != callee_lang&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;danger-surface-pass&quot;&gt;Danger Surface Pass&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] [P1-1] DangerSurfacePass: 15 FFI, 0 allocs, 0 funcs | Phase1=0ms (args=0 rets=0 alias_traces=0) Phase2=0ms (cross_lang_free=0)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Field&lt;&#x2F;th&gt;&lt;th&gt;Meaning&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;15 FFI&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Number of FFI boundary nodes in MemoryGraph&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Phase1&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Time spent tracing call args&#x2F;rets through FFI boundaries&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Phase2&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Time spent scanning for cross-language free violations&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;cross_lang_free=0&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Cross-language alloc&#x2F;free mismatches found&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;h4 id=&quot;pointer-ownership-analysis&quot;&gt;Pointer Ownership Analysis&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] PointerOwnership: Source 1 (MemoryGraph) — 59 unfreed + 23 freed = 82 total nodes&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] PointerOwnership: Source 2 (GlobalAllocTracker) — 9 records, 0 freed&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] PointerOwnership: Source 3 (IR scan) added 32 frees — total now 32&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] PointerOwnership: Pre-populated from MemoryGraph + GlobalAllocTracker + IR-scan — 59 allocs, 32 frees&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This is the &lt;strong&gt;three-source data fusion&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Source&lt;&#x2F;th&gt;&lt;th&gt;What It Provides&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;Source 1: MemoryGraph&lt;&#x2F;td&gt;&lt;td&gt;Allocation sites + freed status from upstream passes&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Source 2: GlobalAllocTracker&lt;&#x2F;td&gt;&lt;td&gt;Supplementary free tracking&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Source 3: IR scan&lt;&#x2F;td&gt;&lt;td&gt;Direct LLVM IR scan for &lt;code&gt;free&lt;&#x2F;code&gt;&#x2F;&lt;code&gt;dealloc&lt;&#x2F;code&gt; call instructions (fallback)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;How to interpret&lt;&#x2F;strong&gt;: &lt;code&gt;59 unfreed&lt;&#x2F;code&gt; means 59 allocations were not matched with a corresponding free. These are potential memory leaks. The tool then applies filters (RAII, Meyers singleton, ref-counted containers) to reduce false positives.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;vulnerability-lines&quot;&gt;Vulnerability Lines&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [ERROR] VULNERABILITY OMI-001 [medium] [Confidence: MEDIUM]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [ERROR] Type: tainted_path_to_sink&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [ERROR] Reason: Untrusted data flows to sensitive sink without validation&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [ERROR] Path:&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [ERROR]   [Sink] printf()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [ERROR]   [Source] main() - initial taint source&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Field&lt;&#x2F;th&gt;&lt;th&gt;Meaning&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;OMI-001&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Auto-incremented issue ID (unique per analysis run)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;[medium]&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Severity: &lt;code&gt;critical&lt;&#x2F;code&gt; &amp;gt; &lt;code&gt;high&lt;&#x2F;code&gt; &amp;gt; &lt;code&gt;medium&lt;&#x2F;code&gt; &amp;gt; &lt;code&gt;low&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;[Confidence: MEDIUM]&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;HIGH&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;MEDIUM&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;LOW&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Type: tainted_path_to_sink&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Issue category (20+ types)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Reason:&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Human-readable explanation of the problem&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Path:&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Data flow path from source to sink&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;How to locate the problem in YOUR code&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;Step 1: Identify the function.&lt;&#x2F;strong&gt; The output always includes a function name (mangled). For example:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [ERROR]   in _Z37bug_cpp_05_unique_ptr_callback_escapev&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Demangle it:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;# C++ (Itanium ABI)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #F38BA8;font-style: italic;&quot;&gt;echo&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; &amp;quot;_Z37bug_cpp_05_unique_ptr_callback_escapev&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; |&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; c++filt&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;# → bug_cpp_05_unique_ptr_callback_escape()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;# Rust (v0)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;rustfilt&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; &amp;quot;_ZN4core3ptr13drop_in_place17h1234E&amp;quot;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;# → core::ptr::drop_in_place&amp;lt;Type&amp;gt;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Then &lt;code&gt;grep&lt;&#x2F;code&gt; for the demangled name in your source:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;grep&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; -rn &amp;quot;bug_cpp_05_unique_ptr_callback_escape&amp;quot; src&#x2F;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;strong&gt;Step 2: Use debug info for exact line.&lt;&#x2F;strong&gt; If you compiled with &lt;code&gt;-g&lt;&#x2F;code&gt;, the JSON output includes &lt;code&gt;file&lt;&#x2F;code&gt; and &lt;code&gt;line&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;.&#x2F;zig-out&#x2F;bin&#x2F;OmniScope&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; target.ll --json&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; |&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; jq&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; &amp;#39;.issues[] | {function: .location.function, file: .location.file, line: .location.line}&amp;#39;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Without &lt;code&gt;-g&lt;&#x2F;code&gt;, you only get the function name. &lt;strong&gt;Always compile with &lt;code&gt;-g&lt;&#x2F;code&gt; for actionable reports.&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;Step 3: Understand the issue type.&lt;&#x2F;strong&gt; Each type points to a specific source pattern:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Issue Type&lt;&#x2F;th&gt;&lt;th&gt;What to look for in YOUR code&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;memory_leak&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;malloc&lt;&#x2F;code&gt;&#x2F;&lt;code&gt;new&lt;&#x2F;code&gt;&#x2F;&lt;code&gt;Box::new&lt;&#x2F;code&gt; without matching &lt;code&gt;free&lt;&#x2F;code&gt;&#x2F;&lt;code&gt;delete&lt;&#x2F;code&gt;&#x2F;&lt;code&gt;drop&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;use_after_free&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Pointer used after &lt;code&gt;free()&lt;&#x2F;code&gt; or &lt;code&gt;Box::from_raw()&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;double_free&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Same pointer freed twice&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;cross_lang_free_mismatch&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Allocated in Rust (&lt;code&gt;Box::into_raw&lt;&#x2F;code&gt;), freed in C (&lt;code&gt;free&lt;&#x2F;code&gt;) — or vice versa&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;borrow_escape&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Stack pointer or &lt;code&gt;&amp;amp;mut&lt;&#x2F;code&gt; passed to FFI function that outlives the scope&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;tainted_path_to_sink&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;User input reaches &lt;code&gt;system()&lt;&#x2F;code&gt;&#x2F;&lt;code&gt;exec()&lt;&#x2F;code&gt;&#x2F;&lt;code&gt;printf()&lt;&#x2F;code&gt; without validation&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;null_dereference&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Pointer used without null check after &lt;code&gt;malloc&lt;&#x2F;code&gt; or FFI call&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;buffer_overflow&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Array access with unchecked index&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;ffi_unsafe_call&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Calling an FFI function with wrong pointer type or lifetime&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;format_string&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Non-literal format string in &lt;code&gt;printf&lt;&#x2F;code&gt;&#x2F;&lt;code&gt;sprintf&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;Step 4: Use &lt;code&gt;--sarif&lt;&#x2F;code&gt; for IDE integration.&lt;&#x2F;strong&gt; SARIF output maps directly to source files and opens in VS Code &#x2F; GitHub Code Scanning with inline annotations.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;performance-profile&quot;&gt;Performance Profile&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: Operation                           Calls   Total (ms)     Avg (us)     Max (us)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: --------------------------------------------------------------------------------&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: init                                    1         7.77      7770.96      7770.96&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: analysis                                1         5.89      5888.63      5888.63&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: detect                                  2         3.75      1877.17      1909.58&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: total                                   1         7.78      7775.04      7775.04&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Phase&lt;&#x2F;th&gt;&lt;th&gt;What Happens&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;init&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Load module, initialize data structures&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;analysis&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Main function traversal + ownership tracking&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;detect&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Violation detection (leaks, double-free, UAF)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;total&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;End-to-end wall clock time&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;h4 id=&quot;final-summary&quot;&gt;Final Summary&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] Analysis complete&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] Functions processed: 35&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] Facts generated: 54&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] Time: 24ms&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;info: [INFO] Issues detected: 25&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Field&lt;&#x2F;th&gt;&lt;th&gt;Meaning&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Functions processed&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Number of functions analyzed (after zone&#x2F;noise filtering)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Facts generated&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Number of facts emitted to the fact store (alias, taint, ownership)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Time&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Total analysis wall clock time&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Issues detected&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Total issues found (this is what the red team counts)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;part-2-blue-team-false-positive-audit&quot;&gt;Part 2: Blue Team — False Positive Audit&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;what-it-does-1&quot;&gt;What It Does&lt;&#x2F;h3&gt;
+&lt;p&gt;Runs OmniScope against the &lt;code&gt;corpus&#x2F;{small,medium,ffi-dense}&lt;&#x2F;code&gt; test files and compares detected issue counts against expected in-scope thresholds. Measures &lt;strong&gt;precision&lt;&#x2F;strong&gt; — whether the tool over-reports.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;run-log-real-output-1&quot;&gt;Run Log (Real Output)&lt;&#x2F;h3&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;╔════════════════════════════════════════════════════════════════╗&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;║                    BLUE TEAM TEST                             ║&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;║  Defensive: false positive audit on corpus                    ║&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;╚════════════════════════════════════════════════════════════════╝&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;── small&#x2F; (expected ≤13 in-scope issues)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ small&#x2F;:        11 issues (expected ≤13, ok)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;── medium&#x2F; (expected ≤20 in-scope issues)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ medium&#x2F;:       16 issues (expected ≤20, ok)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;── ffi-dense&#x2F; (expected ≤26 in-scope issues)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ ffi-dense&#x2F;:    28 issues (expected ≤26, OVER)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;────────────────────────────────────────────────────────&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Blue Team: 2 passed, 1 failed&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ⚠️  False positive regression detected&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h3 id=&quot;line-by-line-interpretation-1&quot;&gt;Line-by-Line Interpretation&lt;&#x2F;h3&gt;
+&lt;h4 id=&quot;directory-header&quot;&gt;Directory Header&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;── small&#x2F; (expected ≤13 in-scope issues)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This tells you which corpus directory is being tested and the expected upper bound. The bounds come from &lt;code&gt;corpus&#x2F;EXPECTED_RESULTS.md&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Directory&lt;&#x2F;th&gt;&lt;th&gt;Expected In-Scope&lt;&#x2F;th&gt;&lt;th&gt;Source&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;small&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;13 issues (4 files × ~3 issues each)&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;EXPECTED_RESULTS.md:198&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;medium&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;20 issues (1 file, 14 in-scope + 6 out-of-scope)&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;EXPECTED_RESULTS.md:202&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;ffi-dense&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;26 issues (4 files, 4+6+6+6 in-scope)&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;EXPECTED_RESULTS.md:204-207&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;h4 id=&quot;pass-fail-result&quot;&gt;Pass&#x2F;Fail Result&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ✅ small&#x2F;:        11 issues (expected ≤13, ok)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Symbol&lt;&#x2F;th&gt;&lt;th&gt;Meaning&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;✅&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Issue count is within expected bound&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;❌&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Issue count exceeds expected bound (possible false positive regression)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;The threshold has a &lt;strong&gt;margin of ~50%&lt;&#x2F;strong&gt; above expected to account for legitimate detections that may vary across versions. The point is to catch &lt;strong&gt;gross inflation&lt;&#x2F;strong&gt;, not minor fluctuations.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;summary&quot;&gt;Summary&lt;&#x2F;h4&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Blue Team: 2 passed, 1 failed&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  ⚠️  False positive regression detected&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;If any directory fails, the overall blue team result is a warning. Investigate by running OmniScope on individual files:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;.&#x2F;zig-out&#x2F;bin&#x2F;OmniScope&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; corpus&#x2F;ffi-dense&#x2F;output&#x2F;sqlite_binding.ll&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; 2&amp;gt;&amp;amp;1&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Compare the issue list against &lt;code&gt;corpus&#x2F;EXPECTED_RESULTS.md&lt;&#x2F;code&gt; to identify which issues are real and which are false positives.&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;part-3-contributor-reference-omniscope-internals&quot;&gt;Part 3: Contributor Reference — OmniScope Internals&lt;&#x2F;h2&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Note&lt;&#x2F;strong&gt;: This section is for OmniScope developers&#x2F;contributors. If you&#x27;re a &lt;strong&gt;user&lt;&#x2F;strong&gt; trying to find issues in your own code, see the &lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;OmniScope&#x2F;08-log-read&#x2F;#vulnerability-lines&quot;&gt;Vulnerability Lines&lt;&#x2F;a&gt; section above.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h3 id=&quot;where-each-log-line-originates-omniscope-source&quot;&gt;Where Each Log Line Originates (OmniScope Source)&lt;&#x2F;h3&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Log Pattern&lt;&#x2F;th&gt;&lt;th&gt;OmniScope Source File&lt;&#x2F;th&gt;&lt;th&gt;Function&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;=== OmniScope IR Analysis ===&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;main.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;runSingleFileAnalysis&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;LANG-DETECT: module language&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;semantics&#x2F;language_detector.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;detectModuleLanguage&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;MallocCheck: Analyzed functions&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;malloc_check.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;run&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;IntegerOverflow: Analyzed functions&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;issue&#x2F;integer_overflow.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;run&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;CallGraph: extracted N cross-language edges&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;call_graph.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;extractCrossLangEdges&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;DangerSurfacePass: N FFI&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;danger_surface.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;run&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;FFITypeMismatch: analyzed N calls&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;ffi_type_mismatch.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;run&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;PointerOwnership: Source 1&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;pointer_ownership.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;run&lt;&#x2F;code&gt; (line 265)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;VULNERABILITY OMI-NNN&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;diag&#x2F;issue.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;Issue.init&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;Issues detected: N&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;main.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;emitOutput&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;GlobalAllocTracker: N memory leaks&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;src&#x2F;semantics&#x2F;global_alloc_tracker.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;confirmLeaks&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;h3 id=&quot;issue-type-detection-pass-omniscope-internals&quot;&gt;Issue Type → Detection Pass (OmniScope Internals)&lt;&#x2F;h3&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Issue Type&lt;&#x2F;th&gt;&lt;th&gt;Detection Pass&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;memory_leak&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;pointer_ownership.zig:detectViolations&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;cross_lang_free_mismatch&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;cpp_fp_reduction.zig:detectCrossLangAllocMismatch&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;use_after_free&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;cpp_fp_reduction.zig:detectUseAfterFree&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;double_free&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;cpp_fp_reduction.zig:detectDoubleFree&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;null_dereference&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;pointer_ownership.zig:detectNullDereferences&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;borrow_escape&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;pointer_ownership.zig:detectAsPtrBorrowEscape&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;tainted_path_to_sink&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;taint.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;ffi_unsafe_call&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;ffi_boundary.zig:checkCallForFFI&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;buffer_overflow&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;buffer_overflow.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;integer_overflow&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;issue&#x2F;integer_overflow.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;format_string&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;format_string.zig&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;h3 id=&quot;corpus-file-source-code-mapping&quot;&gt;Corpus File → Source Code Mapping&lt;&#x2F;h3&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;IR File&lt;&#x2F;th&gt;&lt;th&gt;Source File&lt;&#x2F;th&gt;&lt;th&gt;Bugs Injected&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;red_team_bugs_O0.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;red_team_bugs.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Memory leak, UAF, double-free, null deref, format string&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;ffi_boundary_bugs.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;ffi_boundary_bugs.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;FFI boundary violations, stack escape&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;cross_lang_free_bugs.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;cross_lang_free_bugs.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Rust→C, C→C++ free mismatches&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;subtle_ffi_bugs.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;subtle_ffi_bugs.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Subtle FFI patterns (realloc, partial cleanup)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;python_c_api_bugs.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;python_c_api_bugs.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Python C API misuse (Py_DECREF, refcount)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;posix_ffi_bugs.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;posix_ffi_bugs.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;POSIX API misuse (FILE*, fd leak)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;cpp_ffi_simple.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;cpp_ffi_simple.cpp&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;C++ new&#x2F;delete mismatch, RAII escape&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;boundary_test.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;boundary_test.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Null deref at FFI boundary, circular ownership&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;stress_patterns.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;stress_patterns.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;70 bugs: alloc leaks, cross-lang mismatches, chains&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;sqlite_binding.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;sqlite_binding.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;SQLite resource leaks, dangling pointers&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;openssl_wrapper.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;openssl_wrapper.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;OpenSSL ctx&#x2F;bio&#x2F;key leaks&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;zlib_binding.ll&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;zlib_binding.c&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;zlib stream leaks, double-free, UAF&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>OmniScope Design Concept</title>
+        <published>2025-01-01T00:00:00+00:00</published>
+        <updated>2025-01-01T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/OmniScope/000-design/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/OmniScope/000-design/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/OmniScope/000-design/">&lt;h1 id=&quot;omniscope-design-concept&quot;&gt;OmniScope Design Concept&lt;&#x2F;h1&gt;
+&lt;p&gt;Hi, previously, I only gave a brief overview of this project. Now, I&#x27;ll break down the architecture and share my design insights.&lt;&#x2F;p&gt;
+&lt;p&gt;This project aims to solve memory leak issues in cross-language calls. Unlike general-purpose security detection tools, my design focuses 90% of my effort on analyzing unsafe&#x2F;ffi code, and only 10% (and perhaps even less) on general security detection.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;why-zig&quot;&gt;Why zig?&lt;&#x2F;h2&gt;
+&lt;p&gt;Initially, I didn&#x27;t know what to do, choosing between Rust and C++. However, Rust&#x27;s compilation speed was too slow, and although it has an excellent memory management model, analyzing unsafe code might require a lot of unsafe code, which deterred me. As for C++, I&#x27;m sorry, I&#x27;m not very good at it. So I switched to Zig, and this was my first attempt at creating a small tool using Zig.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;why-ir&quot;&gt;Why IR?&lt;&#x2F;h2&gt;
+&lt;p&gt;I&#x27;ve been thinking that many FIF implementations aren&#x27;t limited to Rust ←-&amp;gt; C, but also include C ←&amp;gt; C++, and Go ← → C. If I were to adapt for each language, it would be a catastrophic workload. So, I realized that the commonality among these languages is that they all use LLVM as their compiler backend. Therefore, I started researching (yes, I&#x27;m not a very competent developer; I don&#x27;t even understand compilers very well). I dissected the compiler and realized that the Instructions Repository (IR) contains a large amount of information about the program; this might be my breakthrough point.&lt;&#x2F;p&gt;
+&lt;p&gt;Then I started designing the architecture. Besides researching on my own, I consulted senior development engineers and various AIs (GPT, CC). I started by creating a simple demo, for example, zig ←-&amp;gt; C. So I looked at the zig source code to find out how zig and C interact… and did all sorts of other work, also taking various compiler notes (but that&#x27;s another story). Then the first version of the code was runnable. I also designed various bugs in the project, namely red team vs. blue team battles, to test the TP and FP of this demo. The first run results were pretty good, at least not too bad, which was a good start for me.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;how-to-abstract&quot;&gt;How to abstract?&lt;&#x2F;h2&gt;
+&lt;p&gt;After successfully running the Zig←-&amp;gt;C demo, my confidence soared, and I switched to Rust←-&amp;gt;C. Little did I know this would be the beginning of a nightmare. The Rust compiler generated a massive amount of intermediate results, storing them all in the Instructions Redirect (IR). The project&#x27;s TP remained consistently low, below 20%, and I even considered giving up at one point.&lt;&#x2F;p&gt;
+&lt;p&gt;For a long time afterward, I didn&#x27;t want to touch this project until I thought of something: since so many intermediate products are generated, why don&#x27;t I just ignore them, assume they are trustworthy, and only analyze the content in the user-defined program?&lt;&#x2F;p&gt;
+&lt;p&gt;Then, I excitedly opened the Rust source code and, with the help of AI, read the Rust compiler source code. The goal was to find what the compiler produced, and use that as a safe zone (this is how Java, Python, etc., were designed later).&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;why-memory-diagram&quot;&gt;Why Memory diagram?&lt;&#x2F;h2&gt;
+&lt;p&gt;With this idea in mind, I started working on the project. Zone filtering was successful, but the TP (True Positive Rate) was still low. After analysis, I realized the issue was with the program&#x27;s context awareness. I consulted the AI, which suggested adding a whitelist, a suggestion I initially agreed to. However, after implementing it, I discovered that maintaining a very large whitelist was necessary, which wasn&#x27;t what I wanted. So I went back to my previous notes…&lt;&#x2F;p&gt;
+&lt;p&gt;Since there&#x27;s a deficiency in context awareness, I might as well build a memory graph and a call graph during IR scanning, recording the complete call stack, and then analyze the graph. I&#x27;ll only focus on the FHI part; I don&#x27;t care about the other parts.&lt;&#x2F;p&gt;
+&lt;p&gt;I got right to it, and the results were surprisingly good. My confidence soared, and I started challenging existing open-source projects, relentlessly adding various red team and blue team tests.&lt;&#x2F;p&gt;
+&lt;p&gt;From the initial sqlite3 to various Rust-based cryptographic libraries and game libraries, all the actual analysis data is documented in the project documentation.&lt;&#x2F;p&gt;
+&lt;p&gt;When memory-safe languages meet legacy C code, the safety net usually tears at the FFI boundary. OmniScope is built to continuous-stitch this gap.&lt;&#x2F;p&gt;
+&lt;p&gt;This is the entire development process of the project. I hope this tool can be helpful to you. It may not be perfect, but your feedback is appreciated. Thank you.&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
 </feed>
