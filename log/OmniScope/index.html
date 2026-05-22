@@ -5,13 +5,19 @@
     <title>Timwood0x10</title>
     
     <meta http-equiv="content-type" content="text/html; charset=utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
     <meta name="robots" content="noodp"/>
 
+    
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
 
     <meta name="description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
 
@@ -27,11 +33,10 @@
     <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/OmniScope/">
 
                 <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
-                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" />
-    </head>
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
 
 <body class="">
-<div class="container">
+<div class="container ">
     
     <header class="header">
         <div class="header__inner">
@@ -40,8 +45,15 @@
                 <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
                     <div class="logo">
                       
-                            Timwood0x10
                         
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
                     </div>
                 </a>
             </div>
@@ -50,7 +62,7 @@
         
         <nav class="menu">
             <ul class="menu__inner">
-                <li><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs">Log</a></li>
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
             
                 <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
             
@@ -146,7 +158,7 @@
 <span class="giallo-l"><span>  └─ DangerSurfacePass.run</span></span>
 <span class="giallo-l"><span>pass/analysis/rust_ffi_auditor.zig</span></span>
 <span class="giallo-l"><span>  └─ auditFunction / Rust-specific rules / universal FFI rules</span></span></code></pre>
-<p>The real architecture is not just “uses LLVM IR”. It is the way OmniScope turns low-level IR facts into three reusable semantic layers: <code>PassContext</code>, <code>MemoryGraph</code>, and <code>DangerSurface</code>.</p>
+<p>The real architecture is not just "uses LLVM IR". It is the way OmniScope turns low-level IR facts into three reusable semantic layers: <code>PassContext</code>, <code>MemoryGraph</code>, and <code>DangerSurface</code>.</p>
 
         </div>
 
@@ -276,8 +288,8 @@
 <span class="giallo-l"><span>  -&gt; danger path / ownership mismatch / borrow escape / issue</span></span></code></pre>
 <p>This is a pragmatic static analysis design. It does not aim for formal proof; it aims to extract high-value signals reliably from real-world IR. That is why the code keeps <code>confidence</code>, <code>reason</code>, and <code>classification</code> fields. They are not UI decoration. They acknowledge that analysis facts have different strengths.</p>
 <h2 id="the-line-between-omniscope-and-blacklist-scanners">The line between OmniScope and blacklist scanners</h2>
-<p>A blacklist scanner can only say “this dangerous API appears”. OmniScope asks a narrower question: does this pointer cross an FFI boundary, come from unsafe code, violate ownership across languages, or flow through alias paths to a boundary?</p>
-<p>That is why <code>MemoryGraph.isOnDangerPath</code> becomes the core question in later articles. It changes the unit of analysis from “dangerous function present” to “pointer on a dangerous path”. That is the fundamental difference between OmniScope and a rule list.</p>
+<p>A blacklist scanner can only say "this dangerous API appears". OmniScope asks a narrower question: does this pointer cross an FFI boundary, come from unsafe code, violate ownership across languages, or flow through alias paths to a boundary?</p>
+<p>That is why <code>MemoryGraph.isOnDangerPath</code> becomes the core question in later articles. It changes the unit of analysis from "dangerous function present" to "pointer on a dangerous path". That is the fundamental difference between OmniScope and a rule list.</p>
 
         </div>
 
@@ -414,7 +426,7 @@
 <span class="giallo-l"><span>        }</span></span>
 <span class="giallo-l"><span>    }</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
-<p>This is more than a micro-optimization. Without this index, every pass that asks “where is this external function called?” would need to rescan functions, basic blocks, and instructions. With <code>CallSiteIndex</code>, call-site lookup becomes a shared context query used by FFI boundary detection, danger-surface tracing, and report evidence.</p>
+<p>This is more than a micro-optimization. Without this index, every pass that asks "where is this external function called?" would need to rescan functions, basic blocks, and instructions. With <code>CallSiteIndex</code>, call-site lookup becomes a shared context query used by FFI boundary detection, danger-surface tracing, and report evidence.</p>
 <h2 id="pipeline-also-owns-post-pass-reduction">Pipeline also owns post-pass reduction</h2>
 <p>After <code>PassManager.run</code>, the pipeline scans <code>GlobalAllocTracker</code> for unfreed allocations and calls <code>ctx.isOnDangerPathFull(rec.ptr_id)</code>. If a leaked pointer reaches an FFI path, severity and confidence are promoted.</p>
 <p>This shows that Pipeline is not just a container for passes. It also performs final reduction over facts that only become meaningful after all passes have contributed:</p>
@@ -606,7 +618,7 @@
 <p>A static analyzer without semantic layers can easily become a dangerous-function list. OmniScope separates region classification from function semantics before deciding whether a path should be analyzed in depth.</p>
 <h2 id="start-with-the-problem-the-same-function-name-means-different-things-in-context">Start with the problem: the same function name means different things in context</h2>
 <p>Reporting whenever <code>free</code>, <code>strcpy</code>, or <code>dlopen</code> appears is simple, but it becomes noisy in cross-language auditing. An allocator inside runtime glue may be expected; the same allocator in a user-written FFI wrapper may indicate ownership crossing a language boundary.</p>
-<p>The question is not only “is this function dangerous?” It is also: which code region is it in, runtime/internal or user boundary code? Does the function represent allocation, deallocation, borrow escape, or ordinary library behavior in an FFI context?</p>
+<p>The question is not only "is this function dangerous?" It is also: which code region is it in, runtime/internal or user boundary code? Does the function represent allocation, deallocation, borrow escape, or ordinary library behavior in an FFI context?</p>
 <h2 id="omniscope-s-entry-point-zone-answers-where-registry-answers-what">OmniScope’s entry point: Zone answers where, Registry answers what</h2>
 <p><code>ZoneClassifier</code> classifies the region first. <code>SemanticRegistry</code> then explains function meaning in cross-language context. Together they provide context to later danger-path checks: the same call can receive different priority depending on its zone and semantic kind.</p>
 <h2 id="zonekind-classifies-code-by-risk-region">ZoneKind classifies code by risk region</h2>
@@ -733,7 +745,7 @@
 <li>Zone alone tells you where code lives, but not what the function means.</li>
 <li>Registry alone tells you a function looks like an allocator or deallocator, but not whether it sits on a local path or a cross-language path.</li>
 </ul>
-<p>OmniScope lets Zone answer “where”, Registry answer “what”, and MemoryGraph/DangerSurface answer “does it flow into a dangerous path”. Once those questions are separated, false-positive control becomes actionable.</p>
+<p>OmniScope lets Zone answer "where", Registry answer "what", and MemoryGraph/DangerSurface answer "does it flow into a dangerous path". Once those questions are separated, false-positive control becomes actionable.</p>
 
         </div>
 
@@ -918,7 +930,7 @@
 <p>Rust FFI risk often appears when Rust’s ownership and borrowing protocols cross an ABI boundary. <code>RustFfiAuditor</code> maps those protocols back onto LLVM IR patterns that can be inspected statically.</p>
 <h2 id="start-with-the-problem-rust-cannot-verify-what-c-does-later">Start with the problem: Rust cannot verify what C does later</h2>
 <p>Inside Rust, <code>Box</code>, borrow, and drop have clear semantics. Once <code>extern "C"</code> exposes a raw pointer, those semantics become a protocol between two sides. C can store the pointer, release it later, call <code>free</code>, or pass it back through a callback. The Rust compiler no longer verifies those actions.</p>
-<p>Rust FFI auditing therefore looks past “is there unsafe?” and asks whether the ownership protocol closes: who reclaims an <code>into_raw</code> pointer, whether an <code>as_ptr</code> borrow escapes, whether a stack address outlives the function, and whether allocation and deallocation use the same protocol.</p>
+<p>Rust FFI auditing therefore looks past "is there unsafe?" and asks whether the ownership protocol closes: who reclaims an <code>into_raw</code> pointer, whether an <code>as_ptr</code> borrow escapes, whether a stack address outlives the function, and whether allocation and deallocation use the same protocol.</p>
 <h2 id="omniscope-s-entry-point-rust-specific-rules-plus-universal-ffi-rules">OmniScope’s entry point: Rust-specific rules plus universal FFI rules</h2>
 <p><code>RustFfiAuditor</code> splits its rules into two layers. Rust-specific rules run on Rust modules and recover <code>into_raw/from_raw</code>, <code>as_ptr</code>, and borrow-dangling semantics. Universal FFI rules run on all modules and catch stack escape or unsafe boundary calls.</p>
 <h2 id="rule-surface">Rule surface</h2>
@@ -1038,7 +1050,7 @@
 <p><code>RustFfiAuditor</code> first produces <code>RustFfiFinding</code> records with <code>func_name</code>, <code>issue_type</code>, <code>severity</code>, <code>confidence</code>, <code>reason</code>, and <code>location</code>. That is an internal semantic layer, not the final output. Only later does the unified issue path convert it into the shared <code>Issue</code> schema.</p>
 <p>That two-stage structure matters because the auditor can keep Rust-specific meaning such as unpaired <code>into_raw</code>, borrow escape, or stack escape, while the output layer preserves a consistent schema shared with the rest of OmniScope.</p>
 <h2 id="one-concrete-rule-unpaired-into-raw">One concrete rule: unpaired <code>into_raw</code></h2>
-<p>The problem with <code>Box::into_raw</code> is not “raw pointers are dangerous” in the abstract. It is that Rust intentionally gives up automatic drop and transfers release responsibility into an external protocol. A safe recovery path requires a matching <code>from_raw</code> or equivalent reclamation.</p>
+<p>The problem with <code>Box::into_raw</code> is not "raw pointers are dangerous" in the abstract. It is that Rust intentionally gives up automatic drop and transfers release responsibility into an external protocol. A safe recovery path requires a matching <code>from_raw</code> or equivalent reclamation.</p>
 <p>That is why the code checks for module-level pairing: if <code>into_raw</code> semantics exist but no <code>from_raw</code> semantics exist anywhere in the module, OmniScope emits <code>unpaired_into_raw</code>. It is a protocol-completeness check, not a function blacklist.</p>
 <p>The rule still has limits: if the release path lives in another shared library, another module, or a wrapper function, a static module-local check must lower confidence. That is why the code uses <code>0.75</code> instead of <code>1.0</code>.</p>
 
@@ -1195,7 +1207,7 @@
 <p>Keeping these fields in <code>Issue</code>, rather than scattering them across JSON/SARIF formatters, makes the report schema part of the analysis model rather than a string-rendering detail.</p>
 <h2 id="engineering-integration-needs-stable-schema-not-pretty-output">Engineering integration needs stable schema, not pretty output</h2>
 <p>Terminal output is useful for demos, but engineering systems need stable structure. CI needs artifacts, security platforms need SARIF, secondary tooling needs JSON, and developers need reason and trace. OmniScope’s <code>Issue -&gt; JSON/SARIF/Text</code> path keeps those consumers on the same semantics.</p>
-<p>The important part is bigger than “supports JSON and SARIF”:  OmniScope models cross-language findings as structured issues with confidence, CWE, location, FFI classification, and explanatory evidence, then serializes that contract into machine-consumable formats.</p>
+<p>The important part is bigger than "supports JSON and SARIF":  OmniScope models cross-language findings as structured issues with confidence, CWE, location, FFI classification, and explanatory evidence, then serializes that contract into machine-consumable formats.</p>
 
         </div>
 
@@ -1211,12 +1223,12 @@
     <footer class="footer">
         <div class="footer__inner">
                 <div class="copyright">
-                        <span>© 
+                        <span>&copy; 
     2026
  Tim Wood</span>
                     <span class="copyright-theme">
                         <span class="copyright-theme-sep">:: </span>
-                        Theme: <a href="https://github.com/pawroman/zola-theme-terminimal/">Terminimal</a> by pawroman
+                        terminal-zen
                     </span>
                 </div>
             </div>
@@ -1224,6 +1236,12 @@
     
 
 </div>
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
 </body>
 
 </html>
