@@ -1,118 +1,227 @@
-// Mermaid diagram styles for consistent appearance
-.mermaid-direct {
-  display: flex;
-  justify-content: center;
-  margin: 2rem 0;
-  padding: 1.5rem;
+@import 'variables';
+
+// ================================================
+// Unified Mermaid styling (terminal frame + neon)
+// Single source of truth for Reading Path AND inline diagrams.
+// No !important on fill so user-defined classDef colors win.
+// ================================================
+
+// Hide raw source until JS swaps it for an SVG-bearing .mermaid div.
+.mermaid-direct,
+pre:has(> code[data-lang="mermaid"]),
+pre > code[data-lang="mermaid"] {
+  visibility: hidden;
+  height: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  overflow: hidden;
+
+  &::before { display: none; }
+}
+
+.mermaid {
+  position: relative;
+  margin: 2em 0;
+  padding: 40px $gap-md $gap-md;          // top room for the title bar
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: $radius-md;
   overflow-x: auto;
-  
-  // Ensure diagrams are responsive
+  overflow-y: hidden;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, .02) inset,
+    0 8px 24px rgba(0, 0, 0, .25);
+
+  visibility: hidden;       // until JS renders, prevent FOUC
+  min-height: 80px;
+
+  &.mermaid-ready {
+    visibility: visible;
+    min-height: 0;
+  }
+
+  // Terminal title bar — matches `pre::before`
+  &::before {
+    content: '● ● ●';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    padding: 8px 14px;
+    font-size: 10px;
+    letter-spacing: 4px;
+    color: var(--color-secondary);
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-color);
+    border-radius: $radius-md $radius-md 0 0;
+  }
+
+  // Filename slot — defaults to "graph.mmd", overridable per diagram
+  &::after {
+    content: attr(data-name);
+    position: absolute;
+    top: 6px;
+    right: 14px;
+    font-family: $mono;
+    font-size: 11px;
+    letter-spacing: .03em;
+    color: var(--color-secondary);
+    opacity: .75;
+    pointer-events: none;
+  }
+
+  // Default filename when data-name is missing
+  &:not([data-name])::after {
+    content: 'graph.mmd';
+  }
+
+  // ── SVG canvas ─────────────────────────────────
   svg {
+    display: block;
+    margin: 0 auto;
     max-width: 100%;
-    height: auto;
-    
-    // Style nodes and edges for better visibility
-    .node rect,
-    .node circle,
-    .node ellipse,
-    .node polygon {
-      fill: var(--accent-alpha-20);
-      stroke: var(--accent);
-      stroke-width: 1.5px;
+    height: auto !important;
+    background: transparent !important;
+    overflow: visible;
+  }
+
+  // ── Nodes ──────────────────────────────────────
+  // Default look: dark card fill + neon green stroke + subtle glow.
+  // `classDef` from the diagram supplies per-series fill/stroke and wins
+  // because we don't use !important here.
+  .node rect,
+  .node polygon,
+  .node circle,
+  .node ellipse,
+  .node path {
+    fill: var(--bg-card);
+    stroke: var(--accent);
+    stroke-width: 1.4px;
+    filter: drop-shadow(0 0 4px var(--glow-secondary));
+    transition: filter $transition-fast, stroke-width $transition-fast;
+  }
+
+  .node {
+    cursor: pointer;
+
+    &:hover rect,
+    &:hover polygon,
+    &:hover circle,
+    &:hover ellipse,
+    &:hover path {
+      filter: drop-shadow(0 0 8px var(--glow-primary));
+      stroke-width: 2px;
     }
-    
-    .node .label {
-      color: var(--color);
-      font-family: var(--font-mono);
-      font-size: 0.9rem;
-    }
-    
-    .edgePath .path {
-      stroke: var(--accent);
-      stroke-width: 1.5px;
-    }
-    
-    .edgeLabel {
-      background-color: var(--background);
-      color: var(--color);
-      font-family: var(--font-mono);
-      font-size: 0.8rem;
-    }
-    
-    // Flowchart specific styling
-    .flowchart-link {
-      stroke: var(--accent);
-      stroke-width: 1.5px;
-    }
-    
-    // Class diagram specific styling
-    .classBox {
-      fill: var(--accent-alpha-20);
-      stroke: var(--accent);
-    }
-    
-    .classTitle {
-      fill: var(--color);
-      font-family: var(--font-mono);
-      font-weight: bold;
-    }
-    
-    .classText {
-      fill: var(--color);
-      font-family: var(--font-mono);
-    }
-    
-    // Additional styling for better visibility
-    .actor {
-      fill: var(--accent-alpha-20);
-      stroke: var(--accent);
-    }
-    
-    .activation0 {
-      fill: var(--accent-alpha-20);
-      stroke: var(--accent);
-    }
-    
-    .section0, .section1, .section2, .section3 {
-      fill: var(--accent-alpha-20);
-    }
-    
-    .task0, .task1, .task2, .task3 {
-      fill: var(--accent-alpha-20);
-      stroke: var(--accent);
+  }
+
+  // Node labels
+  .node .label,
+  .node .nodeLabel,
+  .node foreignObject div {
+    color: var(--color) !important;
+    font-family: $mono !important;
+    font-size: 13px !important;
+    font-weight: 500;
+    white-space: nowrap;
+    line-height: 1.4;
+  }
+
+  // ── Edges ──────────────────────────────────────
+  .edgePath .path,
+  .flowchart-link {
+    stroke: var(--accent-alpha-70);
+    stroke-width: 1.4px;
+    fill: none;
+  }
+
+  .edgePath marker path,
+  .arrowheadPath,
+  marker path {
+    fill: var(--accent) !important;
+    stroke: var(--accent) !important;
+  }
+
+  // Edge labels sit in a chip so they stay legible over the grid
+  .edgeLabel {
+    color: var(--color) !important;
+    background: var(--bg-secondary) !important;
+    font-family: $mono !important;
+    font-size: 11px !important;
+    padding: 2px 6px;
+    border-radius: $radius-sm;
+  }
+
+  .edgeLabel rect {
+    fill: var(--bg-secondary) !important;
+    opacity: .85;
+  }
+
+  // ── Clusters / subgraphs ──────────────────────
+  .cluster rect {
+    fill: rgba(255, 255, 255, .015);
+    stroke: var(--border-color);
+    stroke-width: 1px;
+    stroke-dasharray: 4 4;
+    rx: $radius-md;
+    ry: $radius-md;
+  }
+
+  .cluster .label,
+  .cluster .nodeLabel {
+    color: var(--accent) !important;
+    font-family: $mono !important;
+    font-size: 12px !important;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: lowercase;
+  }
+
+  // Sequence diagrams
+  .actor {
+    fill: var(--bg-card) !important;
+    stroke: var(--accent) !important;
+  }
+  text.actor > tspan {
+    fill: var(--color) !important;
+    font-family: $mono !important;
+  }
+  .messageLine0,
+  .messageLine1 {
+    stroke: var(--accent-alpha-70) !important;
+  }
+  .messageText {
+    fill: var(--color) !important;
+    font-family: $mono !important;
+  }
+}
+
+// Wider canvas for diagrams inside articles
+.post-content .mermaid {
+  margin-left: -#{$gap-sm};
+  margin-right: -#{$gap-sm};
+}
+
+// Responsive
+@media (max-width: $tablet-max) {
+  .mermaid {
+    padding: 36px $gap-sm $gap-sm;
+
+    &::before { padding: 6px 10px; }
+    &::after { top: 5px; right: 10px; font-size: 10px; }
+
+    .node .label,
+    .node .nodeLabel,
+    .node foreignObject div {
+      font-size: 12px !important;
+      white-space: normal;
     }
   }
 }
 
-// Dark theme specific adjustments
-[data-theme="dark"] .mermaid-direct {
-  svg {
-    .node rect,
-    .node circle,
-    .node ellipse,
-    .node polygon {
-      fill: rgba(var(--accent-rgb), 0.15);
-    }
-    
-    .edgeLabel {
-      background-color: var(--background);
-    }
+@media (max-width: $phone-max) {
+  .mermaid {
+    margin: 1.5em 0;
+    .edgeLabel { font-size: 10px !important; }
   }
-}
-
-// Ensure proper spacing in post content
-.post-content .mermaid-direct {
-  margin: 2rem -1.5rem;
-  
-  @media (max-width: 768px) {
-    margin: 2rem -1rem;
-  }
-}
-
-// Fix for Mermaid container sizing
-.mermaid svg {
-  height: auto !important;
 }

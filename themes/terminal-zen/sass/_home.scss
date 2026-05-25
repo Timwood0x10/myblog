@@ -1,0 +1,360 @@
+@import 'variables';
+
+// ================================================
+// Home page — terminal session continuation.
+// NO outer frame — the header above already shows the
+// shell prompt, and the content below flows as session
+// output. Each project carries pillar identity via
+// a colored left bar (sys = green, ai = violet).
+// ================================================
+
+.home-terminal {
+  position: relative;
+  margin: 0 0 2em;
+  padding: 0;
+  font-family: $mono;
+  font-size: 0.95rem;
+  line-height: 1.6;
+
+  // Subtle divider — header is the previous line,
+  // this is where the user starts typing.
+  &::before {
+    content: '';
+    display: block;
+    height: 1px;
+    margin: 0 0 1.4em;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--border-color) 12%,
+      var(--border-color) 88%,
+      transparent 100%
+    );
+  }
+
+  // Reset global decorations that would conflict.
+  pre, code {
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    font-size: inherit;
+  }
+  pre::before { display: none !important; }
+
+  ul, ol { margin-left: 0; padding-left: 0; }
+  li::before { content: none !important; }
+  li { padding-left: 0; }
+}
+
+// ── Prompt line (matches header logo colors) ────
+.cmd-line {
+  display: flex;
+  align-items: baseline;
+  gap: .6em;
+  margin: 1.4em 0 .5em;
+  font-size: 0.95rem;
+  flex-wrap: wrap;
+
+  &:first-of-type { margin-top: 0; }
+}
+
+.prompt {
+  white-space: nowrap;
+  user-select: none;
+
+  // colors come from prompt-user / prompt-at / etc. spans inside
+  // (defined globally in _header.scss). Keep the wrapper neutral.
+}
+
+.cmd {
+  color: var(--color);
+  word-break: break-word;
+}
+
+.typing-active::after {
+  content: '▌';
+  margin-left: 2px;
+  color: var(--accent);
+  animation: cursorBlink 1s step-end infinite;
+}
+
+// ── whoami block ────────────────────────────────
+.whoami-block {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 2.4em;
+  padding: .6em 0 .6em 1.2em;
+  align-items: center;
+
+  @media (max-width: $tablet-max) {
+    grid-template-columns: 1fr;
+    gap: 1em 0;
+    padding-left: .4em;
+  }
+}
+
+.ascii-logo {
+  color: var(--accent);
+  font-family: $mono;
+  font-size: 0.55rem;
+  line-height: 1.05;
+  white-space: pre;
+  margin: 0;
+  text-shadow: 0 0 12px var(--glow-secondary);
+
+  @media (max-width: $phone-max) {
+    font-size: 0.45rem;
+    overflow-x: auto;
+  }
+}
+
+.whoami-info {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 1.2em;
+  row-gap: .25em;
+  align-content: center;
+
+  dt {
+    color: var(--accent);
+    font-size: 0.82rem;
+    letter-spacing: .08em;
+    font-weight: 600;
+    text-transform: uppercase;
+
+    &::after {
+      content: ' :';
+      color: var(--color-secondary);
+      font-weight: 400;
+    }
+  }
+
+  dd {
+    margin: 0;
+    color: var(--color);
+  }
+
+  .hex {
+    color: var(--prompt-host);
+    font-feature-settings: "tnum";
+  }
+
+  .motto {
+    color: var(--color-secondary);
+    font-style: italic;
+  }
+}
+
+// ── Pillars (systems ∩ ai) ──────────────────────
+.pillars {
+  display: inline-flex;
+  align-items: center;
+  gap: .6em;
+  flex-wrap: wrap;
+}
+
+.pillar {
+  padding: 1px 10px;
+  border-radius: $radius-sm;
+  font-weight: 600;
+  letter-spacing: .03em;
+  border: 1px solid currentColor;
+  background: rgba(255, 255, 255, .015);
+
+  &-sys {
+    color: var(--accent);
+    box-shadow: 0 0 12px rgba(var(--accent-rgb), .12) inset;
+  }
+  &-ai {
+    color: #c4a4ff;
+    box-shadow: 0 0 12px rgba(196, 164, 255, .12) inset;
+  }
+}
+
+.pillar-sep {
+  color: var(--color-secondary);
+  font-size: 1.2em;
+  font-weight: 700;
+  opacity: .65;
+  letter-spacing: 0;
+}
+
+// ── Project list ────────────────────────────────
+.project-list {
+  list-style: none;
+  margin: .4em 0 .2em !important;
+  padding: 0 !important;
+}
+
+.proj {
+  position: relative;
+  padding: .65em 0 .65em 1.2em;
+  border-bottom: 1px dashed var(--border-color);
+  transition: padding-left $transition-fast;
+
+  &:last-child { border-bottom: none; }
+
+  // Pillar identity bar — replaces sys/ai chips.
+  &::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: .55em;
+    bottom: .55em;
+    width: 3px;
+    border-radius: 1.5px;
+    background: var(--border-color);
+    transition: box-shadow $transition-fast, width $transition-fast;
+  }
+
+  &[data-pillar="sys"]::before {
+    background: var(--accent);
+    box-shadow: 0 0 8px rgba(var(--accent-rgb), .35);
+  }
+  &[data-pillar="ai"]::before {
+    background: #c4a4ff;
+    box-shadow: 0 0 8px rgba(196, 164, 255, .35);
+  }
+  &[data-pillar="sys-ai"]::before {
+    // top half green (systems), bottom half violet (ai) — visual "intersection"
+    background: linear-gradient(180deg,
+      var(--accent) 0%, var(--accent) 50%,
+      #c4a4ff 50%, #c4a4ff 100%);
+    box-shadow:
+      0 0 8px rgba(var(--accent-rgb), .25),
+      0 0 8px rgba(196, 164, 255, .25);
+  }
+
+  &:hover {
+    padding-left: 1.5em;
+
+    &::before { width: 4px; }
+  }
+}
+
+.proj-head {
+  display: flex;
+  align-items: baseline;
+  gap: 1em;
+  flex-wrap: wrap;
+}
+
+.proj-name {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 1rem;
+  border-bottom: none;
+  text-decoration: none;
+
+  &:hover {
+    text-shadow: 0 0 10px var(--glow-primary);
+    border-bottom: none;
+  }
+}
+
+.proj-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: .5em;
+  margin-left: auto;
+  font-size: 0.78rem;
+  flex-wrap: wrap;
+}
+
+.proj-desc {
+  color: var(--color-secondary);
+  font-size: 0.88rem;
+  margin-top: .15em;
+}
+
+// ── Tag chips (lang + status only — pillar moved to left bar) ─
+.tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: $radius-sm;
+  font-family: $mono;
+  font-size: 0.72rem;
+  letter-spacing: .06em;
+  border: 1px solid currentColor;
+  background: rgba(255, 255, 255, .02);
+  text-transform: lowercase;
+
+  // Language colors
+  &.lang-rust   { color: #dea584; }
+  &.lang-zig    { color: #ec915c; }
+  &.lang-go     { color: #5ec9e4; }
+  &.lang-python { color: #f5d76e; }
+
+  // Status chips — uppercase, leading glyph
+  &.status-active,
+  &.status-wip,
+  &.status-demo {
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: .08em;
+  }
+
+  &.status-active {
+    color: var(--accent);
+    box-shadow: 0 0 8px rgba(var(--accent-rgb), .15) inset;
+
+    &::before {
+      content: '●';
+      margin-right: 5px;
+      font-size: .8em;
+      animation: statusPulse 2s ease-in-out infinite;
+    }
+  }
+
+  &.status-wip {
+    color: #f0a04b;
+    &::before { content: '◐'; margin-right: 5px; }
+  }
+
+  &.status-demo {
+    color: #79c0ff;
+    &::before { content: '◌'; margin-right: 5px; }
+  }
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}
+
+// ── Final prompt with looping typer ─────────────
+.cmd-line-final {
+  margin-top: 1.8em;
+
+  #footer-typer {
+    color: var(--color);
+    min-width: 1ch;
+  }
+
+  .cursor-blink {
+    color: var(--accent);
+    margin-left: 1px;
+    animation: cursorBlink 1s step-end infinite;
+  }
+}
+
+// ── Footer links ────────────────────────────────
+.home-links {
+  margin-top: 1.4em;
+  font-size: 0.9rem;
+  color: var(--color-secondary);
+  letter-spacing: .02em;
+
+  a {
+    color: var(--accent);
+    border-bottom: none;
+    margin: 0 .15em;
+
+    &:hover {
+      text-shadow: 0 0 8px var(--glow-primary);
+    }
+  }
+}

@@ -15,11 +15,11 @@
     <div class="post-content">
 
     {# Unified parallel reading path graph #}
-<pre><code data-lang="mermaid">graph TB
+<pre><code data-lang="mermaid" data-name="reading-path.mmd">graph TB
 {%- for slug in config.extra.series_order %}
 {%- set info = config.extra.series_info[slug] %}
 {%- set ns = slug | slugify | replace(from="-", to="_") %}
-    classDef {{ ns }} fill:{{ info.color }},stroke:{{ info.color }},color:#fff
+    classDef {{ ns }} fill:{{ info.color }}22,stroke:{{ info.color }},color:#e6edf3,stroke-width:1.6px
 {%- endfor %}
 
     %% === Overview layer ===
@@ -58,13 +58,6 @@
     {%- endif %}
   {%- endfor %}
     end
-{%- endfor %}
-
-    %% === Cross-layer connections ===
-{%- for edge in config.extra.series_edges %}
-{%- set from_ns = edge.from | slugify | replace(from="-", to="_") %}
-{%- set to_ns = edge.to | slugify | replace(from="-", to="_") %}
-    {{ from_ns }} -.->|"{{ edge.label }}"| {{ to_ns }}
 {%- endfor %}
 </code></pre>
 
@@ -107,6 +100,45 @@
 
 {% block extra_body %}
 <script>
+(function(){
+  var lines = document.querySelectorAll(".home-terminal .typing");
+  if (!lines.length) return;
+
+  // Stash the final text, then clear so JS animates it in.
+  // If JS fails before this runs, the markup already shows the full text.
+  var prepared = Array.prototype.map.call(lines, function(el){
+    var text = el.dataset.text || el.textContent;
+    el.dataset.text = text;
+    el.textContent = "";
+    return el;
+  });
+
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    prepared.forEach(function(el){ el.textContent = el.dataset.text; });
+    return;
+  }
+
+  var i = 0;
+  function typeNext(){
+    if (i >= prepared.length) return;
+    var el = prepared[i++];
+    var text = el.dataset.text;
+    var ci = 0;
+    el.classList.add("typing-active");
+    (function step(){
+      if (ci > text.length) {
+        el.classList.remove("typing-active");
+        setTimeout(typeNext, 180);
+        return;
+      }
+      el.textContent = text.substring(0, ci++);
+      setTimeout(step, 28);
+    })();
+  }
+  // Small delay so the page settles and the cursor doesn't fight the fade-in
+  setTimeout(typeNext, 250);
+})();
+
 document.querySelectorAll(".series-toggle").forEach(function(btn){btn.addEventListener("click",function(e){e.preventDefault();var s=this.dataset.series;var hidden=document.querySelectorAll('.series-entry[data-series="'+s+'"]');hidden.forEach(function(el){el.style.display=""});this.style.display="none"})});
 </script>
 {{ super() }}
