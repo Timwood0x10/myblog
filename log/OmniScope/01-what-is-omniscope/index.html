@@ -111,7 +111,7 @@
 <p>OmniScope’s choice follows from that gap: move down to LLVM IR, the layer where many languages meet, then reconstruct part of the missing semantics from symbols, calls, pointer flow, allocation/free events, and FFI boundaries.</p>
 <h2 id="the-issue-is-not-free-it-is-the-lost-deallocation-protocol">The issue is not <code>free</code>; it is the lost deallocation protocol</h2>
 <p>A common Rust/C boundary pattern is: Rust exposes a pointer through <code>Box::into_raw</code>, then C stores or releases that pointer. In Rust, <code>into_raw</code> is an explicit ownership transfer. In C, <code>free(ptr)</code> is an ordinary deallocation. The problem is that no single compiler verifies the full protocol across both sides.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 sequenceDiagram
     participant R as Rust ownership model
     participant ABI as C ABI / LLVM IR
@@ -124,7 +124,7 @@ sequenceDiagram
 <p>At the IR layer, source syntax is gone, but external declarations, call/invoke instructions, allocas, loads/stores, bitcasts, symbol names, and some debug information may remain. The analyzer tries to recover enough ownership and lifetime semantics from these facts.</p>
 <h2 id="what-omniscope-actually-analyzes">What OmniScope actually analyzes</h2>
 <p>OmniScope’s entry point consumes LLVM IR files such as <code>.ll</code> and <code>.bc</code>, not source directories. Argument parsing starts at <code>src/main.zig:73</code>, the main entry is <code>src/main.zig:567</code>, and single-module analysis is driven by <code>runModulePipeline</code> at <code>src/main.zig:171</code>.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart TD
     A[Source languages: Rust / C / Zig / Go / C++] --> B[Compiler emits LLVM IR]
     B --> C[IRLoader obtains ModuleRef]
@@ -141,7 +141,7 @@ flowchart TD
 <li>A Rust <code>Box</code> pointer released by C may indicate allocator mismatch or ownership protocol breakage.</li>
 <li>Rust <code>as_ptr</code> used locally may be benign, while passing it to FFI and storing it may create a dangling pointer.</li>
 </ul>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart LR
     A[Function call] --> B{Crosses language boundary?}
     B -->|No| C[Local semantics]
@@ -157,7 +157,7 @@ flowchart LR
 <li><code>ZoneKind</code>: <code>safe</code>, <code>unsafe</code>, <code>ffi</code>, <code>runtime_internal</code>, and <code>unknown</code>, defined at <code>src/semantics/zone_classifier.zig:24</code>.</li>
 <li><code>SemanticRegistry</code>: layered function semantics, looked up through <code>src/registry/semantic_registry.zig:90</code>.</li>
 </ul>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart TB
     A[LLVM IR facts] --> B[PassContext]
     B --> C[CrossLangEdge]

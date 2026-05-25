@@ -2,147 +2,176 @@
    Cyberpunk Theme — Core (Mermaid + progress bar + tech typer)
    ================================================ */
 
-document.addEventListener("DOMContentLoaded",function(){
+document.addEventListener("DOMContentLoaded", function () {
 
   // ============================================
-  // Terminal prompt — continuous typing effect
-  // Types: Tim@0x10:~ Rust | Go | Zig | Python
+  // Looping typer — header (short tech words) and
+  // home-card footer (realistic build/run commands)
   // ============================================
-  var typer=document.getElementById("tech-typer");
-  if(typer){
-    var techs=["Rust","Go","Zig","Python","LLVM","FFI","Static Analysis","Memory Safety"];
-    var idx=0,charIdx=0,phase="typing";
-    var TYPE_SPEED=120,ERASE_SPEED=60,PAUSE_AFTER_TYPE=1800,PAUSE_AFTER_ERASE=300;
+  function createTyper(el, words, opts) {
+    if (!el || !words || !words.length) return;
+    opts = opts || {};
+    var TYPE  = opts.type  || 120;
+    var ERASE = opts.erase || 55;
+    var HOLD  = opts.hold  || 1800;
+    var GAP   = opts.gap   || 300;
+    var idx = 0, ci = 0, phase = "typing";
 
-    function tick(){
-      var word=techs[idx];
-      if(phase==="typing"){
-        charIdx++;
-        typer.textContent=word.substring(0,charIdx);
-        if(charIdx>=word.length){
-          phase="pause_after_type";
-          setTimeout(function(){phase="erasing";tick();},PAUSE_AFTER_TYPE);
+    (function tick() {
+      var w = words[idx];
+      if (phase === "typing") {
+        ci++;
+        el.textContent = w.substring(0, ci);
+        if (ci >= w.length) {
+          setTimeout(function () { phase = "erasing"; tick(); }, HOLD);
           return;
         }
-        setTimeout(tick,TYPE_SPEED);
-      }else if(phase==="erasing"){
-        charIdx--;
-        typer.textContent=word.substring(0,charIdx);
-        if(charIdx<=0){
-          phase="pause_after_erase";
-          setTimeout(function(){phase="typing";idx=(idx+1)%techs.length;tick();},PAUSE_AFTER_ERASE);
+        setTimeout(tick, TYPE);
+      } else {
+        ci--;
+        el.textContent = w.substring(0, ci);
+        if (ci <= 0) {
+          setTimeout(function () { phase = "typing"; idx = (idx + 1) % words.length; tick(); }, GAP);
           return;
         }
-        setTimeout(tick,ERASE_SPEED);
+        setTimeout(tick, ERASE);
       }
-    }
-    tick();
+    })();
   }
 
+  createTyper(
+    document.getElementById("tech-typer"),
+    ["Systems", "AI Infra", "Rust", "Memory Safety",
+     "LLVM IR", "Static Analysis", "Agents",
+     "Go", "Zig", "Python", "LLM", "FFI"]
+  );
+
+  createTyper(
+    document.getElementById("footer-typer"),
+    ["cargo build --release",
+     "zig build test",
+     "go test -race ./...",
+     "python train.py --epochs 10",
+     "RUST_LOG=trace cargo run",
+     "llvm-dis < model.bc"],
+    { type: 55, erase: 28, hold: 1400, gap: 350 }
+  );
+
   // ============================================
-  // Mermaid initialization — cyberpunk terminal style
-  // Unified configuration for ALL pages (homepage + articles)
+  // Mermaid — unified terminal/cyberpunk init
+  // Palette is intentionally close to CSS vars in
+  // sass/color/green.scss so the frame + svg agree.
+  // Per-series classDef colors win (no !important on fill in CSS).
   // ============================================
-  if(typeof mermaid!=="undefined"){
+  if (typeof mermaid !== "undefined") {
+    var PALETTE = {
+      bg:        "transparent",
+      card:      "#1c2128",          // --bg-card
+      cardSoft:  "#161b22",          // --bg-secondary
+      border:    "rgba(120, 226, 160, .55)",   // accent @ 55%
+      borderDim: "rgba(255, 255, 255, .12)",
+      text:      "#e6edf3",          // --color
+      textDim:   "#8b949e",          // --color-secondary
+      line:      "rgba(120, 226, 160, .7)",
+      accent:    "#7ee2a0"           // --accent
+    };
+
     mermaid.initialize({
-      theme:"base",
-      securityLevel:"loose",
-      startOnLoad:false,
-      flowchart:{
-        htmlLabels:true,
-        curve:"basis",
-        useMaxWidth:true,
-        nodeSpacing:50,
-        rankSpacing:70,
-        padding:20,
-        wrap:true,
-        diagramPadding:16,
-        useMaxWidth:true
+      theme: "base",
+      securityLevel: "loose",
+      startOnLoad: false,
+      flowchart: {
+        htmlLabels: true,
+        curve: "basis",
+        useMaxWidth: true,
+        nodeSpacing: 50,
+        rankSpacing: 70,
+        padding: 20,
+        diagramPadding: 16
       },
-      sequence:{
-        useMaxWidth:true,
-        wrap:true,
-        width:180,
-        marginMax:40,
-        marginMin:15,
-        boxMargin:15,
-        noteMargin:20,
-        messageMargin:50
+      sequence: {
+        useMaxWidth: true,
+        wrap: true,
+        width: 180,
+        boxMargin: 15,
+        noteMargin: 20,
+        messageMargin: 50
       },
-      themeVariables:{
-        background:"transparent",
-        primaryColor:"#2a2d35",
-        primaryBorderColor:"rgba(255,255,255,.35)",
-        primaryTextColor:"rgba(255,255,255,.9)",
-        lineColor:"rgba(255,255,255,.55)",
-        fontSize:"13px",
-        fontFamily:"'JetBrains Mono','Fira Code','Hack',monospace",
-        tertiaryColor:"transparent",
-        actorBkg:"#2a2d35",
-        actorBorder:"rgba(255,255,255,.35)",
-        actorTextColor:"#ffffff",
-        clusterBkg:"rgba(255,255,255,.03)",
-        clusterBorder:"rgba(255,255,255,.15)"
+      themeVariables: {
+        background:         PALETTE.bg,
+        primaryColor:       PALETTE.card,
+        primaryBorderColor: PALETTE.border,
+        primaryTextColor:   PALETTE.text,
+        secondaryColor:     PALETTE.cardSoft,
+        tertiaryColor:      "transparent",
+        lineColor:          PALETTE.line,
+        fontSize:           "13px",
+        fontFamily:         "'JetBrains Mono','Fira Code','Hack',monospace",
+        actorBkg:           PALETTE.card,
+        actorBorder:        PALETTE.border,
+        actorTextColor:     PALETTE.text,
+        clusterBkg:         "rgba(255,255,255,.015)",
+        clusterBorder:      PALETTE.borderDim,
+        edgeLabelBackground: PALETTE.cardSoft,
+        nodeBorder:         PALETTE.border,
+        mainBkg:            PALETTE.card
       }
     });
 
-    // Collect all mermaid diagrams from different sources
-    var nodes=[];
+    // Collect every diagram source and wrap in a unified .mermaid div.
+    var nodes = [];
 
-    // 1. Code blocks with data-lang="mermaid" (from markdown)
-    document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
-      var pre=el.parentElement;
-      var div=document.createElement("div");div.className="mermaid";
-      div.textContent=el.textContent;
-      pre.parentNode.replaceChild(div,pre);nodes.push(div)
+    // 1) Markdown code fences: <pre><code data-lang="mermaid">
+    document.querySelectorAll('code[data-lang="mermaid"]').forEach(function (code) {
+      var pre = code.parentElement;
+      var div = document.createElement("div");
+      div.className = "mermaid";
+      div.textContent = code.textContent;
+      // Optional filename — set via {% mermaid(name="...") %} or pages.html
+      var name = code.getAttribute("data-name") || (pre && pre.getAttribute("data-name"));
+      if (name) div.setAttribute("data-name", name);
+      pre.parentNode.replaceChild(div, pre);
+      nodes.push(div);
     });
 
-    // 2. Direct mermaid containers (from shortcodes)
-    document.querySelectorAll(".mermaid-direct").forEach(function(el){
-      el.className="mermaid";nodes.push(el)
+    // 2) Shortcode wrappers: <div class="mermaid-direct">
+    document.querySelectorAll(".mermaid-direct").forEach(function (el) {
+      el.classList.remove("mermaid-direct");
+      el.classList.add("mermaid");
+      // data-series / data-name are preserved on the same element
+      nodes.push(el);
     });
 
-    // Render each diagram individually to prevent layout conflicts
-    // Use sequential rendering with small delay for stability
-    if(nodes.length>0){
-      var renderIndex=0;
-
-      function renderNext(){
-        if(renderIndex>=nodes.length)return;
-
-        var el=nodes[renderIndex];
-        renderIndex++;
-
-        // Ensure element is visible before rendering
-        el.style.visibility="hidden";
-        el.style.minHeight="100px";
-
-        mermaid.run({nodes:[el]}).then(function(){
-          el.classList.add("mermaid-ready");
-          el.style.visibility="visible";
-
-          // Small delay between renders to prevent conflicts
-          setTimeout(renderNext,50);
-        }).catch(function(err){
-          console.warn("Mermaid: skip one diagram (syntax error)", err);
-          el.style.display="none";
-
-          // Continue rendering next diagram even if this one failed
-          setTimeout(renderNext,50);
-        });
+    // Render sequentially to avoid layout thrash on multi-diagram pages.
+    if (nodes.length > 0) {
+      var i = 0;
+      function renderNext() {
+        if (i >= nodes.length) return;
+        var el = nodes[i++];
+        el.style.minHeight = "80px";
+        mermaid.run({ nodes: [el] })
+          .then(function () {
+            el.classList.add("mermaid-ready");
+            setTimeout(renderNext, 30);
+          })
+          .catch(function (err) {
+            console.warn("Mermaid: skip one diagram (syntax error)", err);
+            el.style.display = "none";
+            setTimeout(renderNext, 30);
+          });
       }
-
-      // Start rendering after a short delay to ensure DOM is ready
-      setTimeout(renderNext,100);
+      setTimeout(renderNext, 80);
     }
   }
 
   // ============================================
   // Reading progress bar
   // ============================================
-  var pb=document.getElementById("progress-bar");
-  window.addEventListener("scroll",function(){
-    var h=document.documentElement.scrollHeight-window.innerHeight;
-    pb.style.width=(h>0?(window.scrollY/h*100):0)+"%"
-  });
+  var pb = document.getElementById("progress-bar");
+  if (pb) {
+    window.addEventListener("scroll", function () {
+      var h = document.documentElement.scrollHeight - window.innerHeight;
+      pb.style.width = (h > 0 ? (window.scrollY / h * 100) : 0) + "%";
+    });
+  }
 });

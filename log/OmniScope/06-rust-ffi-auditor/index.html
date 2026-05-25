@@ -119,7 +119,7 @@
 <li>unsafe FFI calls;</li>
 <li>stack address escape to <code>extern C</code>.</li>
 </ul>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart TD
     A[RustFfiAuditor] --> B[Box::into_raw / from_raw]
     A --> C[as_ptr borrow escape]
@@ -130,7 +130,7 @@ flowchart TD
     A --> H[stack escape]
 </div><h2 id="as-ptr-borrow-escape-recovering-a-lifetime-risk-from-ir-calls"><code>as_ptr</code> borrow escape: recovering a lifetime risk from IR calls</h2>
 <p><code>detectAsPtrEscape</code> is implemented at <code>src/pass/analysis/rust_ffi_auditor.zig:180</code>. It iterates LLVM functions, basic blocks, and instructions; handles only <code>LLVMCall</code> and <code>LLVMInvoke</code>; retrieves the callee from the final operand; reads the callee name; and matches Rust <code>as_ptr</code> patterns.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart TD
     A[LLVM Function] --> B[BasicBlock iterator]
     B --> C[Instruction iterator]
@@ -143,7 +143,7 @@ flowchart TD
     G -->|Yes| H[addFinding + ctx.addIssue]
 </div>
 <p>The risk is that <code>String</code> or <code>Vec</code> <code>as_ptr</code> returns a borrowed pointer. If C stores it, the Rust object may be dropped while C still holds the address.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 sequenceDiagram
     participant R as Rust local Vec/String
     participant P as raw pointer from as_ptr
@@ -157,7 +157,7 @@ sequenceDiagram
 <p>At <code>src/pass/analysis/rust_ffi_auditor.zig:212</code>, the rule creates a <code>borrow_escape</code> issue through <code>Issue.initWithReason</code>, with a reason explaining that a local <code>String/Vec</code> pointer passed to extern C may dangle.</p>
 <h2 id="into-raw-from-raw-ownership-transfer-should-close-correctly"><code>into_raw/from_raw</code>: ownership transfer should close correctly</h2>
 <p><code>Box::into_raw</code> converts Rust-managed heap ownership into a raw pointer. The caller must ensure the later deallocation protocol is correct. Missing restoration can leak; double restoration can double free; C-side release can produce allocator mismatch depending on allocation protocol.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart LR
     A[Box<T>] --> B[Box::into_raw]
     B --> C[*mut T]
@@ -169,7 +169,7 @@ flowchart LR
 <p><code>into_raw</code> alone is not a vulnerability. The finding depends on the surrounding protocol and subsequent pointer flow.</p>
 <h2 id="cross-language-allocator-mismatch">Cross-language allocator mismatch</h2>
 <p><code>detectCrossLangMismatch</code> starts at <code>src/pass/analysis/rust_ffi_auditor.zig:230</code>. It iterates call/invoke instructions and attempts to identify Rust allocation paired with C deallocation.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 sequenceDiagram
     participant RA as Rust allocator
     participant IR as LLVM IR pointer
@@ -182,7 +182,7 @@ sequenceDiagram
 <p>The accuracy of this kind of check depends on symbol names, preserved call relationships, wrappers, inlining, and custom allocators.</p>
 <h2 id="general-ffi-checks">General FFI checks</h2>
 <p>The auditor also runs checks that are not Rust-only, such as unsafe FFI call scanning and stack address escape. Stack escape is relevant when a pointer to a local object is passed to C and then stored beyond the call.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart TD
     A[alloca / local stack object] --> B[Take address]
     B --> C[Pass to extern C]

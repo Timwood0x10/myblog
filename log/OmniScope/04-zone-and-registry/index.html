@@ -110,7 +110,7 @@
 <p><code>ZoneClassifier</code> classifies the region first. <code>SemanticRegistry</code> then explains function meaning in cross-language context. Together they provide context to later danger-path checks: the same call can receive different priority depending on its zone and semantic kind.</p>
 <h2 id="zonekind-classifies-code-by-risk-region">ZoneKind classifies code by risk region</h2>
 <p><code>ZoneKind</code> is defined at <code>src/semantics/zone_classifier.zig:24</code>. It includes <code>safe</code>, <code>unsafe</code>, <code>ffi</code>, <code>runtime_internal</code>, and <code>unknown</code>. The file-level comment states the operating principle: focus where language guarantees stop.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart TD
     A[Function / Instruction / Debug path] --> B[Zone Classifier]
     B --> C[safe: language guarantees likely apply]
@@ -122,7 +122,7 @@ flowchart TD
 <p>This model is not a proof that safe zones are bug-free. It is a prioritization layer. For an FFI-focused analyzer, runtime glue or container internals should usually not have the same weight as user-written unsafe wrappers.</p>
 <h2 id="multi-language-escape-triggers">Multi-language escape triggers</h2>
 <p><code>EscapeTrigger</code> is defined at <code>src/semantics/zone_classifier.zig:45</code>. It represents cross-language escape points across ecosystems: Rust unsafe/extern/raw pointers, Zig pointer casts and C imports, Go cgo and <code>unsafe.Pointer</code>, and C++ extern C, reinterpret casts, and manual memory.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart LR
     A[Rust unsafe / extern C] --> Z[EscapeTrigger]
     B[Zig @ptrCast / @cImport] --> Z
@@ -137,7 +137,7 @@ flowchart LR
 <li><code>src/semantics/zone_classifier.zig:347</code> classifies by function name.</li>
 <li><code>src/semantics/zone_classifier.zig:394</code> classifies LLVM functions using declarations, intrinsics, debug information, and path data when available.</li>
 </ul>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart TD
     A[LLVMValueRef function] --> B{External declaration?}
     B -->|Yes| C[May be ffi]
@@ -148,7 +148,7 @@ flowchart TD
 <p>These rules are heuristic. Symbol names and debug information quality can affect classification, so Zone should be described as a risk-prioritization mechanism rather than a formal proof.</p>
 <h2 id="semantic-registry-describes-function-meaning-in-ffi-context">Semantic Registry describes function meaning in FFI context</h2>
 <p><code>SemanticRegistry</code> is defined at <code>src/registry/semantic_registry.zig:48</code>; lookup starts at <code>src/registry/semantic_registry.zig:90</code>. The registry is layered by ecosystem: C standard library, Rust ownership patterns, Go cgo, Zig, C++, JNI, Python C API, POSIX, and dynamic loading.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart TD
     A[func_name] --> B[SemanticRegistry.lookup]
     B --> C[Layer1: C stdlib high-risk]
@@ -167,7 +167,7 @@ flowchart TD
 <p>The registry helps interpret calls in context. <code>Box::into_raw</code> is not a vulnerability by itself; it changes the ownership protocol. <code>strcpy</code> in local C code and <code>strcpy</code> at a Rust-to-C boundary may require different review priorities.</p>
 <h2 id="zone-registry-danger-path">Zone + Registry + Danger Path</h2>
 <p>Zone and Registry should not produce most findings directly. A more controlled path is: classify the region, look up function semantics, ask whether the pointer or function is on a relevant risk path, then produce an issue if warranted.</p>
-<div class="mermaid-direct" data-series="omniscope">
+<div class="mermaid-direct" data-series="omniscope" data-name="graph.mmd">
 flowchart LR
     A[Call / Function] --> B[Zone]
     A --> C[Registry]
