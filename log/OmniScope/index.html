@@ -18,6 +18,9 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
 
     <meta name="description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
 
@@ -142,7 +145,8 @@
 <p>This series explains what OmniScope does, how data moves through the project, and which modules make which decisions. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.</p>
 <p>OmniScope focuses on one concrete question: <strong>after ownership, lifetime, and deallocation protocols cross a language boundary, can a static analyzer recover enough semantics to produce reviewable findings?</strong></p>
 <p>In one sentence: OmniScope reads LLVM IR (<code>.ll</code> / <code>.bc</code>), turns calls, pointer flows, allocation/free events, language boundaries, and unsafe regions into queryable facts, then reports high-risk paths related to FFI, ownership, and lifetime through text, JSON, or SARIF.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[LLVM IR input] --> B[Module loading]
     B --> C[PassContext]
     C --> D[CallGraph / CrossLangEdge]
@@ -234,7 +238,8 @@
 <p>OmniScope’s choice follows from that gap: move down to LLVM IR, the layer where many languages meet, then reconstruct part of the missing semantics from symbols, calls, pointer flow, allocation/free events, and FFI boundaries.</p>
 <h2 id="the-issue-is-not-free-it-is-the-lost-deallocation-protocol">The issue is not <code>free</code>; it is the lost deallocation protocol</h2>
 <p>A common Rust/C boundary pattern is: Rust exposes a pointer through <code>Box::into_raw</code>, then C stores or releases that pointer. In Rust, <code>into_raw</code> is an explicit ownership transfer. In C, <code>free(ptr)</code> is an ordinary deallocation. The problem is that no single compiler verifies the full protocol across both sides.</p>
-<div class="mermaid-direct" data-series="omniscope">sequenceDiagram
+<div class="mermaid-direct" data-series="omniscope">
+sequenceDiagram
     participant R as Rust ownership model
     participant ABI as C ABI / LLVM IR
     participant C as C manual memory
@@ -246,7 +251,8 @@
 <p>At the IR layer, source syntax is gone, but external declarations, call/invoke instructions, allocas, loads/stores, bitcasts, symbol names, and some debug information may remain. The analyzer tries to recover enough ownership and lifetime semantics from these facts.</p>
 <h2 id="what-omniscope-actually-analyzes">What OmniScope actually analyzes</h2>
 <p>OmniScope’s entry point consumes LLVM IR files such as <code>.ll</code> and <code>.bc</code>, not source directories. Argument parsing starts at <code>src/main.zig:73</code>, the main entry is <code>src/main.zig:567</code>, and single-module analysis is driven by <code>runModulePipeline</code> at <code>src/main.zig:171</code>.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[Source languages: Rust / C / Zig / Go / C++] --> B[Compiler emits LLVM IR]
     B --> C[IRLoader obtains ModuleRef]
     C --> D[Pipeline.setModule]
@@ -262,7 +268,8 @@
 <li>A Rust <code>Box</code> pointer released by C may indicate allocator mismatch or ownership protocol breakage.</li>
 <li>Rust <code>as_ptr</code> used locally may be benign, while passing it to FFI and storing it may create a dangling pointer.</li>
 </ul>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[Function call] --> B{Crosses language boundary?}
     B -->|No| C[Local semantics]
     B -->|Yes| D[FFI semantics]
@@ -277,7 +284,8 @@
 <li><code>ZoneKind</code>: <code>safe</code>, <code>unsafe</code>, <code>ffi</code>, <code>runtime_internal</code>, and <code>unknown</code>, defined at <code>src/semantics/zone_classifier.zig:24</code>.</li>
 <li><code>SemanticRegistry</code>: layered function semantics, looked up through <code>src/registry/semantic_registry.zig:90</code>.</li>
 </ul>
-<div class="mermaid-direct" data-series="omniscope">flowchart TB
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TB
     A[LLVM IR facts] --> B[PassContext]
     B --> C[CrossLangEdge]
     B --> D[MemoryGraph]
@@ -364,7 +372,8 @@
 <p>The CLI describes how the user wants to run. IRLoader turns input into a module. Pipeline is where the module, shared context, passes, indexes, and output path are assembled. Later structures such as <code>PassContext</code>, <code>CallSiteIndex</code>, <code>MemoryGraph</code>, and <code>GlobalAllocTracker</code> appear naturally from this lifecycle.</p>
 <h2 id="config-defines-the-external-shape-of-the-run">Config defines the external shape of the run</h2>
 <p><code>Config</code> is defined at <code>src/main.zig:24</code>. It stores input files, output format, output path, visualization flag, user-code focus, FFI-only mode, and stdlib inclusion. Argument parsing starts at <code>src/main.zig:73</code>.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[argv] --> B[parseArgs]
     B --> C[Config]
     C --> D[input_files]
@@ -375,7 +384,8 @@
 <p>One implementation detail matters: the CLI parses analysis intent, but the exact effect depends on individual pass implementations. For example, some noise-reduction options are instantiated inside specific passes.</p>
 <h2 id="runmodulepipeline-is-the-analysis-loop"><code>runModulePipeline</code> is the analysis loop</h2>
 <p><code>runModulePipeline</code> is located at <code>src/main.zig:171</code>. It initializes the Pipeline, attaches the LLVM module, registers passes, runs static analysis, and collects issues.</p>
-<div class="mermaid-direct" data-series="omniscope">sequenceDiagram
+<div class="mermaid-direct" data-series="omniscope">
+sequenceDiagram
     participant Main as main.zig
     participant Loader as IRLoader
     participant Pipe as Pipeline
@@ -400,7 +410,8 @@
 </ul>
 <h2 id="registerallpasses-reveals-the-analysis-sequence"><code>registerAllPasses</code> reveals the analysis sequence</h2>
 <p><code>registerAllPasses</code> is at <code>src/main.zig:153</code>. It registers CallGraph, TaintPropagation, FFI Boundary, FFI Type Mismatch, FFI Body Check, FFI Unsafe, PtrLifetime, DangerSurface, PointerOwnership, CallbackEscape, RustFfiAuditor, ReturnCheck, MemorySafety, FreeValidation, and BufferOverflow.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[CallGraph] --> B[FFI Boundary]
     B --> C[Type / Body / Unsafe]
     C --> D[PtrLifetime]
@@ -423,7 +434,8 @@
 <li><code>memory_graph</code>;</li>
 <li><code>danger_surface_relevant</code>, <code>ffi_auto_relevant</code>, and <code>relevant_functions</code>.</li>
 </ul>
-<div class="mermaid-direct" data-series="omniscope">flowchart TB
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TB
     subgraph Pipeline.run
         A[Clear DataFlowGraph] --> B[Create PassContext]
         B --> C[Attach module]
@@ -434,7 +446,8 @@
     end
 </div><h2 id="output-is-part-of-the-design">Output is part of the design</h2>
 <p><code>emitOutput</code> is at <code>src/main.zig:207</code>. It branches into JSON, SARIF, or text output. JSON is produced by <code>formatIssuesAsJson</code>; SARIF is produced by <code>SarifOutput</code>.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[Issue list] --> B[emitOutput]
     B --> C[JSON: formatIssuesAsJson]
     B --> D[SARIF: SarifOutput]
@@ -514,7 +527,8 @@
 <p><code>PassManager</code> registers, sorts, and executes passes. <code>PassContext</code> carries facts across them. This lets call relationships, MemoryGraph state, danger surfaces, and issues move through one analysis context instead of being trapped inside individual rules.</p>
 <h2 id="what-passmanager-owns">What PassManager owns</h2>
 <p><code>PassManager</code> is defined at <code>src/pass/manager.zig:23</code>. It stores registered passes, a name-to-index map, resolved execution order, and cached execution names. Registration starts at <code>src/pass/manager.zig:61</code>.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[registerPass] --> B[passes ArrayList]
     A --> C[pass_map]
     B --> D[resolveDependencies]
@@ -525,7 +539,8 @@
 <p>This keeps scheduling separate from the CLI and from each individual pass.</p>
 <h2 id="dependency-resolution-uses-kahn-topological-sorting">Dependency resolution uses Kahn topological sorting</h2>
 <p>The dependency resolver builds an adjacency list and in-degree table. Passes with zero in-degree enter the queue. Each popped node reduces the in-degree of its successors. If the final result contains fewer nodes than the registered pass count, a cycle is reported.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[Passes + dependencies] --> B[Build adjacency / in_degree]
     B --> C[Queue zero in-degree nodes]
     C --> D[Pop node]
@@ -540,7 +555,8 @@
 <p>This matters because later passes may consume facts produced by earlier passes: risk-path checks need cross-language edges and memory facts; ownership checks need allocation and call information.</p>
 <h2 id="graceful-degradation-is-deliberate">Graceful degradation is deliberate</h2>
 <p>The run loop starts at <code>src/pass/manager.zig:193</code>. If a pass fails, the manager logs a warning, increments a failure counter, and continues executing later passes.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[Run pass] --> B{run_fn succeeds?}
     B -->|Yes| C[Record timing]
     B -->|No| D[warn + pass_failures++]
@@ -552,14 +568,16 @@
 <p>This is useful for real-world IR, which may come from different compilers, optimization levels, or link configurations. A failure in one analysis stage should not necessarily discard unrelated findings.</p>
 <h2 id="passcontext-is-the-fact-bus">PassContext is the fact bus</h2>
 <p><code>PassContext</code> is defined at <code>src/pass/pass.zig:192</code>. It is the shared state through which passes exchange information. CallGraphPass may write <code>cross_lang_edges</code>; PtrLifetimePass may write <code>memory_graph</code>; DangerSurfacePass may write relevance sets; issue-producing passes read those facts.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[CallGraphPass] -->|writes| X[PassContext.cross_lang_edges]
     B[PtrLifetimePass] -->|writes| Y[PassContext.memory_graph]
     C[DangerSurfacePass] -->|reads X/Y, writes| Z[relevant sets]
     D[FFI / Ownership / Memory passes] -->|read Z/Y| E[Issue]
 </div><h2 id="diagnosticwriter-and-structured-issues">DiagnosticWriter and structured issues</h2>
 <p>Passes receive both <code>PassContext</code> and <code>DiagnosticWriter</code>. <code>DiagnosticWriter</code> handles logs and diagnostics. Structured findings are added through <code>ctx.addIssue</code>, whose entry point is at <code>src/pass/pass.zig:458</code>.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[Pass detects finding] --> B{Diagnostic only?}
     B -->|Yes| C[DiagnosticWriter]
     B -->|No| D[Issue.init / initWithReason]
@@ -662,7 +680,8 @@
 <p><code>ZoneClassifier</code> classifies the region first. <code>SemanticRegistry</code> then explains function meaning in cross-language context. Together they provide context to later danger-path checks: the same call can receive different priority depending on its zone and semantic kind.</p>
 <h2 id="zonekind-classifies-code-by-risk-region">ZoneKind classifies code by risk region</h2>
 <p><code>ZoneKind</code> is defined at <code>src/semantics/zone_classifier.zig:24</code>. It includes <code>safe</code>, <code>unsafe</code>, <code>ffi</code>, <code>runtime_internal</code>, and <code>unknown</code>. The file-level comment states the operating principle: focus where language guarantees stop.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[Function / Instruction / Debug path] --> B[Zone Classifier]
     B --> C[safe: language guarantees likely apply]
     B --> D[unsafe: explicit escape]
@@ -673,7 +692,8 @@
 <p>This model is not a proof that safe zones are bug-free. It is a prioritization layer. For an FFI-focused analyzer, runtime glue or container internals should usually not have the same weight as user-written unsafe wrappers.</p>
 <h2 id="multi-language-escape-triggers">Multi-language escape triggers</h2>
 <p><code>EscapeTrigger</code> is defined at <code>src/semantics/zone_classifier.zig:45</code>. It represents cross-language escape points across ecosystems: Rust unsafe/extern/raw pointers, Zig pointer casts and C imports, Go cgo and <code>unsafe.Pointer</code>, and C++ extern C, reinterpret casts, and manual memory.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[Rust unsafe / extern C] --> Z[EscapeTrigger]
     B[Zig @ptrCast / @cImport] --> Z
     C[Go cgo / unsafe.Pointer] --> Z
@@ -687,7 +707,8 @@
 <li><code>src/semantics/zone_classifier.zig:347</code> classifies by function name.</li>
 <li><code>src/semantics/zone_classifier.zig:394</code> classifies LLVM functions using declarations, intrinsics, debug information, and path data when available.</li>
 </ul>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[LLVMValueRef function] --> B{External declaration?}
     B -->|Yes| C[May be ffi]
     B -->|No| D[Name-based classification]
@@ -697,7 +718,8 @@
 <p>These rules are heuristic. Symbol names and debug information quality can affect classification, so Zone should be described as a risk-prioritization mechanism rather than a formal proof.</p>
 <h2 id="semantic-registry-describes-function-meaning-in-ffi-context">Semantic Registry describes function meaning in FFI context</h2>
 <p><code>SemanticRegistry</code> is defined at <code>src/registry/semantic_registry.zig:48</code>; lookup starts at <code>src/registry/semantic_registry.zig:90</code>. The registry is layered by ecosystem: C standard library, Rust ownership patterns, Go cgo, Zig, C++, JNI, Python C API, POSIX, and dynamic loading.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[func_name] --> B[SemanticRegistry.lookup]
     B --> C[Layer1: C stdlib high-risk]
     B --> D[Layer2: Rust ownership]
@@ -715,7 +737,8 @@
 <p>The registry helps interpret calls in context. <code>Box::into_raw</code> is not a vulnerability by itself; it changes the ownership protocol. <code>strcpy</code> in local C code and <code>strcpy</code> at a Rust-to-C boundary may require different review priorities.</p>
 <h2 id="zone-registry-danger-path">Zone + Registry + Danger Path</h2>
 <p>Zone and Registry should not produce most findings directly. A more controlled path is: classify the region, look up function semantics, ask whether the pointer or function is on a relevant risk path, then produce an issue if warranted.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[Call / Function] --> B[Zone]
     A --> C[Registry]
     B --> D[Region risk]
@@ -820,7 +843,8 @@
 <p><code>MemoryGraph</code> stores allocations, frees, call arguments, returns, and aliases in one graph. <code>DangerSurfacePass</code> starts from FFI/unsafe boundaries and marks the pointers and functions worth deeper analysis. Reports then follow risky paths rather than isolated APIs.</p>
 <h2 id="role-of-memorygraph">Role of MemoryGraph</h2>
 <p><code>MemoryGraph</code> is defined at <code>src/semantics/memory_graph.zig:160</code>. It stores memory-related facts: allocations, frees, call arguments, call returns, alias relations, zones, and language sources.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[trackAlloc] --> M[MemoryGraph]
     B[trackFree] --> M
     C[trackCallArg] --> M
@@ -832,7 +856,8 @@
 <p>The graph does not attempt to model every possible program path. It answers a narrower question: is there enough evidence that this pointer is relevant to an FFI/unsafe risk path?</p>
 <h2 id="risk-path-classification">Risk-path classification</h2>
 <p><code>MemoryGraph.isOnDangerPath</code> is implemented around <code>src/semantics/memory_graph.zig:892</code>. It may return categories such as <code>ffi_arg</code>, <code>ffi_ret</code>, and <code>unsafe_alloc</code>. <code>PassContext.isOnDangerPathFull</code> at <code>src/pass/pass.zig:866</code> provides a shared entry point for other passes.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[ptr_val] --> B[PassContext.isOnDangerPathFull]
     B --> C[MemoryGraph.isOnDangerPath]
     C --> D{DangerPathKind}
@@ -846,7 +871,8 @@
 <p>A shared entry point keeps later passes from inventing inconsistent risk definitions.</p>
 <h2 id="how-dangersurfacepass-marks-relevant-objects">How DangerSurfacePass marks relevant objects</h2>
 <p><code>DangerSurfacePass</code> starts at <code>src/pass/analysis/danger_surface.zig:37</code>. It consumes <code>cross_lang_edges</code> and <code>memory_graph</code>, then updates <code>danger_surface_relevant</code>, <code>ffi_auto_relevant</code>, and <code>relevant_functions</code>.</p>
-<div class="mermaid-direct" data-series="omniscope">sequenceDiagram
+<div class="mermaid-direct" data-series="omniscope">
+sequenceDiagram
     participant CG as CrossLangEdges
     participant MG as MemoryGraph
     participant DS as DangerSurfacePass
@@ -862,7 +888,8 @@
 <p>Two implementation choices are visible in the source: known FFI arguments and returns can be marked directly, while MemoryGraph nodes already on a risk path can be expanded through alias closure.</p>
 <h2 id="why-alias-closure-matters">Why alias closure matters</h2>
 <p><code>traceAliasClosure</code> is at <code>src/pass/analysis/danger_surface.zig:144</code>. In LLVM IR, one memory object may appear through several SSA values after bitcasts, loads, stores, parameters, and returns. Marking only the original pointer may miss later uses.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[ptr0: FFI relevant] --> B[alias set]
     B --> C[ptr1]
     B --> D[ptr2]
@@ -873,7 +900,8 @@
 <p>This is not a full alias analysis. It is a focused propagation step for FFI-related pointer families.</p>
 <h2 id="from-risk-paths-to-prioritized-reporting">From risk paths to prioritized reporting</h2>
 <p>Later passes can use <code>isOnDangerPathFull</code> or relevance sets to filter findings. A local C allocation/free pair may be lower priority, while a pointer crossing FFI through arguments, returns, or callbacks may require review.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[Potential memory issue] --> B{On risk path?}
     B -->|No| C[Filter / lower priority / local issue]
     B -->|Yes| D[FFI-relevant issue]
@@ -983,7 +1011,8 @@
 <li>unsafe FFI calls;</li>
 <li>stack address escape to <code>extern C</code>.</li>
 </ul>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[RustFfiAuditor] --> B[Box::into_raw / from_raw]
     A --> C[as_ptr borrow escape]
     A --> D[allocator mismatch]
@@ -993,7 +1022,8 @@
     A --> H[stack escape]
 </div><h2 id="as-ptr-borrow-escape-recovering-a-lifetime-risk-from-ir-calls"><code>as_ptr</code> borrow escape: recovering a lifetime risk from IR calls</h2>
 <p><code>detectAsPtrEscape</code> is implemented at <code>src/pass/analysis/rust_ffi_auditor.zig:180</code>. It iterates LLVM functions, basic blocks, and instructions; handles only <code>LLVMCall</code> and <code>LLVMInvoke</code>; retrieves the callee from the final operand; reads the callee name; and matches Rust <code>as_ptr</code> patterns.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[LLVM Function] --> B[BasicBlock iterator]
     B --> C[Instruction iterator]
     C --> D{opcode == call/invoke?}
@@ -1005,7 +1035,8 @@
     G -->|Yes| H[addFinding + ctx.addIssue]
 </div>
 <p>The risk is that <code>String</code> or <code>Vec</code> <code>as_ptr</code> returns a borrowed pointer. If C stores it, the Rust object may be dropped while C still holds the address.</p>
-<div class="mermaid-direct" data-series="omniscope">sequenceDiagram
+<div class="mermaid-direct" data-series="omniscope">
+sequenceDiagram
     participant R as Rust local Vec/String
     participant P as raw pointer from as_ptr
     participant C as C FFI callee
@@ -1018,7 +1049,8 @@
 <p>At <code>src/pass/analysis/rust_ffi_auditor.zig:212</code>, the rule creates a <code>borrow_escape</code> issue through <code>Issue.initWithReason</code>, with a reason explaining that a local <code>String/Vec</code> pointer passed to extern C may dangle.</p>
 <h2 id="into-raw-from-raw-ownership-transfer-should-close-correctly"><code>into_raw/from_raw</code>: ownership transfer should close correctly</h2>
 <p><code>Box::into_raw</code> converts Rust-managed heap ownership into a raw pointer. The caller must ensure the later deallocation protocol is correct. Missing restoration can leak; double restoration can double free; C-side release can produce allocator mismatch depending on allocation protocol.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[Box<T>] --> B[Box::into_raw]
     B --> C[*mut T]
     C --> D{Later protocol}
@@ -1029,7 +1061,8 @@
 <p><code>into_raw</code> alone is not a vulnerability. The finding depends on the surrounding protocol and subsequent pointer flow.</p>
 <h2 id="cross-language-allocator-mismatch">Cross-language allocator mismatch</h2>
 <p><code>detectCrossLangMismatch</code> starts at <code>src/pass/analysis/rust_ffi_auditor.zig:230</code>. It iterates call/invoke instructions and attempts to identify Rust allocation paired with C deallocation.</p>
-<div class="mermaid-direct" data-series="omniscope">sequenceDiagram
+<div class="mermaid-direct" data-series="omniscope">
+sequenceDiagram
     participant RA as Rust allocator
     participant IR as LLVM IR pointer
     participant CF as C free
@@ -1041,7 +1074,8 @@
 <p>The accuracy of this kind of check depends on symbol names, preserved call relationships, wrappers, inlining, and custom allocators.</p>
 <h2 id="general-ffi-checks">General FFI checks</h2>
 <p>The auditor also runs checks that are not Rust-only, such as unsafe FFI call scanning and stack address escape. Stack escape is relevant when a pointer to a local object is passed to C and then stored beyond the call.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[alloca / local stack object] --> B[Take address]
     B --> C[Pass to extern C]
     C --> D{Does C store it?}
@@ -1126,7 +1160,8 @@
 <p>OmniScope makes passes produce structured <code>Issue</code> values first, then lets the output layer serialize them as text, JSON, or SARIF. Analysis logic, evidence fields, and engineering integration stay separate: passes find problems, <code>Issue</code> stores evidence, and <code>emitOutput</code> decides how to deliver it.</p>
 <h2 id="issue-is-the-shared-result-type">Issue is the shared result type</h2>
 <p><code>Issue</code> is defined in <code>src/diag/issue.zig</code>, and issue kinds are exposed from <code>src/common/types.zig:151</code>. The structure carries kind, message, location, severity, confidence, confidence level, reason, FFI boundary, trace, and classification.</p>
-<div class="mermaid-direct" data-series="omniscope">classDiagram
+<div class="mermaid-direct" data-series="omniscope">
+classDiagram
     class Issue {
         kind
         message
@@ -1151,7 +1186,8 @@
 </ul>
 <h2 id="from-pass-to-issue">From Pass to Issue</h2>
 <p>When a pass finds something reportable, it creates an <code>Issue</code> with constructors such as <code>Issue.init</code> or <code>Issue.initWithReason</code>, then calls <code>ctx.addIssue</code>. The entry point is <code>src/pass/pass.zig:458</code>.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[Analysis Pass] --> B[Rule match]
     B --> C[Construct Issue]
     C --> D[ctx.addIssue]
@@ -1162,7 +1198,8 @@
 <p>This decouples rule logic from output format. Passes produce structured findings; the main program decides how to serialize them.</p>
 <h2 id="emitoutput-dispatches-formats"><code>emitOutput</code> dispatches formats</h2>
 <p><code>emitOutput</code> is implemented at <code>src/main.zig:207</code>. The JSON branch calls <code>formatIssuesAsJson</code> at <code>src/main.zig:494</code>; the SARIF branch uses <code>SarifOutput</code>, initialized at <code>src/main.zig:232</code>; file output is controlled by <code>config.output_file</code>.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[issues + func_count + time_ms] --> B[emitOutput]
     B --> C{OutputFormat}
     C -->|json| D[formatIssuesAsJson]
@@ -1173,7 +1210,8 @@
     F --> H[developer console]
 </div><h2 id="sarif-integration">SARIF integration</h2>
 <p><code>SarifOutput</code> is defined at <code>src/output/sarif.zig:36</code>, with file writing at <code>src/output/sarif.zig:167</code>. SARIF lets results be consumed by GitHub Code Scanning, CI systems, and security dashboards.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[OmniScope Issue] --> B[SARIF Result]
     B --> C[sarif.json]
     C --> D[CI Artifact]

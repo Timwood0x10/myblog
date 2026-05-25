@@ -18,6 +18,9 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
 
     <meta name="description" content="Tim Wood — memory safety, static analysis, and AI infrastructure.">
 
@@ -255,7 +258,8 @@
 <li><strong>Entry layer</strong> (<code>SimpleClient</code>, <code>WorkflowClient</code>): Minimal encapsulation for specific scenarios.</li>
 </ol>
 <p>This isn't a "designed architecture" — it's a layering that naturally emerges from the isolation requirement:</p>
-<div class="mermaid-direct" data-series="goagent">flowchart TB
+<div class="mermaid-direct" data-series="goagent">
+flowchart TB
     subgraph "Callers only see these"
         SimpleClient[SimpleClient<br/>One Execute call]
         Client[api.Client<br/>Access all services]
@@ -403,7 +407,8 @@
 <li><strong>Top layer</strong>: <code>LLMAdapter</code> interface + Factory pattern, unifying behavior and supporting structured output.</li>
 </ul>
 <p>Two layers isn't redundancy — it's division of labor: the bottom handles "how to send requests," the top handles "how to use the model."</p>
-<div class="mermaid-direct" data-series="goagent">flowchart TD
+<div class="mermaid-direct" data-series="goagent">
+flowchart TD
     subgraph "Top: How to use the model"
         Adapter[LLMAdapter Interface]
         Factory[Factory Dispatch]
@@ -489,7 +494,8 @@
 <li>Extract JSON from response.</li>
 <li>Validate against Schema.</li>
 </ol>
-<div class="mermaid-direct" data-series="goagent">sequenceDiagram
+<div class="mermaid-direct" data-series="goagent">
+sequenceDiagram
     participant Agent
     participant Adapter as LLMAdapter
     participant Template as Prompt Template
@@ -563,7 +569,8 @@
 <li><strong>Sub Agent</strong> is the execution unit, not the decision maker. It receives a concrete task, calls LLM and tools to complete it.</li>
 </ul>
 <p>This division isn't a "designed architecture" — it naturally emerges from the task decomposition requirement: decomposition implies separation of planner and executor.</p>
-<div class="mermaid-direct" data-series="goagent">flowchart TD
+<div class="mermaid-direct" data-series="goagent">
+flowchart TD
     Input[User Input] --> Leader[Leader Agent<br/>Orchestrator]
     Leader --> Parse[Parse User Profile]
     Parse --> Plan[Plan Task List]
@@ -686,7 +693,8 @@
 <li><strong>Message queue</strong>: Channel-based in-memory queue with enqueue, dequeue, peek.</li>
 <li><strong>Heartbeat</strong>: Periodic heartbeat signals so Leader can detect Sub Agent liveness.</li>
 </ol>
-<div class="mermaid-direct" data-series="goagent">flowchart LR
+<div class="mermaid-direct" data-series="goagent">
+flowchart LR
     Leader[Leader Agent] -->|TASK| Queue[MessageQueue]
     Queue -->|TASK| Sub[Sub Agent]
     Sub -->|RESULT| Queue
@@ -705,7 +713,8 @@
 <p>Message ID: <code>timestamp.atomic_counter.random_suffix</code> — three dimensions ensure uniqueness.</p>
 <h3 id="messagequeue-backup-buffer-prevents-lost-messages">MessageQueue: Backup Buffer Prevents Lost Messages</h3>
 <p>The key design: <strong>Peek never loses messages</strong>. When Peek takes a message out to inspect, if it can't put it back (queue full), the message goes into a backup buffer. Next Dequeue consumes backup first.</p>
-<div class="mermaid-direct" data-series="goagent">flowchart TD
+<div class="mermaid-direct" data-series="goagent">
+flowchart TD
     Peek[Peek] --> Check{backup has data?}
     Check -->|Yes| ReturnB[Return backup[0]]
     Check -->|No| Receive{Receive from channel}
@@ -718,7 +727,8 @@
 <p>Enqueue: <code>select</code> with three paths — success, context cancelled, queue full (never blocks).
 Dequeue: prioritizes backup buffer, then main channel.</p>
 <h3 id="heartbeat">Heartbeat</h3>
-<div class="mermaid-direct" data-series="goagent">sequenceDiagram
+<div class="mermaid-direct" data-series="goagent">
+sequenceDiagram
     participant Sub as Sub Agent
     participant Monitor as HeartbeatMonitor
     participant Leader as Leader Agent
@@ -779,7 +789,8 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 <tr><td>Task</td><td>Current task</td><td>Task input/output</td><td>Track execution</td></tr>
 <tr><td>Distilled</td><td>Long-term</td><td>Extracted experience</td><td>Retrieve for similar tasks</td></tr>
 </tbody></table>
-<div class="mermaid-direct" data-series="goagent">flowchart TD
+<div class="mermaid-direct" data-series="goagent">
+flowchart TD
     Input[User Input] --> Session[Session Memory<br/>Short-term]
     Input --> Task[Task Memory<br/>Mid-term]
     Task --> Distill[Distilled Memory<br/>Long-term]
@@ -793,7 +804,8 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 <p><code>BuildContext</code> combines current input with message history. Key designs: TTL cleanup, max history limit, fault tolerance (returns original input on error).</p>
 <h3 id="distilled-memory-pipeline">Distilled Memory Pipeline</h3>
 <p>Not simple caching — a full pipeline:</p>
-<div class="mermaid-direct" data-series="goagent">flowchart TD
+<div class="mermaid-direct" data-series="goagent">
+flowchart TD
     Conv[Conversation] --> Extract[ExperienceExtractor]
     Extract --> Classify[MemoryClassifier]
     Classify --> Score[ImportanceScorer]
@@ -931,7 +943,8 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 <p>Not duplicate implementations: YAML DAG for "known processes," dynamic graph for "processes needing runtime decisions."</p>
 <h2 id="architecture-naturally-emerges">Architecture Naturally Emerges</h2>
 <h3 id="yaml-dag-engine">YAML DAG Engine</h3>
-<div class="mermaid-direct" data-series="goagent">flowchart TD
+<div class="mermaid-direct" data-series="goagent">
+flowchart TD
     A[collect] --> B[analyze]
     A --> C[retrieve]
     B --> D[synthesize]
@@ -940,7 +953,8 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 <p>Executor follows topological order, semaphore controls concurrency, supports retry and template variable substitution.</p>
 <h3 id="dynamic-graph-engine">Dynamic Graph Engine</h3>
 <p>Three node types: AgentNode, ToolNode, FuncNode. Conditional edges for dynamic routing. Three schedulers: FIFO, Priority, Shortest-Job-First.</p>
-<div class="mermaid-direct" data-series="goagent">flowchart TD
+<div class="mermaid-direct" data-series="goagent">
+flowchart TD
     Start --> Analyze
     Analyze -->|confidence > 0.8| Fast[Fast Path]
     Analyze -->|confidence <= 0.8| Deep[Deep Analysis]
@@ -995,7 +1009,8 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 <li><strong>EmbeddingQueue</strong>: Async vectorization, idempotent dedup, dead letter queue.</li>
 <li><strong>RetrievalService</strong>: Hybrid search (vector + BM25), query rewriting, time decay, multi-source fusion.</li>
 </ol>
-<div class="mermaid-direct" data-series="goagent">flowchart TD
+<div class="mermaid-direct" data-series="goagent">
+flowchart TD
     Write[Write Text] --> Buffer[WriteBuffer<br/>Batch Write]
     Buffer --> DB[(PostgreSQL<br/>pending)]
     DB --> Queue[EmbeddingQueue<br/>Async Vectorize]
@@ -1014,7 +1029,8 @@ Dequeue: prioritizes backup buffer, then main channel.</p>
 <h3 id="embeddingqueue">EmbeddingQueue</h3>
 <p>Async vectorization pipeline: text → DB (pending) → EmbeddingQueue → Embedding Service → DB (completed). Dedupe key ensures idempotency, dead letter queue handles repeated failures, reconciliation periodically retries pending records.</p>
 <h3 id="retrievalservice-hybrid-search">RetrievalService: Hybrid Search</h3>
-<div class="mermaid-direct" data-series="goagent">sequenceDiagram
+<div class="mermaid-direct" data-series="goagent">
+sequenceDiagram
     participant User
     participant RS as RetrievalService
     participant PG as PostgreSQL

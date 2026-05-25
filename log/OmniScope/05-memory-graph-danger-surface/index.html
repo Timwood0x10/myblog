@@ -18,6 +18,9 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
 
     <meta name="description" content="Cross-language memory analysis should not only ask whether `malloc` or `free` exists. It should ask whether a pointer crosses FFI, comes from an unsafe region, or propagates through aliases. OmniScope uses `MemoryGraph` and `DangerSurfacePass` to connect these facts.">
 
@@ -107,7 +110,8 @@
 <p><code>MemoryGraph</code> stores allocations, frees, call arguments, returns, and aliases in one graph. <code>DangerSurfacePass</code> starts from FFI/unsafe boundaries and marks the pointers and functions worth deeper analysis. Reports then follow risky paths rather than isolated APIs.</p>
 <h2 id="role-of-memorygraph">Role of MemoryGraph</h2>
 <p><code>MemoryGraph</code> is defined at <code>src/semantics/memory_graph.zig:160</code>. It stores memory-related facts: allocations, frees, call arguments, call returns, alias relations, zones, and language sources.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[trackAlloc] --> M[MemoryGraph]
     B[trackFree] --> M
     C[trackCallArg] --> M
@@ -119,7 +123,8 @@
 <p>The graph does not attempt to model every possible program path. It answers a narrower question: is there enough evidence that this pointer is relevant to an FFI/unsafe risk path?</p>
 <h2 id="risk-path-classification">Risk-path classification</h2>
 <p><code>MemoryGraph.isOnDangerPath</code> is implemented around <code>src/semantics/memory_graph.zig:892</code>. It may return categories such as <code>ffi_arg</code>, <code>ffi_ret</code>, and <code>unsafe_alloc</code>. <code>PassContext.isOnDangerPathFull</code> at <code>src/pass/pass.zig:866</code> provides a shared entry point for other passes.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[ptr_val] --> B[PassContext.isOnDangerPathFull]
     B --> C[MemoryGraph.isOnDangerPath]
     C --> D{DangerPathKind}
@@ -133,7 +138,8 @@
 <p>A shared entry point keeps later passes from inventing inconsistent risk definitions.</p>
 <h2 id="how-dangersurfacepass-marks-relevant-objects">How DangerSurfacePass marks relevant objects</h2>
 <p><code>DangerSurfacePass</code> starts at <code>src/pass/analysis/danger_surface.zig:37</code>. It consumes <code>cross_lang_edges</code> and <code>memory_graph</code>, then updates <code>danger_surface_relevant</code>, <code>ffi_auto_relevant</code>, and <code>relevant_functions</code>.</p>
-<div class="mermaid-direct" data-series="omniscope">sequenceDiagram
+<div class="mermaid-direct" data-series="omniscope">
+sequenceDiagram
     participant CG as CrossLangEdges
     participant MG as MemoryGraph
     participant DS as DangerSurfacePass
@@ -149,7 +155,8 @@
 <p>Two implementation choices are visible in the source: known FFI arguments and returns can be marked directly, while MemoryGraph nodes already on a risk path can be expanded through alias closure.</p>
 <h2 id="why-alias-closure-matters">Why alias closure matters</h2>
 <p><code>traceAliasClosure</code> is at <code>src/pass/analysis/danger_surface.zig:144</code>. In LLVM IR, one memory object may appear through several SSA values after bitcasts, loads, stores, parameters, and returns. Marking only the original pointer may miss later uses.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart TD
+<div class="mermaid-direct" data-series="omniscope">
+flowchart TD
     A[ptr0: FFI relevant] --> B[alias set]
     B --> C[ptr1]
     B --> D[ptr2]
@@ -160,7 +167,8 @@
 <p>This is not a full alias analysis. It is a focused propagation step for FFI-related pointer families.</p>
 <h2 id="from-risk-paths-to-prioritized-reporting">From risk paths to prioritized reporting</h2>
 <p>Later passes can use <code>isOnDangerPathFull</code> or relevance sets to filter findings. A local C allocation/free pair may be lower priority, while a pointer crossing FFI through arguments, returns, or callbacks may require review.</p>
-<div class="mermaid-direct" data-series="omniscope">flowchart LR
+<div class="mermaid-direct" data-series="omniscope">
+flowchart LR
     A[Potential memory issue] --> B{On risk path?}
     B -->|No| C[Filter / lower priority / local issue]
     B -->|Yes| D[FFI-relevant issue]

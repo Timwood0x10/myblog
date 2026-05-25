@@ -18,7 +18,8 @@
 &lt;p&gt;This series explains what OmniScope does, how data moves through the project, and which modules make which decisions. It is written for readers interested in LLVM IR, static analysis, FFI safety, and cross-language boundaries across Rust, C, Zig, Go, and C++.&lt;&#x2F;p&gt;
 &lt;p&gt;OmniScope focuses on one concrete question: &lt;strong&gt;after ownership, lifetime, and deallocation protocols cross a language boundary, can a static analyzer recover enough semantics to produce reviewable findings?&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
 &lt;p&gt;In one sentence: OmniScope reads LLVM IR (&lt;code&gt;.ll&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;.bc&lt;&#x2F;code&gt;), turns calls, pointer flows, allocation&#x2F;free events, language boundaries, and unsafe regions into queryable facts, then reports high-risk paths related to FFI, ownership, and lifetime through text, JSON, or SARIF.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[LLVM IR input] --&gt; B[Module loading]
     B --&gt; C[PassContext]
     C --&gt; D[CallGraph &#x2F; CrossLangEdge]
@@ -92,7 +93,8 @@
 &lt;p&gt;OmniScope’s choice follows from that gap: move down to LLVM IR, the layer where many languages meet, then reconstruct part of the missing semantics from symbols, calls, pointer flow, allocation&#x2F;free events, and FFI boundaries.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;the-issue-is-not-free-it-is-the-lost-deallocation-protocol&quot;&gt;The issue is not &lt;code&gt;free&lt;&#x2F;code&gt;; it is the lost deallocation protocol&lt;&#x2F;h2&gt;
 &lt;p&gt;A common Rust&#x2F;C boundary pattern is: Rust exposes a pointer through &lt;code&gt;Box::into_raw&lt;&#x2F;code&gt;, then C stores or releases that pointer. In Rust, &lt;code&gt;into_raw&lt;&#x2F;code&gt; is an explicit ownership transfer. In C, &lt;code&gt;free(ptr)&lt;&#x2F;code&gt; is an ordinary deallocation. The problem is that no single compiler verifies the full protocol across both sides.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;sequenceDiagram
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+sequenceDiagram
     participant R as Rust ownership model
     participant ABI as C ABI &#x2F; LLVM IR
     participant C as C manual memory
@@ -104,7 +106,8 @@
 &lt;p&gt;At the IR layer, source syntax is gone, but external declarations, call&#x2F;invoke instructions, allocas, loads&#x2F;stores, bitcasts, symbol names, and some debug information may remain. The analyzer tries to recover enough ownership and lifetime semantics from these facts.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;what-omniscope-actually-analyzes&quot;&gt;What OmniScope actually analyzes&lt;&#x2F;h2&gt;
 &lt;p&gt;OmniScope’s entry point consumes LLVM IR files such as &lt;code&gt;.ll&lt;&#x2F;code&gt; and &lt;code&gt;.bc&lt;&#x2F;code&gt;, not source directories. Argument parsing starts at &lt;code&gt;src&#x2F;main.zig:73&lt;&#x2F;code&gt;, the main entry is &lt;code&gt;src&#x2F;main.zig:567&lt;&#x2F;code&gt;, and single-module analysis is driven by &lt;code&gt;runModulePipeline&lt;&#x2F;code&gt; at &lt;code&gt;src&#x2F;main.zig:171&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[Source languages: Rust &#x2F; C &#x2F; Zig &#x2F; Go &#x2F; C++] --&gt; B[Compiler emits LLVM IR]
     B --&gt; C[IRLoader obtains ModuleRef]
     C --&gt; D[Pipeline.setModule]
@@ -120,7 +123,8 @@
 &lt;li&gt;A Rust &lt;code&gt;Box&lt;&#x2F;code&gt; pointer released by C may indicate allocator mismatch or ownership protocol breakage.&lt;&#x2F;li&gt;
 &lt;li&gt;Rust &lt;code&gt;as_ptr&lt;&#x2F;code&gt; used locally may be benign, while passing it to FFI and storing it may create a dangling pointer.&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[Function call] --&gt; B{Crosses language boundary?}
     B --&gt;|No| C[Local semantics]
     B --&gt;|Yes| D[FFI semantics]
@@ -135,7 +139,8 @@
 &lt;li&gt;&lt;code&gt;ZoneKind&lt;&#x2F;code&gt;: &lt;code&gt;safe&lt;&#x2F;code&gt;, &lt;code&gt;unsafe&lt;&#x2F;code&gt;, &lt;code&gt;ffi&lt;&#x2F;code&gt;, &lt;code&gt;runtime_internal&lt;&#x2F;code&gt;, and &lt;code&gt;unknown&lt;&#x2F;code&gt;, defined at &lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:24&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
 &lt;li&gt;&lt;code&gt;SemanticRegistry&lt;&#x2F;code&gt;: layered function semantics, looked up through &lt;code&gt;src&#x2F;registry&#x2F;semantic_registry.zig:90&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TB
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TB
     A[LLVM IR facts] --&gt; B[PassContext]
     B --&gt; C[CrossLangEdge]
     B --&gt; D[MemoryGraph]
@@ -204,7 +209,8 @@
 &lt;p&gt;The CLI describes how the user wants to run. IRLoader turns input into a module. Pipeline is where the module, shared context, passes, indexes, and output path are assembled. Later structures such as &lt;code&gt;PassContext&lt;&#x2F;code&gt;, &lt;code&gt;CallSiteIndex&lt;&#x2F;code&gt;, &lt;code&gt;MemoryGraph&lt;&#x2F;code&gt;, and &lt;code&gt;GlobalAllocTracker&lt;&#x2F;code&gt; appear naturally from this lifecycle.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;config-defines-the-external-shape-of-the-run&quot;&gt;Config defines the external shape of the run&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;Config&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;main.zig:24&lt;&#x2F;code&gt;. It stores input files, output format, output path, visualization flag, user-code focus, FFI-only mode, and stdlib inclusion. Argument parsing starts at &lt;code&gt;src&#x2F;main.zig:73&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[argv] --&gt; B[parseArgs]
     B --&gt; C[Config]
     C --&gt; D[input_files]
@@ -215,7 +221,8 @@
 &lt;p&gt;One implementation detail matters: the CLI parses analysis intent, but the exact effect depends on individual pass implementations. For example, some noise-reduction options are instantiated inside specific passes.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;runmodulepipeline-is-the-analysis-loop&quot;&gt;&lt;code&gt;runModulePipeline&lt;&#x2F;code&gt; is the analysis loop&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;runModulePipeline&lt;&#x2F;code&gt; is located at &lt;code&gt;src&#x2F;main.zig:171&lt;&#x2F;code&gt;. It initializes the Pipeline, attaches the LLVM module, registers passes, runs static analysis, and collects issues.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;sequenceDiagram
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+sequenceDiagram
     participant Main as main.zig
     participant Loader as IRLoader
     participant Pipe as Pipeline
@@ -240,7 +247,8 @@
 &lt;&#x2F;ul&gt;
 &lt;h2 id=&quot;registerallpasses-reveals-the-analysis-sequence&quot;&gt;&lt;code&gt;registerAllPasses&lt;&#x2F;code&gt; reveals the analysis sequence&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;registerAllPasses&lt;&#x2F;code&gt; is at &lt;code&gt;src&#x2F;main.zig:153&lt;&#x2F;code&gt;. It registers CallGraph, TaintPropagation, FFI Boundary, FFI Type Mismatch, FFI Body Check, FFI Unsafe, PtrLifetime, DangerSurface, PointerOwnership, CallbackEscape, RustFfiAuditor, ReturnCheck, MemorySafety, FreeValidation, and BufferOverflow.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[CallGraph] --&gt; B[FFI Boundary]
     B --&gt; C[Type &#x2F; Body &#x2F; Unsafe]
     C --&gt; D[PtrLifetime]
@@ -263,7 +271,8 @@
 &lt;li&gt;&lt;code&gt;memory_graph&lt;&#x2F;code&gt;;&lt;&#x2F;li&gt;
 &lt;li&gt;&lt;code&gt;danger_surface_relevant&lt;&#x2F;code&gt;, &lt;code&gt;ffi_auto_relevant&lt;&#x2F;code&gt;, and &lt;code&gt;relevant_functions&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TB
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TB
     subgraph Pipeline.run
         A[Clear DataFlowGraph] --&gt; B[Create PassContext]
         B --&gt; C[Attach module]
@@ -274,7 +283,8 @@
     end
 &lt;&#x2F;div&gt;&lt;h2 id=&quot;output-is-part-of-the-design&quot;&gt;Output is part of the design&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;emitOutput&lt;&#x2F;code&gt; is at &lt;code&gt;src&#x2F;main.zig:207&lt;&#x2F;code&gt;. It branches into JSON, SARIF, or text output. JSON is produced by &lt;code&gt;formatIssuesAsJson&lt;&#x2F;code&gt;; SARIF is produced by &lt;code&gt;SarifOutput&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[Issue list] --&gt; B[emitOutput]
     B --&gt; C[JSON: formatIssuesAsJson]
     B --&gt; D[SARIF: SarifOutput]
@@ -336,7 +346,8 @@
 &lt;p&gt;&lt;code&gt;PassManager&lt;&#x2F;code&gt; registers, sorts, and executes passes. &lt;code&gt;PassContext&lt;&#x2F;code&gt; carries facts across them. This lets call relationships, MemoryGraph state, danger surfaces, and issues move through one analysis context instead of being trapped inside individual rules.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;what-passmanager-owns&quot;&gt;What PassManager owns&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;PassManager&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;pass&#x2F;manager.zig:23&lt;&#x2F;code&gt;. It stores registered passes, a name-to-index map, resolved execution order, and cached execution names. Registration starts at &lt;code&gt;src&#x2F;pass&#x2F;manager.zig:61&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[registerPass] --&gt; B[passes ArrayList]
     A --&gt; C[pass_map]
     B --&gt; D[resolveDependencies]
@@ -347,7 +358,8 @@
 &lt;p&gt;This keeps scheduling separate from the CLI and from each individual pass.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;dependency-resolution-uses-kahn-topological-sorting&quot;&gt;Dependency resolution uses Kahn topological sorting&lt;&#x2F;h2&gt;
 &lt;p&gt;The dependency resolver builds an adjacency list and in-degree table. Passes with zero in-degree enter the queue. Each popped node reduces the in-degree of its successors. If the final result contains fewer nodes than the registered pass count, a cycle is reported.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[Passes + dependencies] --&gt; B[Build adjacency &#x2F; in_degree]
     B --&gt; C[Queue zero in-degree nodes]
     C --&gt; D[Pop node]
@@ -362,7 +374,8 @@
 &lt;p&gt;This matters because later passes may consume facts produced by earlier passes: risk-path checks need cross-language edges and memory facts; ownership checks need allocation and call information.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;graceful-degradation-is-deliberate&quot;&gt;Graceful degradation is deliberate&lt;&#x2F;h2&gt;
 &lt;p&gt;The run loop starts at &lt;code&gt;src&#x2F;pass&#x2F;manager.zig:193&lt;&#x2F;code&gt;. If a pass fails, the manager logs a warning, increments a failure counter, and continues executing later passes.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[Run pass] --&gt; B{run_fn succeeds?}
     B --&gt;|Yes| C[Record timing]
     B --&gt;|No| D[warn + pass_failures++]
@@ -374,14 +387,16 @@
 &lt;p&gt;This is useful for real-world IR, which may come from different compilers, optimization levels, or link configurations. A failure in one analysis stage should not necessarily discard unrelated findings.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;passcontext-is-the-fact-bus&quot;&gt;PassContext is the fact bus&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;PassContext&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:192&lt;&#x2F;code&gt;. It is the shared state through which passes exchange information. CallGraphPass may write &lt;code&gt;cross_lang_edges&lt;&#x2F;code&gt;; PtrLifetimePass may write &lt;code&gt;memory_graph&lt;&#x2F;code&gt;; DangerSurfacePass may write relevance sets; issue-producing passes read those facts.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[CallGraphPass] --&gt;|writes| X[PassContext.cross_lang_edges]
     B[PtrLifetimePass] --&gt;|writes| Y[PassContext.memory_graph]
     C[DangerSurfacePass] --&gt;|reads X&#x2F;Y, writes| Z[relevant sets]
     D[FFI &#x2F; Ownership &#x2F; Memory passes] --&gt;|read Z&#x2F;Y| E[Issue]
 &lt;&#x2F;div&gt;&lt;h2 id=&quot;diagnosticwriter-and-structured-issues&quot;&gt;DiagnosticWriter and structured issues&lt;&#x2F;h2&gt;
 &lt;p&gt;Passes receive both &lt;code&gt;PassContext&lt;&#x2F;code&gt; and &lt;code&gt;DiagnosticWriter&lt;&#x2F;code&gt;. &lt;code&gt;DiagnosticWriter&lt;&#x2F;code&gt; handles logs and diagnostics. Structured findings are added through &lt;code&gt;ctx.addIssue&lt;&#x2F;code&gt;, whose entry point is at &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:458&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[Pass detects finding] --&gt; B{Diagnostic only?}
     B --&gt;|Yes| C[DiagnosticWriter]
     B --&gt;|No| D[Issue.init &#x2F; initWithReason]
@@ -466,7 +481,8 @@
 &lt;p&gt;&lt;code&gt;ZoneClassifier&lt;&#x2F;code&gt; classifies the region first. &lt;code&gt;SemanticRegistry&lt;&#x2F;code&gt; then explains function meaning in cross-language context. Together they provide context to later danger-path checks: the same call can receive different priority depending on its zone and semantic kind.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;zonekind-classifies-code-by-risk-region&quot;&gt;ZoneKind classifies code by risk region&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;ZoneKind&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:24&lt;&#x2F;code&gt;. It includes &lt;code&gt;safe&lt;&#x2F;code&gt;, &lt;code&gt;unsafe&lt;&#x2F;code&gt;, &lt;code&gt;ffi&lt;&#x2F;code&gt;, &lt;code&gt;runtime_internal&lt;&#x2F;code&gt;, and &lt;code&gt;unknown&lt;&#x2F;code&gt;. The file-level comment states the operating principle: focus where language guarantees stop.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[Function &#x2F; Instruction &#x2F; Debug path] --&gt; B[Zone Classifier]
     B --&gt; C[safe: language guarantees likely apply]
     B --&gt; D[unsafe: explicit escape]
@@ -477,7 +493,8 @@
 &lt;p&gt;This model is not a proof that safe zones are bug-free. It is a prioritization layer. For an FFI-focused analyzer, runtime glue or container internals should usually not have the same weight as user-written unsafe wrappers.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;multi-language-escape-triggers&quot;&gt;Multi-language escape triggers&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;EscapeTrigger&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:45&lt;&#x2F;code&gt;. It represents cross-language escape points across ecosystems: Rust unsafe&#x2F;extern&#x2F;raw pointers, Zig pointer casts and C imports, Go cgo and &lt;code&gt;unsafe.Pointer&lt;&#x2F;code&gt;, and C++ extern C, reinterpret casts, and manual memory.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[Rust unsafe &#x2F; extern C] --&gt; Z[EscapeTrigger]
     B[Zig @ptrCast &#x2F; @cImport] --&gt; Z
     C[Go cgo &#x2F; unsafe.Pointer] --&gt; Z
@@ -491,7 +508,8 @@
 &lt;li&gt;&lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:347&lt;&#x2F;code&gt; classifies by function name.&lt;&#x2F;li&gt;
 &lt;li&gt;&lt;code&gt;src&#x2F;semantics&#x2F;zone_classifier.zig:394&lt;&#x2F;code&gt; classifies LLVM functions using declarations, intrinsics, debug information, and path data when available.&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[LLVMValueRef function] --&gt; B{External declaration?}
     B --&gt;|Yes| C[May be ffi]
     B --&gt;|No| D[Name-based classification]
@@ -501,7 +519,8 @@
 &lt;p&gt;These rules are heuristic. Symbol names and debug information quality can affect classification, so Zone should be described as a risk-prioritization mechanism rather than a formal proof.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;semantic-registry-describes-function-meaning-in-ffi-context&quot;&gt;Semantic Registry describes function meaning in FFI context&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;SemanticRegistry&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;registry&#x2F;semantic_registry.zig:48&lt;&#x2F;code&gt;; lookup starts at &lt;code&gt;src&#x2F;registry&#x2F;semantic_registry.zig:90&lt;&#x2F;code&gt;. The registry is layered by ecosystem: C standard library, Rust ownership patterns, Go cgo, Zig, C++, JNI, Python C API, POSIX, and dynamic loading.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[func_name] --&gt; B[SemanticRegistry.lookup]
     B --&gt; C[Layer1: C stdlib high-risk]
     B --&gt; D[Layer2: Rust ownership]
@@ -519,7 +538,8 @@
 &lt;p&gt;The registry helps interpret calls in context. &lt;code&gt;Box::into_raw&lt;&#x2F;code&gt; is not a vulnerability by itself; it changes the ownership protocol. &lt;code&gt;strcpy&lt;&#x2F;code&gt; in local C code and &lt;code&gt;strcpy&lt;&#x2F;code&gt; at a Rust-to-C boundary may require different review priorities.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;zone-registry-danger-path&quot;&gt;Zone + Registry + Danger Path&lt;&#x2F;h2&gt;
 &lt;p&gt;Zone and Registry should not produce most findings directly. A more controlled path is: classify the region, look up function semantics, ask whether the pointer or function is on a relevant risk path, then produce an issue if warranted.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[Call &#x2F; Function] --&gt; B[Zone]
     A --&gt; C[Registry]
     B --&gt; D[Region risk]
@@ -606,7 +626,8 @@
 &lt;p&gt;&lt;code&gt;MemoryGraph&lt;&#x2F;code&gt; stores allocations, frees, call arguments, returns, and aliases in one graph. &lt;code&gt;DangerSurfacePass&lt;&#x2F;code&gt; starts from FFI&#x2F;unsafe boundaries and marks the pointers and functions worth deeper analysis. Reports then follow risky paths rather than isolated APIs.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;role-of-memorygraph&quot;&gt;Role of MemoryGraph&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;MemoryGraph&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;semantics&#x2F;memory_graph.zig:160&lt;&#x2F;code&gt;. It stores memory-related facts: allocations, frees, call arguments, call returns, alias relations, zones, and language sources.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[trackAlloc] --&gt; M[MemoryGraph]
     B[trackFree] --&gt; M
     C[trackCallArg] --&gt; M
@@ -618,7 +639,8 @@
 &lt;p&gt;The graph does not attempt to model every possible program path. It answers a narrower question: is there enough evidence that this pointer is relevant to an FFI&#x2F;unsafe risk path?&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;risk-path-classification&quot;&gt;Risk-path classification&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;MemoryGraph.isOnDangerPath&lt;&#x2F;code&gt; is implemented around &lt;code&gt;src&#x2F;semantics&#x2F;memory_graph.zig:892&lt;&#x2F;code&gt;. It may return categories such as &lt;code&gt;ffi_arg&lt;&#x2F;code&gt;, &lt;code&gt;ffi_ret&lt;&#x2F;code&gt;, and &lt;code&gt;unsafe_alloc&lt;&#x2F;code&gt;. &lt;code&gt;PassContext.isOnDangerPathFull&lt;&#x2F;code&gt; at &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:866&lt;&#x2F;code&gt; provides a shared entry point for other passes.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[ptr_val] --&gt; B[PassContext.isOnDangerPathFull]
     B --&gt; C[MemoryGraph.isOnDangerPath]
     C --&gt; D{DangerPathKind}
@@ -632,7 +654,8 @@
 &lt;p&gt;A shared entry point keeps later passes from inventing inconsistent risk definitions.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;how-dangersurfacepass-marks-relevant-objects&quot;&gt;How DangerSurfacePass marks relevant objects&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;DangerSurfacePass&lt;&#x2F;code&gt; starts at &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;danger_surface.zig:37&lt;&#x2F;code&gt;. It consumes &lt;code&gt;cross_lang_edges&lt;&#x2F;code&gt; and &lt;code&gt;memory_graph&lt;&#x2F;code&gt;, then updates &lt;code&gt;danger_surface_relevant&lt;&#x2F;code&gt;, &lt;code&gt;ffi_auto_relevant&lt;&#x2F;code&gt;, and &lt;code&gt;relevant_functions&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;sequenceDiagram
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+sequenceDiagram
     participant CG as CrossLangEdges
     participant MG as MemoryGraph
     participant DS as DangerSurfacePass
@@ -648,7 +671,8 @@
 &lt;p&gt;Two implementation choices are visible in the source: known FFI arguments and returns can be marked directly, while MemoryGraph nodes already on a risk path can be expanded through alias closure.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;why-alias-closure-matters&quot;&gt;Why alias closure matters&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;traceAliasClosure&lt;&#x2F;code&gt; is at &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;danger_surface.zig:144&lt;&#x2F;code&gt;. In LLVM IR, one memory object may appear through several SSA values after bitcasts, loads, stores, parameters, and returns. Marking only the original pointer may miss later uses.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[ptr0: FFI relevant] --&gt; B[alias set]
     B --&gt; C[ptr1]
     B --&gt; D[ptr2]
@@ -659,7 +683,8 @@
 &lt;p&gt;This is not a full alias analysis. It is a focused propagation step for FFI-related pointer families.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;from-risk-paths-to-prioritized-reporting&quot;&gt;From risk paths to prioritized reporting&lt;&#x2F;h2&gt;
 &lt;p&gt;Later passes can use &lt;code&gt;isOnDangerPathFull&lt;&#x2F;code&gt; or relevance sets to filter findings. A local C allocation&#x2F;free pair may be lower priority, while a pointer crossing FFI through arguments, returns, or callbacks may require review.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[Potential memory issue] --&gt; B{On risk path?}
     B --&gt;|No| C[Filter &#x2F; lower priority &#x2F; local issue]
     B --&gt;|Yes| D[FFI-relevant issue]
@@ -751,7 +776,8 @@
 &lt;li&gt;unsafe FFI calls;&lt;&#x2F;li&gt;
 &lt;li&gt;stack address escape to &lt;code&gt;extern C&lt;&#x2F;code&gt;.&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[RustFfiAuditor] --&gt; B[Box::into_raw &#x2F; from_raw]
     A --&gt; C[as_ptr borrow escape]
     A --&gt; D[allocator mismatch]
@@ -761,7 +787,8 @@
     A --&gt; H[stack escape]
 &lt;&#x2F;div&gt;&lt;h2 id=&quot;as-ptr-borrow-escape-recovering-a-lifetime-risk-from-ir-calls&quot;&gt;&lt;code&gt;as_ptr&lt;&#x2F;code&gt; borrow escape: recovering a lifetime risk from IR calls&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;detectAsPtrEscape&lt;&#x2F;code&gt; is implemented at &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;rust_ffi_auditor.zig:180&lt;&#x2F;code&gt;. It iterates LLVM functions, basic blocks, and instructions; handles only &lt;code&gt;LLVMCall&lt;&#x2F;code&gt; and &lt;code&gt;LLVMInvoke&lt;&#x2F;code&gt;; retrieves the callee from the final operand; reads the callee name; and matches Rust &lt;code&gt;as_ptr&lt;&#x2F;code&gt; patterns.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[LLVM Function] --&gt; B[BasicBlock iterator]
     B --&gt; C[Instruction iterator]
     C --&gt; D{opcode == call&#x2F;invoke?}
@@ -773,7 +800,8 @@
     G --&gt;|Yes| H[addFinding + ctx.addIssue]
 &lt;&#x2F;div&gt;
 &lt;p&gt;The risk is that &lt;code&gt;String&lt;&#x2F;code&gt; or &lt;code&gt;Vec&lt;&#x2F;code&gt; &lt;code&gt;as_ptr&lt;&#x2F;code&gt; returns a borrowed pointer. If C stores it, the Rust object may be dropped while C still holds the address.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;sequenceDiagram
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+sequenceDiagram
     participant R as Rust local Vec&#x2F;String
     participant P as raw pointer from as_ptr
     participant C as C FFI callee
@@ -786,7 +814,8 @@
 &lt;p&gt;At &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;rust_ffi_auditor.zig:212&lt;&#x2F;code&gt;, the rule creates a &lt;code&gt;borrow_escape&lt;&#x2F;code&gt; issue through &lt;code&gt;Issue.initWithReason&lt;&#x2F;code&gt;, with a reason explaining that a local &lt;code&gt;String&#x2F;Vec&lt;&#x2F;code&gt; pointer passed to extern C may dangle.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;into-raw-from-raw-ownership-transfer-should-close-correctly&quot;&gt;&lt;code&gt;into_raw&#x2F;from_raw&lt;&#x2F;code&gt;: ownership transfer should close correctly&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;Box::into_raw&lt;&#x2F;code&gt; converts Rust-managed heap ownership into a raw pointer. The caller must ensure the later deallocation protocol is correct. Missing restoration can leak; double restoration can double free; C-side release can produce allocator mismatch depending on allocation protocol.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[Box&lt;T&gt;] --&gt; B[Box::into_raw]
     B --&gt; C[*mut T]
     C --&gt; D{Later protocol}
@@ -797,7 +826,8 @@
 &lt;p&gt;&lt;code&gt;into_raw&lt;&#x2F;code&gt; alone is not a vulnerability. The finding depends on the surrounding protocol and subsequent pointer flow.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;cross-language-allocator-mismatch&quot;&gt;Cross-language allocator mismatch&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;detectCrossLangMismatch&lt;&#x2F;code&gt; starts at &lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;rust_ffi_auditor.zig:230&lt;&#x2F;code&gt;. It iterates call&#x2F;invoke instructions and attempts to identify Rust allocation paired with C deallocation.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;sequenceDiagram
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+sequenceDiagram
     participant RA as Rust allocator
     participant IR as LLVM IR pointer
     participant CF as C free
@@ -809,7 +839,8 @@
 &lt;p&gt;The accuracy of this kind of check depends on symbol names, preserved call relationships, wrappers, inlining, and custom allocators.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;general-ffi-checks&quot;&gt;General FFI checks&lt;&#x2F;h2&gt;
 &lt;p&gt;The auditor also runs checks that are not Rust-only, such as unsafe FFI call scanning and stack address escape. Stack escape is relevant when a pointer to a local object is passed to C and then stored beyond the call.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[alloca &#x2F; local stack object] --&gt; B[Take address]
     B --&gt; C[Pass to extern C]
     C --&gt; D{Does C store it?}
@@ -876,7 +907,8 @@
 &lt;p&gt;OmniScope makes passes produce structured &lt;code&gt;Issue&lt;&#x2F;code&gt; values first, then lets the output layer serialize them as text, JSON, or SARIF. Analysis logic, evidence fields, and engineering integration stay separate: passes find problems, &lt;code&gt;Issue&lt;&#x2F;code&gt; stores evidence, and &lt;code&gt;emitOutput&lt;&#x2F;code&gt; decides how to deliver it.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;issue-is-the-shared-result-type&quot;&gt;Issue is the shared result type&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;Issue&lt;&#x2F;code&gt; is defined in &lt;code&gt;src&#x2F;diag&#x2F;issue.zig&lt;&#x2F;code&gt;, and issue kinds are exposed from &lt;code&gt;src&#x2F;common&#x2F;types.zig:151&lt;&#x2F;code&gt;. The structure carries kind, message, location, severity, confidence, confidence level, reason, FFI boundary, trace, and classification.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;classDiagram
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+classDiagram
     class Issue {
         kind
         message
@@ -901,7 +933,8 @@
 &lt;&#x2F;ul&gt;
 &lt;h2 id=&quot;from-pass-to-issue&quot;&gt;From Pass to Issue&lt;&#x2F;h2&gt;
 &lt;p&gt;When a pass finds something reportable, it creates an &lt;code&gt;Issue&lt;&#x2F;code&gt; with constructors such as &lt;code&gt;Issue.init&lt;&#x2F;code&gt; or &lt;code&gt;Issue.initWithReason&lt;&#x2F;code&gt;, then calls &lt;code&gt;ctx.addIssue&lt;&#x2F;code&gt;. The entry point is &lt;code&gt;src&#x2F;pass&#x2F;pass.zig:458&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[Analysis Pass] --&gt; B[Rule match]
     B --&gt; C[Construct Issue]
     C --&gt; D[ctx.addIssue]
@@ -912,7 +945,8 @@
 &lt;p&gt;This decouples rule logic from output format. Passes produce structured findings; the main program decides how to serialize them.&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;emitoutput-dispatches-formats&quot;&gt;&lt;code&gt;emitOutput&lt;&#x2F;code&gt; dispatches formats&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;emitOutput&lt;&#x2F;code&gt; is implemented at &lt;code&gt;src&#x2F;main.zig:207&lt;&#x2F;code&gt;. The JSON branch calls &lt;code&gt;formatIssuesAsJson&lt;&#x2F;code&gt; at &lt;code&gt;src&#x2F;main.zig:494&lt;&#x2F;code&gt;; the SARIF branch uses &lt;code&gt;SarifOutput&lt;&#x2F;code&gt;, initialized at &lt;code&gt;src&#x2F;main.zig:232&lt;&#x2F;code&gt;; file output is controlled by &lt;code&gt;config.output_file&lt;&#x2F;code&gt;.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart LR
     A[issues + func_count + time_ms] --&gt; B[emitOutput]
     B --&gt; C{OutputFormat}
     C --&gt;|json| D[formatIssuesAsJson]
@@ -923,7 +957,8 @@
     F --&gt; H[developer console]
 &lt;&#x2F;div&gt;&lt;h2 id=&quot;sarif-integration&quot;&gt;SARIF integration&lt;&#x2F;h2&gt;
 &lt;p&gt;&lt;code&gt;SarifOutput&lt;&#x2F;code&gt; is defined at &lt;code&gt;src&#x2F;output&#x2F;sarif.zig:36&lt;&#x2F;code&gt;, with file writing at &lt;code&gt;src&#x2F;output&#x2F;sarif.zig:167&lt;&#x2F;code&gt;. SARIF lets results be consumed by GitHub Code Scanning, CI systems, and security dashboards.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;omniscope&quot;&gt;
+flowchart TD
     A[OmniScope Issue] --&gt; B[SARIF Result]
     B --&gt; C[sarif.json]
     C --&gt; D[CI Artifact]
@@ -1093,7 +1128,8 @@
 &lt;li&gt;&lt;strong&gt;Entry layer&lt;&#x2F;strong&gt; (&lt;code&gt;SimpleClient&lt;&#x2F;code&gt;, &lt;code&gt;WorkflowClient&lt;&#x2F;code&gt;): Minimal encapsulation for specific scenarios.&lt;&#x2F;li&gt;
 &lt;&#x2F;ol&gt;
 &lt;p&gt;This isn&#x27;t a &quot;designed architecture&quot; — it&#x27;s a layering that naturally emerges from the isolation requirement:&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart TB
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart TB
     subgraph &quot;Callers only see these&quot;
         SimpleClient[SimpleClient&lt;br&#x2F;&gt;One Execute call]
         Client[api.Client&lt;br&#x2F;&gt;Access all services]
@@ -1223,7 +1259,8 @@
 &lt;li&gt;&lt;strong&gt;Top layer&lt;&#x2F;strong&gt;: &lt;code&gt;LLMAdapter&lt;&#x2F;code&gt; interface + Factory pattern, unifying behavior and supporting structured output.&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
 &lt;p&gt;Two layers isn&#x27;t redundancy — it&#x27;s division of labor: the bottom handles &quot;how to send requests,&quot; the top handles &quot;how to use the model.&quot;&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart TD
     subgraph &quot;Top: How to use the model&quot;
         Adapter[LLMAdapter Interface]
         Factory[Factory Dispatch]
@@ -1309,7 +1346,8 @@
 &lt;li&gt;Extract JSON from response.&lt;&#x2F;li&gt;
 &lt;li&gt;Validate against Schema.&lt;&#x2F;li&gt;
 &lt;&#x2F;ol&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;sequenceDiagram
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+sequenceDiagram
     participant Agent
     participant Adapter as LLMAdapter
     participant Template as Prompt Template
@@ -1365,7 +1403,8 @@
 &lt;li&gt;&lt;strong&gt;Sub Agent&lt;&#x2F;strong&gt; is the execution unit, not the decision maker. It receives a concrete task, calls LLM and tools to complete it.&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
 &lt;p&gt;This division isn&#x27;t a &quot;designed architecture&quot; — it naturally emerges from the task decomposition requirement: decomposition implies separation of planner and executor.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart TD
     Input[User Input] --&gt; Leader[Leader Agent&lt;br&#x2F;&gt;Orchestrator]
     Leader --&gt; Parse[Parse User Profile]
     Parse --&gt; Plan[Plan Task List]
@@ -1470,7 +1509,8 @@
 &lt;li&gt;&lt;strong&gt;Message queue&lt;&#x2F;strong&gt;: Channel-based in-memory queue with enqueue, dequeue, peek.&lt;&#x2F;li&gt;
 &lt;li&gt;&lt;strong&gt;Heartbeat&lt;&#x2F;strong&gt;: Periodic heartbeat signals so Leader can detect Sub Agent liveness.&lt;&#x2F;li&gt;
 &lt;&#x2F;ol&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart LR
     Leader[Leader Agent] --&gt;|TASK| Queue[MessageQueue]
     Queue --&gt;|TASK| Sub[Sub Agent]
     Sub --&gt;|RESULT| Queue
@@ -1489,7 +1529,8 @@
 &lt;p&gt;Message ID: &lt;code&gt;timestamp.atomic_counter.random_suffix&lt;&#x2F;code&gt; — three dimensions ensure uniqueness.&lt;&#x2F;p&gt;
 &lt;h3 id=&quot;messagequeue-backup-buffer-prevents-lost-messages&quot;&gt;MessageQueue: Backup Buffer Prevents Lost Messages&lt;&#x2F;h3&gt;
 &lt;p&gt;The key design: &lt;strong&gt;Peek never loses messages&lt;&#x2F;strong&gt;. When Peek takes a message out to inspect, if it can&#x27;t put it back (queue full), the message goes into a backup buffer. Next Dequeue consumes backup first.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart TD
     Peek[Peek] --&gt; Check{backup has data?}
     Check --&gt;|Yes| ReturnB[Return backup[0]]
     Check --&gt;|No| Receive{Receive from channel}
@@ -1502,7 +1543,8 @@
 &lt;p&gt;Enqueue: &lt;code&gt;select&lt;&#x2F;code&gt; with three paths — success, context cancelled, queue full (never blocks).
 Dequeue: prioritizes backup buffer, then main channel.&lt;&#x2F;p&gt;
 &lt;h3 id=&quot;heartbeat&quot;&gt;Heartbeat&lt;&#x2F;h3&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;sequenceDiagram
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+sequenceDiagram
     participant Sub as Sub Agent
     participant Monitor as HeartbeatMonitor
     participant Leader as Leader Agent
@@ -1545,7 +1587,8 @@ Dequeue: prioritizes backup buffer, then main channel.&lt;&#x2F;p&gt;
 &lt;tr&gt;&lt;td&gt;Task&lt;&#x2F;td&gt;&lt;td&gt;Current task&lt;&#x2F;td&gt;&lt;td&gt;Task input&#x2F;output&lt;&#x2F;td&gt;&lt;td&gt;Track execution&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
 &lt;tr&gt;&lt;td&gt;Distilled&lt;&#x2F;td&gt;&lt;td&gt;Long-term&lt;&#x2F;td&gt;&lt;td&gt;Extracted experience&lt;&#x2F;td&gt;&lt;td&gt;Retrieve for similar tasks&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
 &lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart TD
     Input[User Input] --&gt; Session[Session Memory&lt;br&#x2F;&gt;Short-term]
     Input --&gt; Task[Task Memory&lt;br&#x2F;&gt;Mid-term]
     Task --&gt; Distill[Distilled Memory&lt;br&#x2F;&gt;Long-term]
@@ -1559,7 +1602,8 @@ Dequeue: prioritizes backup buffer, then main channel.&lt;&#x2F;p&gt;
 &lt;p&gt;&lt;code&gt;BuildContext&lt;&#x2F;code&gt; combines current input with message history. Key designs: TTL cleanup, max history limit, fault tolerance (returns original input on error).&lt;&#x2F;p&gt;
 &lt;h3 id=&quot;distilled-memory-pipeline&quot;&gt;Distilled Memory Pipeline&lt;&#x2F;h3&gt;
 &lt;p&gt;Not simple caching — a full pipeline:&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart TD
     Conv[Conversation] --&gt; Extract[ExperienceExtractor]
     Extract --&gt; Classify[MemoryClassifier]
     Classify --&gt; Score[ImportanceScorer]
@@ -1661,7 +1705,8 @@ Dequeue: prioritizes backup buffer, then main channel.&lt;&#x2F;p&gt;
 &lt;p&gt;Not duplicate implementations: YAML DAG for &quot;known processes,&quot; dynamic graph for &quot;processes needing runtime decisions.&quot;&lt;&#x2F;p&gt;
 &lt;h2 id=&quot;architecture-naturally-emerges&quot;&gt;Architecture Naturally Emerges&lt;&#x2F;h2&gt;
 &lt;h3 id=&quot;yaml-dag-engine&quot;&gt;YAML DAG Engine&lt;&#x2F;h3&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart TD
     A[collect] --&gt; B[analyze]
     A --&gt; C[retrieve]
     B --&gt; D[synthesize]
@@ -1670,7 +1715,8 @@ Dequeue: prioritizes backup buffer, then main channel.&lt;&#x2F;p&gt;
 &lt;p&gt;Executor follows topological order, semaphore controls concurrency, supports retry and template variable substitution.&lt;&#x2F;p&gt;
 &lt;h3 id=&quot;dynamic-graph-engine&quot;&gt;Dynamic Graph Engine&lt;&#x2F;h3&gt;
 &lt;p&gt;Three node types: AgentNode, ToolNode, FuncNode. Conditional edges for dynamic routing. Three schedulers: FIFO, Priority, Shortest-Job-First.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart TD
     Start --&gt; Analyze
     Analyze --&gt;|confidence &gt; 0.8| Fast[Fast Path]
     Analyze --&gt;|confidence &lt;= 0.8| Deep[Deep Analysis]
@@ -1707,7 +1753,8 @@ Dequeue: prioritizes backup buffer, then main channel.&lt;&#x2F;p&gt;
 &lt;li&gt;&lt;strong&gt;EmbeddingQueue&lt;&#x2F;strong&gt;: Async vectorization, idempotent dedup, dead letter queue.&lt;&#x2F;li&gt;
 &lt;li&gt;&lt;strong&gt;RetrievalService&lt;&#x2F;strong&gt;: Hybrid search (vector + BM25), query rewriting, time decay, multi-source fusion.&lt;&#x2F;li&gt;
 &lt;&#x2F;ol&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart TD
     Write[Write Text] --&gt; Buffer[WriteBuffer&lt;br&#x2F;&gt;Batch Write]
     Buffer --&gt; DB[(PostgreSQL&lt;br&#x2F;&gt;pending)]
     DB --&gt; Queue[EmbeddingQueue&lt;br&#x2F;&gt;Async Vectorize]
@@ -1726,7 +1773,8 @@ Dequeue: prioritizes backup buffer, then main channel.&lt;&#x2F;p&gt;
 &lt;h3 id=&quot;embeddingqueue&quot;&gt;EmbeddingQueue&lt;&#x2F;h3&gt;
 &lt;p&gt;Async vectorization pipeline: text → DB (pending) → EmbeddingQueue → Embedding Service → DB (completed). Dedupe key ensures idempotency, dead letter queue handles repeated failures, reconciliation periodically retries pending records.&lt;&#x2F;p&gt;
 &lt;h3 id=&quot;retrievalservice-hybrid-search&quot;&gt;RetrievalService: Hybrid Search&lt;&#x2F;h3&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;sequenceDiagram
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+sequenceDiagram
     participant User
     participant RS as RetrievalService
     participant PG as PostgreSQL
@@ -1774,7 +1822,8 @@ Dequeue: prioritizes backup buffer, then main channel.&lt;&#x2F;p&gt;
 &lt;li&gt;Supports Ollama and SentenceTransformers backends, switchable via environment variable.&lt;&#x2F;li&gt;
 &lt;li&gt;Optional Redis cache, L2 normalization for retrieval consistency.&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;goagent&quot;&gt;
+flowchart LR
     subgraph &quot;Go Main Program&quot;
         Retrieval[RetrievalService]
         Client[EmbeddingClient]
@@ -1899,7 +1948,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    pub&lt;&#x2F;span&gt;&lt;span&gt; render&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Arc&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89DCEB;&quot;&gt;&amp;lt;&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;RenderEngine&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89DCEB;&quot;&gt;&amp;gt;&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
 &lt;p&gt;The facade exists to provide a unified entry point, but the internals remain modular.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[MemScope Facade] --&gt; B[CaptureEngine]
     A --&gt; C[EventStore]
     A --&gt; D[SnapshotEngine]
@@ -1978,7 +2028,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;blockquote&gt;
 &lt;p&gt;snapshots are derived from events; they are not the primary source of truth.&lt;&#x2F;p&gt;
 &lt;&#x2F;blockquote&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;graph LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+graph LR
     A[MemoryEvent Queue] --&gt; B[EventStore Snapshot]
     B --&gt; C[build snapshot from events]
     C --&gt; D[MemorySnapshot]
@@ -2275,7 +2326,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;blockquote&gt;
 &lt;p&gt;export does not only use a live allocation map; it rebuilds report data from the event stream.&lt;&#x2F;p&gt;
 &lt;&#x2F;blockquote&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[EventStore] --&gt; B[snapshot]
     B --&gt; C[rebuild_allocations_from_events]
     C --&gt; D[MemorySnapshot]
@@ -2394,7 +2446,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;    DashboardTemplate&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;::&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Unified&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&amp;gt;&lt;&#x2F;span&gt;&lt;span&gt; renderer&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;render_unified_dashboard&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;),&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
 &lt;p&gt;The dashboard is therefore a rendered view over the same reconstructed data used by JSON export.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[Tracker + EventStore] --&gt; B[Dashboard Context]
     C[Passport Tracker] --&gt; B
     D[Async Tracker] --&gt; B
@@ -2476,7 +2529,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;li&gt;Are there cycles in the relationship graph?&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
 &lt;p&gt;The relation graph exists to answer those questions as an analysis layer.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[MemoryEvent Stream] --&gt; B[Snapshot]
     B --&gt; C[Active Allocations]
     C --&gt; D[Inference Records]
@@ -2581,7 +2635,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;li&gt;detect variable evolution;&lt;&#x2F;li&gt;
 &lt;li&gt;detect shared ownership.&lt;&#x2F;li&gt;
 &lt;&#x2F;ol&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[ActiveAllocation List] --&gt; B[HeapScanner]
     B --&gt; C[ScanResult]
     C --&gt; D[UTI &#x2F; Type Inference]
@@ -3034,7 +3089,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; worker_a&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Arc&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;::&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;clone&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;root&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;);&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;let&lt;&#x2F;span&gt;&lt;span&gt; worker_b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Arc&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;::&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;clone&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;&amp;amp;&lt;&#x2F;span&gt;&lt;span&gt;root&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;);&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
 &lt;p&gt;Allocator-level tracking may only see the original heap allocation. But logically there are now three smart pointer values sharing the same data.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[Arc::new T] --&gt; H[Heap Data]
     B[Arc::clone] --&gt; C[New Stack Owner]
     C --&gt; H
@@ -3131,7 +3187,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;p&gt;This gives the analysis layer enough information to see:&lt;&#x2F;p&gt;
 &lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;root      stack_ptr = S1, heap_ptr = H&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;worker_a  stack_ptr = S2, heap_ptr = H&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
-&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;worker_b  stack_ptr = S3, heap_ptr = H&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;worker_b  stack_ptr = S3, heap_ptr = H&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[root: Arc&lt;T&gt;] --&gt; S1[stack_ptr S1]
     B[worker_a: Arc&lt;T&gt;] --&gt; S2[stack_ptr S2]
     C[worker_b: Arc&lt;T&gt;] --&gt; S3[stack_ptr S3]
@@ -3175,7 +3232,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;            }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;        }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;    }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
-&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart LR
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart LR
     A[Memory Events] --&gt; B[Filter stack_ptr != None]
     B --&gt; C[Use event.ptr as heap_ptr]
     C --&gt; D[Group by heap_ptr]
@@ -3255,7 +3313,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;p&gt;&lt;code&gt;StackOwner&lt;&#x2F;code&gt; matters because it maps shared ownership into observable runtime data:&lt;&#x2F;p&gt;
 &lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;smart pointer value -&amp;gt; stack_ptr&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;shared heap object  -&amp;gt; heap_ptr&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
-&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;multiple stack_ptrs -&amp;gt; same heap_ptr&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;multiple stack_ptrs -&amp;gt; same heap_ptr&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[track! arc_var] --&gt; B[Trackable for Arc&#x2F;Rc]
     B --&gt; C[TrackKind::StackOwner]
     C --&gt; D[MemoryEvent]
@@ -3287,7 +3346,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;h2 id=&quot;1-why-thread-level-tracking-fails-in-async-rust&quot;&gt;1. Why Thread-Level Tracking Fails in Async Rust&lt;&#x2F;h2&gt;
 &lt;p&gt;In a synchronous multithreaded program, a thread often maps reasonably well to a unit of work.&lt;&#x2F;p&gt;
 &lt;p&gt;In async Rust, that assumption breaks down:&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     R[Tokio Runtime] --&gt; T1[Worker Thread 1]
     R --&gt; T2[Worker Thread 2]
 
@@ -3365,7 +3425,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;p&gt;When it ends:&lt;&#x2F;p&gt;
 &lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;profile&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;mark_completed&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;();&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;stats&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;active_tasks &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;=&lt;&#x2F;span&gt;&lt;span&gt; stats&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;active_tasks&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;saturating_sub&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;1&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;);&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
-&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #F38BA8;&quot;&gt;Self&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;::&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;clear_current_task&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;();&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;stateDiagram-v2
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #F38BA8;&quot;&gt;Self&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;::&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;clear_current_task&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;();&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+stateDiagram-v2
     [*] --&gt; Started
     Started --&gt; Running
     Running --&gt; Completed
@@ -3561,7 +3622,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;hr &#x2F;&gt;
 &lt;h2 id=&quot;15-summary&quot;&gt;15. Summary&lt;&#x2F;h2&gt;
 &lt;p&gt;Async attribution matters because Rust services are increasingly task-oriented rather than thread-oriented.&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart LR
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart LR
     A[task_scope &#x2F; tracked future] --&gt; B[Task Context]
     B --&gt; C[task_id]
     C --&gt; D[track allocation]
@@ -3599,7 +3661,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;li&gt;the profiler itself should not dominate application contention.&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
 &lt;p&gt;The design uses separate structures for separate responsibilities:&lt;&#x2F;p&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[Concurrent Allocation Events] --&gt; B[Lock-free Event Queue]
     A --&gt; C[Concurrent Allocation Map]
     A --&gt; D[Atomic Counters]
@@ -3833,7 +3896,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;li&gt;&lt;code&gt;GlobalAlloc&lt;&#x2F;code&gt; captures runtime allocation facts.&lt;&#x2F;li&gt;
 &lt;li&gt;&lt;code&gt;track!&lt;&#x2F;code&gt; and &lt;code&gt;Trackable&lt;&#x2F;code&gt; add Rust-level context.&lt;&#x2F;li&gt;
 &lt;&#x2F;ol&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[User Code] --&gt; B[GlobalAlloc Hook]
     A --&gt; C[track! Macro]
 
@@ -3936,7 +4000,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;    Container&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;    Value&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;    StackOwner&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;span&gt; ptr&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; usize&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; heap_ptr&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; usize&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; size&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; usize&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; },&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
-&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;graph TB
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+graph TB
     V[Vec&lt;T&gt;] --&gt; H[HeapOwner]
     S[String] --&gt; H
     B[Box&lt;T&gt;] --&gt; H
@@ -4131,7 +4196,8 @@ Batch flow: filter cached → batch generate uncached → normalize and cache ea
 &lt;li&gt;is it still in foreign custody?&lt;&#x2F;li&gt;
 &lt;li&gt;does its lifecycle look suspicious?&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
-&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;flowchart TD
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;memscope-rs&quot;&gt;
+flowchart TD
     A[Safe Rust] --&gt; B[Unsafe Block]
     B --&gt; C[Raw Pointer]
     C --&gt; D[FFI Boundary]

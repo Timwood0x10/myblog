@@ -41,18 +41,33 @@ document.addEventListener("DOMContentLoaded",function(){
 
   // ============================================
   // Mermaid initialization — cyberpunk terminal style
+  // Unified configuration for ALL pages (homepage + articles)
   // ============================================
   if(typeof mermaid!=="undefined"){
     mermaid.initialize({
       theme:"base",
       securityLevel:"loose",
+      startOnLoad:false,
       flowchart:{
         htmlLabels:true,
         curve:"basis",
         useMaxWidth:true,
-        nodeSpacing:40,
-        rankSpacing:60,
-        padding:24
+        nodeSpacing:50,
+        rankSpacing:70,
+        padding:20,
+        wrap:true,
+        diagramPadding:16,
+        useMaxWidth:true
+      },
+      sequence:{
+        useMaxWidth:true,
+        wrap:true,
+        width:180,
+        marginMax:40,
+        marginMin:15,
+        boxMargin:15,
+        noteMargin:20,
+        messageMargin:50
       },
       themeVariables:{
         background:"transparent",
@@ -66,29 +81,59 @@ document.addEventListener("DOMContentLoaded",function(){
         actorBkg:"#2a2d35",
         actorBorder:"rgba(255,255,255,.35)",
         actorTextColor:"#ffffff",
-        clusterBkg:"rgba(255,255,255,.025)",
-        clusterBorder:"rgba(255,255,255,.12)"
+        clusterBkg:"rgba(255,255,255,.03)",
+        clusterBorder:"rgba(255,255,255,.15)"
       }
     });
+
+    // Collect all mermaid diagrams from different sources
     var nodes=[];
+
+    // 1. Code blocks with data-lang="mermaid" (from markdown)
     document.querySelectorAll("code[data-lang=mermaid]").forEach(function(el){
       var pre=el.parentElement;
       var div=document.createElement("div");div.className="mermaid";
       div.textContent=el.textContent;
       pre.parentNode.replaceChild(div,pre);nodes.push(div)
     });
+
+    // 2. Direct mermaid containers (from shortcodes)
     document.querySelectorAll(".mermaid-direct").forEach(function(el){
       el.className="mermaid";nodes.push(el)
     });
-    if(nodes.length){
-      nodes.forEach(function(el){
+
+    // Render each diagram individually to prevent layout conflicts
+    // Use sequential rendering with small delay for stability
+    if(nodes.length>0){
+      var renderIndex=0;
+
+      function renderNext(){
+        if(renderIndex>=nodes.length)return;
+
+        var el=nodes[renderIndex];
+        renderIndex++;
+
+        // Ensure element is visible before rendering
+        el.style.visibility="hidden";
+        el.style.minHeight="100px";
+
         mermaid.run({nodes:[el]}).then(function(){
           el.classList.add("mermaid-ready");
+          el.style.visibility="visible";
+
+          // Small delay between renders to prevent conflicts
+          setTimeout(renderNext,50);
         }).catch(function(err){
           console.warn("Mermaid: skip one diagram (syntax error)", err);
           el.style.display="none";
+
+          // Continue rendering next diagram even if this one failed
+          setTimeout(renderNext,50);
         });
-      });
+      }
+
+      // Start rendering after a short delay to ensure DOM is ready
+      setTimeout(renderNext,100);
     }
   }
 
