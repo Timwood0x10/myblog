@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Duplication Detection Algorithms | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="You have a 10,000-line codebase. Somewhere in it, two functions are 95% identical — differing only in variable names. How do you find them without comparing every pair of functions?">
+
+    <meta property="og:description" content="You have a 10,000-line codebase. Somewhere in it, two functions are 95% identical — differing only in variable names. How do you find them without comparing every pair of functions?">
+    <meta property="og:title" content="Duplication Detection Algorithms | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/06-duplication-algorithms/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="You have a 10,000-line codebase. Somewhere in it, two functions are 95% identical — differing only in variable names. How do you find them without comparing every pair of functions?">
+    <meta name="twitter:title" content="Duplication Detection Algorithms | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/06-duplication-algorithms/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/06-duplication-algorithms/">Duplication Detection Algorithms</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-27
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-quality/">#Code Quality</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/static-analysis/">#Static Analysis</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="duplication-detection-algorithms">Duplication Detection Algorithms</h1>
+<blockquote>
+<p><strong>Question</strong>: You have a 10,000-line codebase. Somewhere in it, two functions are 95% identical — differing only in variable names. How do you find them without comparing every pair of functions?</p>
+</blockquote>
+<h2 id="why-duplication-is-hard">Why Duplication Is Hard</h2>
+<p>Code duplication is the most pervasive code smell and the hardest to detect automatically. The challenge is not finding exact copies — <code>diff</code> can do that. The challenge is finding <strong>near-duplicates</strong>: code blocks that do the same thing with different variable names, different string literals, or trivially different control flow.</p>
+<p>garbage-code-hunter uses two complementary approaches:</p>
+<ul>
+<li><strong>Cross-file duplication</strong>: finds duplicate functions across the entire codebase</li>
+<li><strong>Intra-file duplication</strong>: finds repeated code blocks within a single file</li>
+</ul>
+<h2 id="cross-file-duplication-ast-token-fingerprinting">Cross-File Duplication: AST Token Fingerprinting</h2>
+<p>The cross-file detector (<code>src/treesitter/duplication.rs</code>) works in three steps:</p>
+<h3 id="step-1-extract-and-normalize-functions">Step 1: Extract and Normalize Functions</h3>
+<p>For each file, the detector extracts all functions and normalizes their AST tokens:</p>
+<div class="mermaid-direct" data-series="garbage-code-hunter" data-name="graph.mmd">
+graph LR
+    SRC[Source Code] --> AST[Parse to AST]
+    AST --> TOKENS[Extract Tokens]
+    TOKENS --> NORM[Normalize]
+
+    subgraph "Normalization"
+        NORM --> ID[Identifiers → Hash]
+        NORM --> STR[Strings → STRING_LIT]
+        NORM --> NUM[Numbers → NUMBER_LIT]
+        NORM --> KEY[Keywords → Keep]
+    end
+
+    NORM --> HASH[Token Hash]
+</div>
+<p>The normalization rules:</p>
+<ul>
+<li><strong>Identifiers</strong> are replaced with a hash of their name. Two functions that differ only in variable names will produce the same token sequence.</li>
+<li><strong>String literals</strong> are replaced with <code>STRING_LIT</code>. Two functions that differ only in hardcoded strings will match.</li>
+<li><strong>Numeric literals</strong> are replaced with <code>NUMBER_LIT</code>.</li>
+<li><strong>Keywords and operators</strong> are kept as-is — they represent structure, not naming.</li>
+</ul>
+<h3 id="step-2-exact-duplicate-detection">Step 2: Exact Duplicate Detection</h3>
+<p>After normalization, each function is represented as a hash of its token sequence. Functions with identical hashes are exact duplicates (after normalization):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Conceptual: group functions by their normalized hash</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> hash_groups</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">FunctionInfo</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> func</span><span style="color: #CBA6F7;"> in</span><span style="color: #94E2D5;"> &amp;</span><span>functions</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    hash_groups</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">entry</span><span style="color: #9399B2;">(</span><span>func</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">token_hash</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">or_default</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span>func</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Groups with &gt;1 member are exact duplicates</span></span></code></pre>
+<p>This is O(n) — linear in the number of functions. Hash collisions are possible but extremely rare with 64-bit hashes.</p>
+<h3 id="step-3-near-duplicate-detection-with-jaccard-similarity">Step 3: Near-Duplicate Detection with Jaccard Similarity</h3>
+<p>Exact duplicates are easy. Near-duplicates require a similarity metric. garbage-code-hunter uses <strong>Jaccard similarity on token bigrams</strong> (<code>src/treesitter/duplication.rs:275-343</code>):</p>
+<div class="mermaid-direct" data-series="garbage-code-hunter" data-name="graph.mmd">
+graph LR
+    F1[Function A<br/>token bigrams] --> JACC[Jaccard<br/>Similarity]
+    F2[Function B<br/>token bigrams] --> JACC
+    JACC --> |">= 0.95"| MATCH[Near Duplicate]
+    JACC --> |"< 0.95"| SKIP[Different]
+</div>
+<p>The algorithm:</p>
+<ol>
+<li>
+<p><strong>Extract bigrams</strong> from the normalized token sequence. For tokens <code>[A, B, C, D]</code>, the bigrams are <code>{AB, BC, CD}</code>.</p>
+</li>
+<li>
+<p><strong>Compute Jaccard similarity</strong>: <code>|A ∩ B| / |A ∪ B|</code>. This measures how much the two token sequences overlap.</p>
+</li>
+<li>
+<p><strong>Apply thresholds</strong>:</p>
+<ul>
+<li>Jaccard similarity &gt;= <strong>0.95</strong> (95% overlap)</li>
+<li>Minimum <strong>20 bigrams</strong> (prevents tiny functions from matching)</li>
+<li>Type-set overlap &gt;= <strong>0.85</strong> (85% of token types must be shared)</li>
+</ul>
+</li>
+</ol>
+<p>Why three thresholds? Each one catches a different failure mode:</p>
+<ul>
+<li>Jaccard alone: two 3-line functions with 2 shared tokens score 0.67 — false positive</li>
+<li>Bigram count alone: a 2-token function matches everything — noise</li>
+<li>Type-set overlap: catches cases where Jaccard is high only because of common tokens like <code>return</code> and <code>if</code></li>
+</ul>
+<h2 id="intra-file-duplication-chunk-hashing">Intra-File Duplication: Chunk Hashing</h2>
+<p>Within a single file, duplication takes a different form: repeated code blocks that are typically 5-20 lines long. The intra-file detector uses a <strong>sliding window approach</strong>:</p>
+<h3 id="the-algorithm">The Algorithm</h3>
+<div class="mermaid-direct" data-series="garbage-code-hunter" data-name="graph.mmd">
+graph TB
+    FILE[Source File] --> SPLIT[Split into<br/>5-line chunks]
+    SPLIT --> NORM[Normalize each chunk<br/>strip comments, structure]
+    NORM --> HASH[Hash each chunk]
+    HASH --> GROUP[Group by hash]
+    GROUP --> FILTER[Filter: appears 2+ times<br/>with spacing]
+    FILTER --> DUPS[Duplicated Blocks]
+</div>
+<ol>
+<li><strong>Split</strong> the file into overlapping 5-line chunks</li>
+<li><strong>Normalize</strong> each chunk:
+<ul>
+<li>Strip comment lines</li>
+<li>Strip structural-only lines (braces, blank lines)</li>
+<li>Keep only "content" lines</li>
+</ul>
+</li>
+<li><strong>Hash</strong> each normalized chunk</li>
+<li><strong>Group</strong> chunks by hash</li>
+<li><strong>Filter</strong>: keep only chunks that appear 2+ times with at least one non-matching line between them</li>
+</ol>
+<h3 id="why-5-lines">Why 5 Lines?</h3>
+<p>The chunk size is a tradeoff:</p>
+<ul>
+<li><strong>3 lines</strong>: too many false positives — <code>if err != nil { return err }</code> appears everywhere in Go</li>
+<li><strong>10 lines</strong>: too few detections — small duplicated blocks are missed</li>
+<li><strong>5 lines</strong>: captures the most common duplication patterns (error handling, boilerplate, repeated logic)</li>
+</ul>
+<h3 id="normalization-matters">Normalization Matters</h3>
+<p>Without normalization, these two chunks would not match:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Chunk A</span></span>
+<span class="giallo-l"><span>userName</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> getUser</span><span style="color: #9399B2;">(</span><span>id</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> userName</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;not found&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">processUser</span><span style="color: #9399B2;">(</span><span>userName</span><span style="color: #9399B2;">)</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Chunk B</span></span>
+<span class="giallo-l"><span>orderID</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> getOrder</span><span style="color: #9399B2;">(</span><span>id</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> orderID</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;not found&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">processOrder</span><span style="color: #9399B2;">(</span><span>orderID</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>After normalization (identifiers hashed, strings replaced):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>IDENT == &quot;&quot;</span></span>
+<span class="giallo-l"><span>return STRING_LIT</span></span>
+<span class="giallo-l"><span>processIDENT(IDENT)</span></span></code></pre>
+<p>They match — because the <strong>structure</strong> is identical, even though the <strong>names</strong> are different.</p>
+<h2 id="the-duplicationdetector">The DuplicationDetector</h2>
+<p>Both approaches feed into the <code>DuplicationDetector</code> (<code>src/detectors.rs</code>), which implements <code>SignalDetector</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> SignalDetector</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> DuplicationDetector</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> signal</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> StyleSignal</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        StyleSignal</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Duplication</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_violations</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Cross-file: counted globally by CrossFileDupDetector</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Intra-file: counted per file by IntraFileDupDetector</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        IntraFileDupDetector</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">check</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">len</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The cross-file detector runs in Phase 2 (before per-file signal detection) because it needs to see all files at once. The intra-file detector runs in Phase 3.</p>
+<h2 id="performance-considerations">Performance Considerations</h2>
+<p>Comparing every pair of functions is O(n^2) — unacceptable for large codebases. garbage-code-hunter reduces this to near-linear:</p>
+<ol>
+<li><strong>Hash grouping</strong> for exact duplicates: O(n)</li>
+<li><strong>Bigram indexing</strong> for near-duplicates: only functions with similar bigram-set sizes are compared</li>
+<li><strong>Early termination</strong>: if the type-set overlap is below 85%, skip the Jaccard computation</li>
+</ol>
+<p>For a codebase with 10,000 functions, the typical comparison count is under 100,000 — not 50,000,000.</p>
+<h2 id="threshold-tuning">Threshold Tuning</h2>
+<p>The thresholds (95% Jaccard, 20 bigrams, 85% type-set) were chosen to minimize false positives while catching real duplication:</p>
+<table><thead><tr><th>Threshold</th><th>Too Low</th><th>Too High</th></tr></thead><tbody>
+<tr><td>Jaccard (0.95)</td><td>Catches unrelated functions with shared tokens</td><td>Misses functions that differ in 10% of tokens</td></tr>
+<tr><td>Bigrams (20)</td><td>Matches trivially small functions</td><td>Misses short but meaningful duplicates</td></tr>
+<tr><td>Type-set (0.85)</td><td>Matches functions with same keywords but different logic</td><td>Misses functions with different structure</td></tr>
+</tbody></table>
+<p>These are configurable in <code>.garbage-code-hunter.toml</code> under the <code>[rules.duplication]</code> section.</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/06-duplication-algorithms/./07-scoring-model.md">The Scoring Model</a> — How to turn 10 signal scores into a single number between 0 and 100, and why logarithmic scaling is the right choice.</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/07-scoring-model/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">The Scoring Model: From Qualitative Signals to a Single Number</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/05-signal-detection-system/">
+                                <span class="button__text">The Signal Detection System</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

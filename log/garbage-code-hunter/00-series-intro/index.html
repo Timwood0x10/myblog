@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>garbage-code-hunter Deep-Dive Series: Multi-Language Code Quality Analysis in Rust | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="garbage-code-hunter is a Rust CLI that analyzes code across 11 languages and tells you, with brutal honesty and occasional humor, how bad your code really is. This series breaks down the design decisions behind the tool.">
+
+    <meta property="og:description" content="garbage-code-hunter is a Rust CLI that analyzes code across 11 languages and tells you, with brutal honesty and occasional humor, how bad your code really is. This series breaks down the design decisions behind the tool.">
+    <meta property="og:title" content="garbage-code-hunter Deep-Dive Series: Multi-Language Code Quality Analysis in Rust | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="garbage-code-hunter is a Rust CLI that analyzes code across 11 languages and tells you, with brutal honesty and occasional humor, how bad your code really is. This series breaks down the design decisions behind the tool.">
+    <meta name="twitter:title" content="garbage-code-hunter Deep-Dive Series: Multi-Language Code Quality Analysis in Rust | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/">garbage-code-hunter Deep-Dive Series: Multi-Language Code Quality Analysis in Rust</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-27
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-quality/">#Code Quality</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/static-analysis/">#Static Analysis</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="building-garbage-code-hunter-a-deep-dive-into-multi-language-code-quality-analysis-in-rust">Building garbage-code-hunter: A Deep Dive into Multi-Language Code Quality Analysis in Rust</h1>
+<blockquote>
+<p><strong>Series: In-Depth Technical Breakdown of garbage-code-hunter</strong></p>
+</blockquote>
+<h2 id="what-is-this">What Is This?</h2>
+<p>garbage-code-hunter is not another bug finder. It is not a security scanner. It does not care about CVEs or null pointer dereferences.</p>
+<p>It cares about <strong>taste</strong>.</p>
+<p>Does your codebase have 47 <code>TODO</code> comments dating back to 2019? Are there functions spanning 200 lines with 8 levels of nesting? Is every third file a copy-paste variant of the first? These are the things that make a codebase smell — not broken, but <em>wrong</em>. And most tools either ignore them entirely or drown you in false positives.</p>
+<p>garbage-code-hunter is a Rust CLI that analyzes code across <strong>11 languages</strong> — Rust, Go, Python, Java, Ruby, C, C++, TypeScript, JavaScript, Swift, and Zig — and tells you, with brutal honesty and occasional humor, how bad your code really is.</p>
+<h2 id="why-this-series">Why This Series?</h2>
+<p>This project makes several non-obvious design decisions:</p>
+<ul>
+<li><strong>Why tree-sitter instead of per-language linters?</strong> Because running 11 separate tools is not a strategy — it is a coping mechanism.</li>
+<li><strong>Why a StyleIR instead of direct AST rules?</strong> Because coupling every detector to every language's AST is a maintenance nightmare that scales as O(detectors x languages).</li>
+<li><strong>Why "fewer rules, stronger signals"?</strong> Because 200 rules with 60% false positives are worse than 10 rules with 90% precision.</li>
+<li><strong>Why logarithmic scoring?</strong> Because one god function is bad, but ten god functions is not ten times worse — it is a systemic failure.</li>
+<li><strong>Why personality types?</strong> Because making code analysis fun is the only way to make developers actually read the report.</li>
+</ul>
+<p>Each article in this series takes one of these decisions and breaks it down: the problem it solves, the alternatives considered, and the implementation details in the actual source code.</p>
+<h2 id="series-map">Series Map</h2>
+<table><thead><tr><th>#</th><th>Article</th><th>Core Question</th></tr></thead><tbody>
+<tr><td>01</td><td><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/./01-why-multi-language-sucks.md">Why Multi-Language Code Quality Analysis Is Hard</a></td><td>What happens when you need to analyze 11 languages with one tool?</td></tr>
+<tr><td>02</td><td><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/./02-architecture-overview.md">Architecture Overview</a></td><td>How do you structure a code analyzer that is both fast and extensible?</td></tr>
+<tr><td>03</td><td><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/./03-treesitter-and-language-adapter.md">Tree-sitter and the LanguageAdapter Pattern</a></td><td>How do you avoid writing 11 copies of the same detection logic?</td></tr>
+<tr><td>04</td><td><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/./04-style-ir-the-neutral-layer.md">StyleIR: The Language-Neutral Intermediate Representation</a></td><td>How do you decouple detection from language-specific AST details?</td></tr>
+<tr><td>05</td><td><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/./05-signal-detection-system.md">The Signal Detection System</a></td><td>Why fewer, stronger detectors beat many weak ones?</td></tr>
+<tr><td>06</td><td><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/./06-duplication-algorithms.md">Duplication Detection Algorithms</a></td><td>How do you find copy-paste code across an entire codebase?</td></tr>
+<tr><td>07</td><td><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/./07-scoring-model.md">The Scoring Model</a></td><td>How do you turn qualitative signals into a single number?</td></tr>
+<tr><td>08</td><td><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/./08-fun-side-roasts-and-personality.md">The Fun Side: Roasts, Personality, and the Tool Belt</a></td><td>Why should code analysis be boring?</td></tr>
+</tbody></table>
+<h2 id="reading-order">Reading Order</h2>
+<p>The articles are ordered by dependency. Each one builds on concepts introduced in the previous:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>01 Problem Space</span></span>
+<span class="giallo-l"><span> └─► 02 Architecture</span></span>
+<span class="giallo-l"><span>      └─► 03 Parsing Layer (tree-sitter + adapters)</span></span>
+<span class="giallo-l"><span>           └─► 04 Intermediate Representation (StyleIR)</span></span>
+<span class="giallo-l"><span>                └─► 05 Detection Layer (SignalDetector)</span></span>
+<span class="giallo-l"><span>                     ├─► 06 Duplication (algorithms)</span></span>
+<span class="giallo-l"><span>                     └─► 07 Scoring (math)</span></span>
+<span class="giallo-l"><span>                          └─► 08 Fun Side (personality + tools)</span></span></code></pre>
+<p>You can read any single article standalone — each one frames its own problem — but the full picture emerges from reading them in sequence.</p>
+<h2 id="get-the-code">Get the Code</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>cargo install garbage-code-hunter</span></span>
+<span class="giallo-l"><span>garbage-code-hunter analyze ./your-project</span></span></code></pre>
+<p>Or clone and build from source:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>git clone https://github.com/anthropics/garbage-code-hunter.git</span></span>
+<span class="giallo-l"><span>cd garbage-code-hunter</span></span>
+<span class="giallo-l"><span>cargo build --release</span></span></code></pre>
+<p>Let's start with the fundamental question: <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/00-series-intro/./01-why-multi-language-sucks.md">Why is multi-language code quality analysis so hard?</a></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/01-why-multi-language-sucks/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Why Multi-Language Code Quality Analysis Is Hard</span>
+                            </a>
+                        </span>
+                    
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

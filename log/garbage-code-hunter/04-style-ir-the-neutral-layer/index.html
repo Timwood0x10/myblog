@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>StyleIR: The Language-Neutral Intermediate Representation | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="You have 11 language adapters that each produce raw counts. You have 10 detectors that each need those counts. How do you connect them without coupling detectors to language-specific data structures?">
+
+    <meta property="og:description" content="You have 11 language adapters that each produce raw counts. You have 10 detectors that each need those counts. How do you connect them without coupling detectors to language-specific data structures?">
+    <meta property="og:title" content="StyleIR: The Language-Neutral Intermediate Representation | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/04-style-ir-the-neutral-layer/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="You have 11 language adapters that each produce raw counts. You have 10 detectors that each need those counts. How do you connect them without coupling detectors to language-specific data structures?">
+    <meta name="twitter:title" content="StyleIR: The Language-Neutral Intermediate Representation | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/04-style-ir-the-neutral-layer/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/04-style-ir-the-neutral-layer/">StyleIR: The Language-Neutral Intermediate Representation</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-27
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-quality/">#Code Quality</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/static-analysis/">#Static Analysis</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="styleir-the-language-neutral-intermediate-representation">StyleIR: The Language-Neutral Intermediate Representation</h1>
+<blockquote>
+<p><strong>Question</strong>: You have 11 language adapters that each produce raw counts. You have 10 detectors that each need those counts. How do you connect them without coupling detectors to language-specific data structures?</p>
+</blockquote>
+<h2 id="the-coupling-problem">The Coupling Problem</h2>
+<p>Consider the <code>PanicAddictionDetector</code>. It needs to know how many panic-like calls exist in a file. In Rust, that is <code>unwrap()</code> and <code>expect()</code>. In Go, that is <code>panic()</code>. In Python, that is bare <code>raise</code> without a specific exception type.</p>
+<p>Without an intermediate layer, the detector would need to either:</p>
+<ol>
+<li>Query each adapter directly (coupling detector to adapter)</li>
+<li>Maintain its own tree-sitter queries (duplicating adapter logic)</li>
+<li>Read raw AST nodes (coupling detector to language grammar)</li>
+</ol>
+<p>All three options create tight coupling that breaks when you add language #12.</p>
+<h2 id="styleir-facts-not-judgments">StyleIR: Facts, Not Judgments</h2>
+<p>StyleIR (<code>src/style_ir/mod.rs</code>) is a language-neutral fact layer. It stores <strong>counts</strong> — objective measurements extracted by adapters — not <strong>judgments</strong> about whether those counts are problematic.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/style_ir/mod.rs:55-133</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> StyleIr</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> language</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> line_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> functions</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">FunctionNode</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> panic_call_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> naming_violation_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> deeply_nested_block_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> debug_call_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> excessive_param_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> unsafe_block_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> magic_number_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> commented_out_lines</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> todo_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> goroutine_spawn_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> defer_in_loop_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> go_convention_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> python_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> java_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> ruby_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> c_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> ts_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> js_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> swift_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> dead_code_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> duplicate_import_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The key insight: <strong>every field is a <code>usize</code></strong> (or <code>Vec&lt;FunctionNode&gt;</code>). There are no language-specific types. A detector reading <code>ir.panic_call_count</code> does not know or care whether the panics came from Rust's <code>unwrap()</code> or Go's <code>panic()</code>.</p>
+<h2 id="construction-from-parsedfile-to-styleir">Construction: From ParsedFile to StyleIR</h2>
+<p>The data flow is a three-step pipeline:</p>
+<div class="mermaid-direct" data-series="garbage-code-hunter" data-name="graph.mmd">
+graph LR
+    PF[ParsedFile<br/>AST + source] --> AD[adapter.compute_all<br/>single traversal]
+    AD --> AC[AdapterCounts<br/>raw counts]
+    AC --> IR[StyleIr<br/>language-neutral]
+</div>
+<p>The construction happens in <code>StyleIr::from_parsed()</code> (<code>src/style_ir/mod.rs:143-172</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> from_parsed</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F38BA8;">Self</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> adapter</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> adapter_for</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">language</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">       // 1. Get the right adapter</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> counts</span><span style="color: #94E2D5;"> =</span><span> adapter</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">compute_all</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">);</span><span style="color: #9399B2;font-style: italic;">           // 2. Run batch query</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Some</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">Self</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        language</span><span style="color: #94E2D5;">:</span><span> file</span><span style="color: #94E2D5;">.</span><span>language</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        line_count</span><span style="color: #94E2D5;">:</span><span> file</span><span style="color: #94E2D5;">.</span><span>content</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">lines</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        functions</span><span style="color: #94E2D5;">:</span><span> counts</span><span style="color: #94E2D5;">.</span><span>functions</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        panic_call_count</span><span style="color: #94E2D5;">:</span><span> counts</span><span style="color: #94E2D5;">.</span><span>panic_calls</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        naming_violation_count</span><span style="color: #94E2D5;">:</span><span> counts</span><span style="color: #94E2D5;">.</span><span>naming_violations</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        deeply_nested_block_count</span><span style="color: #94E2D5;">:</span><span> counts</span><span style="color: #94E2D5;">.</span><span>deeply_nested_blocks</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        debug_call_count</span><span style="color: #94E2D5;">:</span><span> counts</span><span style="color: #94E2D5;">.</span><span>debug_calls</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        excessive_param_count</span><span style="color: #94E2D5;">:</span><span> counts</span><span style="color: #94E2D5;">.</span><span>excessive_params</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // ... all counts mapped 1:1</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Three important details:</p>
+<ol>
+<li>
+<p><strong><code>adapter_for()</code> returns <code>Option</code></strong> — if a language has no adapter, <code>from_parsed()</code> returns <code>None</code>. Callers fall back to legacy rule logic.</p>
+</li>
+<li>
+<p><strong><code>compute_all()</code> runs once</strong> — the batch query optimization from Article 03 means all counts are extracted in a single AST traversal.</p>
+</li>
+<li>
+<p><strong>Counts are mapped 1:1</strong> — <code>AdapterCounts</code> fields map directly to <code>StyleIr</code> fields. No transformation, no filtering. The adapter already did the semantic work.</p>
+</li>
+</ol>
+<h2 id="derived-signals-composite-counts">Derived Signals: Composite Counts</h2>
+<p>Some quality signals are not directly measured — they are <strong>derived</strong> from multiple base counts. StyleIR computes these composites:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/style_ir/mod.rs:174-204</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Functions exceeding the god-function threshold (50 lines).</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> god_function_count</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span>functions</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">filter</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>f</span><span style="color: #94E2D5;">|</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">end_line</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">saturating_sub</span><span style="color: #9399B2;">(</span><span>f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">start_line</span><span style="color: #9399B2;">)</span><span style="color: #89DCEB;"> &gt;</span><span style="color: #F38BA8;"> Self</span><span style="color: #94E2D5;">::</span><span style="color: #FAB387;">GOD_FUNCTION_LINE_THRESHOLD</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">count</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Combined over-engineering signal.</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> over_engineering_count</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">god_function_count</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>excessive_param_count </span><span style="color: #94E2D5;">+</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>goroutine_spawn_count</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Combined code-smell signal.</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> code_smell_count</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span>unsafe_block_count </span><span style="color: #94E2D5;">*</span><span style="color: #FAB387;"> 2</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>magic_number_count</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>go_convention_count</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>python_issue_count</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>java_issue_count</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>ruby_issue_count</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>c_issue_count</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>ts_issue_count</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>js_issue_count</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>swift_issue_count</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>dead_code_count</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        +</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>duplicate_import_count</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is where the "facts, not judgments" philosophy pays off. The <code>god_function_count()</code> method is a <strong>judgment</strong> — it decides that 50 lines is the threshold. But the underlying data (function start/end lines) is a <strong>fact</strong> extracted by the adapter. If you want to change the threshold, you change one constant, not 11 adapters.</p>
+<h2 id="functionnode-the-richer-data">FunctionNode: The Richer Data</h2>
+<p>Not everything fits in a <code>usize</code>. Function metadata needs more structure:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/mod.rs:38-44</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> FunctionNode</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> start_line</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> end_line</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> nesting_depth</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This gives detectors the ability to ask questions like:</p>
+<ul>
+<li>"Is there a function longer than 50 lines?" (<code>god_function_count()</code>)</li>
+<li>"Is there a function with more than 5 parameters?" (via <code>excessive_param_count</code>)</li>
+<li>"Is there a deeply nested function?" (via <code>nesting_depth</code>)</li>
+</ul>
+<h2 id="the-summary-json-ready-output">The Summary: JSON-Ready Output</h2>
+<p>For downstream consumers (CI bots, dashboards, the <code>analyze --json</code> command), StyleIR produces a stable summary:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/style_ir/mod.rs:207-250</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> summary</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> StyleIrSummary</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StyleIrSummary</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        language</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>language</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">display_name</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        line_count</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>line_count</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        function_count</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>functions</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">len</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        god_function_count</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">god_function_count</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        panic_call_count</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>panic_call_count</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        naming_violation_count</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>naming_violation_count</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // ... all fields</span></span>
+<span class="giallo-l"><span>        is_clean_signal_baseline</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">is_clean_signal_baseline</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        thresholds</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> StyleIrThresholdSummary</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            excessive_param_threshold</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> Self</span><span style="color: #94E2D5;">::</span><span style="color: #FAB387;">EXCESSIVE_PARAM_THRESHOLD</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            god_function_line_threshold</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> Self</span><span style="color: #94E2D5;">::</span><span style="color: #FAB387;">GOD_FUNCTION_LINE_THRESHOLD</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        },</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>is_clean_signal_baseline</code> field is interesting — it returns <code>true</code> when a file has zero violations across all signals. This allows CI pipelines to quickly identify "clean" files without inspecting every count.</p>
+<h2 id="why-not-use-a-general-ast">Why Not Use a General AST?</h2>
+<p>A natural question: why not give detectors access to the full AST and let them extract what they need?</p>
+<p>The answer is <strong>separation of concerns</strong>:</p>
+<table><thead><tr><th>Approach</th><th>Pros</th><th>Cons</th></tr></thead><tbody>
+<tr><td>Direct AST access</td><td>Maximum flexibility</td><td>Detectors must understand 11 grammars</td></tr>
+<tr><td>StyleIR counts</td><td>Language-agnostic, fast</td><td>Must pre-compute everything detectors need</td></tr>
+<tr><td>Hybrid (counts + AST)</td><td>Best of both</td><td>Complex, easy to bypass the abstraction</td></tr>
+</tbody></table>
+<p>garbage-code-hunter chose the pure StyleIR approach because:</p>
+<ol>
+<li>
+<p><strong>Detectors are simple.</strong> A detector is 10-30 lines of code — it reads a count and decides if it is above threshold. No AST walking, no language matching.</p>
+</li>
+<li>
+<p><strong>Testing is easy.</strong> You can construct a <code>StyleIr</code> with known counts and verify detector behavior without parsing real code.</p>
+</li>
+<li>
+<p><strong>Performance is predictable.</strong> <code>from_parsed()</code> does one batch query. No lazy evaluation, no surprise traversals.</p>
+</li>
+<li>
+<p><strong>Adding languages is free.</strong> New adapters produce the same <code>AdapterCounts</code>. Detectors do not change.</p>
+</li>
+</ol>
+<p>The cost is that adding a new quality signal requires touching the adapter trait. In practice, this happens infrequently — the current set of 20+ counts covers all signals used by the 10 detectors.</p>
+<h2 id="how-detectors-consume-styleir">How Detectors Consume StyleIR</h2>
+<p>Here is the <code>PanicAddictionDetector</code> (<code>src/detectors.rs:44-62</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> SignalDetector</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> PanicAddictionDetector</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> signal</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> StyleSignal</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        StyleSignal</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PanicAddiction</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> supported_languages</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt; &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #9399B2;"> [</span><span style="color: #F9E2AF;font-style: italic;">Language</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">        ADAPTER_LANGUAGES</span><span style="color: #9399B2;font-style: italic;">  // all 11 languages</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_violations</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        StyleIr</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from_parsed</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>ir</span><span style="color: #94E2D5;">|</span><span> ir</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">panic_call_count</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span style="color: #89B4FA;font-style: italic;">unwrap_or</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_violations_with_ir</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> ir</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">StyleIr</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> _file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        ir</span><span style="color: #94E2D5;">.</span><span>panic_call_count</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Notice two paths:</p>
+<ul>
+<li><code>count_violations()</code> — constructs a fresh StyleIR (used when no pre-computed IR is available)</li>
+<li><code>count_violations_with_ir()</code> — reads from an existing StyleIR (used in the batch pipeline to avoid redundant computation)</li>
+</ul>
+<p>Both return <code>ir.panic_call_count</code>. The detector has zero knowledge of Rust, Go, or any language.</p>
+<h2 id="the-architecture-in-one-diagram">The Architecture in One Diagram</h2>
+<div class="mermaid-direct" data-series="garbage-code-hunter" data-name="graph.mmd">
+graph TB
+    subgraph "Language Layer"
+        R[Rust<br/>Adapter] --> AC1[AdapterCounts]
+        G[Go<br/>Adapter] --> AC2[AdapterCounts]
+        P[Python<br/>Adapter] --> AC3[AdapterCounts]
+        Z[...11] --> ACN[AdapterCounts]
+    end
+
+    subgraph "Fact Layer"
+        AC1 --> IR[StyleIr]
+        AC2 --> IR
+        AC3 --> IR
+        ACN --> IR
+    end
+
+    subgraph "Judgment Layer"
+        IR --> D1[PanicAddiction<br/>Detector]
+        IR --> D2[NamingChaos<br/>Detector]
+        IR --> D3[NestedHell<br/>Detector]
+        IR --> DN[...10<br/>Detectors]
+    end
+
+    D1 --> F[StyleFinding]
+    D2 --> F
+    D3 --> F
+    DN --> F
+</div>
+<p>Three layers, each with a clear responsibility:</p>
+<ul>
+<li><strong>Language Layer</strong>: Adapters absorb grammar-specific knowledge</li>
+<li><strong>Fact Layer</strong>: StyleIR stores objective counts, language-agnostic</li>
+<li><strong>Judgment Layer</strong>: Detectors decide what constitutes a problem</li>
+</ul>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/04-style-ir-the-neutral-layer/./05-signal-detection-system.md">The Signal Detection System</a> — How 10 detectors cover the full spectrum of code smells, and why "fewer rules, stronger signals" beats the alternative.</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/05-signal-detection-system/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">The Signal Detection System</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/03-treesitter-and-language-adapter/">
+                                <span class="button__text">Tree-sitter and the LanguageAdapter Pattern</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

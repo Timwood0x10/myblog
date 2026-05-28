@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>The Scoring Model: From Qualitative Signals to a Single Number | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="You have 10 signal detectors, each producing a violation count. Some signals are severe (deep nesting), some are noisy (magic numbers). How do you combine them into a single, fair score using logarithmic scaling?">
+
+    <meta property="og:description" content="You have 10 signal detectors, each producing a violation count. Some signals are severe (deep nesting), some are noisy (magic numbers). How do you combine them into a single, fair score using logarithmic scaling?">
+    <meta property="og:title" content="The Scoring Model: From Qualitative Signals to a Single Number | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/07-scoring-model/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="You have 10 signal detectors, each producing a violation count. Some signals are severe (deep nesting), some are noisy (magic numbers). How do you combine them into a single, fair score using logarithmic scaling?">
+    <meta name="twitter:title" content="The Scoring Model: From Qualitative Signals to a Single Number | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/07-scoring-model/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/07-scoring-model/">The Scoring Model: From Qualitative Signals to a Single Number</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-27
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-quality/">#Code Quality</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/static-analysis/">#Static Analysis</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="the-scoring-model">The Scoring Model</h1>
+<blockquote>
+<p><strong>Question</strong>: You have 10 signal detectors, each producing a violation count. Some signals are severe (deep nesting), some are noisy (magic numbers). How do you combine them into a single, fair score?</p>
+</blockquote>
+<h2 id="the-problem-with-linear-scoring">The Problem with Linear Scoring</h2>
+<p>The simplest approach is linear addition: <code>score = sum(all violations)</code>. This fails because:</p>
+<ol>
+<li>
+<p><strong>Scale mismatch.</strong> 100 magic numbers is common in large codebases. 100 deeply nested blocks is catastrophic. Linear scoring treats them equally.</p>
+</li>
+<li>
+<p><strong>Project size bias.</strong> A 100,000-line project will have more violations than a 100-line project, even if the code quality is identical. Raw counts are not comparable.</p>
+</li>
+<li>
+<p><strong>Diminishing severity.</strong> The 1st god function is alarming. The 100th is just more of the same systemic issue. Linear scoring says the second is 100x worse — but it is not.</p>
+</li>
+</ol>
+<p>garbage-code-hunter solves all three problems with a <strong>two-tier logarithmic scoring model</strong>.</p>
+<h2 id="the-two-tier-model">The Two-Tier Model</h2>
+<p>The total score is the sum of two independent tiers (<code>src/scoring.rs:141-166</code>):</p>
+<div class="mermaid-direct" data-series="garbage-code-hunter" data-name="graph.mmd">
+graph TB
+    ISSUES[All Issues] --> SEV{Severity?}
+    SEV --> |"Nuclear"| T1[Tier 1: Nuclear Score]
+    SEV --> |"Spicy"| T2[Tier 2: Noisy Density Score]
+    SEV --> |"Mild"| T2
+
+    T1 --> |"log2(1+n) * 8<br/>cap: 40"| TOTAL[Total Score<br/>0-100]
+    T2 --> |"log2(1+d) * 6<br/>cap: 60"| TOTAL
+
+    TOTAL --> QL[Quality Level]
+</div><h3 id="tier-1-nuclear-score-high-confidence">Tier 1: Nuclear Score (High Confidence)</h3>
+<p>Nuclear issues are <strong>high-confidence problems</strong> — when they appear, they are almost always real:</p>
+<ul>
+<li>Deeply nested blocks (&gt;= 5 levels)</li>
+<li>God functions (&gt; 50 lines)</li>
+<li>Bare <code>except</code> in Python</li>
+<li><code>unsafe</code> blocks in Rust</li>
+</ul>
+<p>The formula:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/scoring.rs:155-156</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> n_score</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> (</span><span>severity_distribution</span><span style="color: #94E2D5;">.</span><span>nuclear </span><span style="color: #CBA6F7;">as f64</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">log2</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 8</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> n_score</span><span style="color: #94E2D5;"> =</span><span> n_score</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">min</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">40</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">);</span></span></code></pre><table><thead><tr><th>Nuclear Count</th><th>Score</th><th>Interpretation</th></tr></thead><tbody>
+<tr><td>0</td><td>0.0</td><td>No high-confidence issues</td></tr>
+<tr><td>1</td><td>8.0</td><td>One nuclear issue detected</td></tr>
+<tr><td>2</td><td>12.7</td><td>Two issues</td></tr>
+<tr><td>5</td><td>20.7</td><td>Pattern forming</td></tr>
+<tr><td>10</td><td>27.7</td><td>Systemic problem</td></tr>
+<tr><td>30</td><td>39.6</td><td>Cap reached</td></tr>
+</tbody></table>
+<p>The logarithm ensures that going from 0 to 1 nuclear issue is a bigger jump than going from 30 to 31. This matches human intuition: the first deeply nested function is alarming; the 31st is just confirmation.</p>
+<h3 id="tier-2-noisy-density-score">Tier 2: Noisy Density Score</h3>
+<p>Spicy and Mild issues are <strong>noisy</strong> — magic numbers, naming violations, and <code>println</code> calls often have legitimate reasons:</p>
+<ul>
+<li>Magic numbers in UI layouts</li>
+<li>Short variable names in mathematical formulas</li>
+<li><code>println</code> in main functions</li>
+</ul>
+<p>The formula uses <strong>density</strong> (per 1000 lines) to normalize across project sizes:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/scoring.rs:158-164</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> k_lines</span><span style="color: #94E2D5;"> =</span><span> total_lines</span><span style="color: #CBA6F7;"> as f64</span><span style="color: #94E2D5;"> /</span><span style="color: #FAB387;"> 1000</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> noisy_density</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> (</span><span>severity_distribution</span><span style="color: #94E2D5;">.</span><span>spicy </span><span style="color: #CBA6F7;">as f64</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">5</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                   +</span><span> severity_distribution</span><span style="color: #94E2D5;">.</span><span>mild </span><span style="color: #CBA6F7;">as f64</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> /</span><span> k_lines</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> d_score</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> (</span><span>noisy_density</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">log2</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 6</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> d_score</span><span style="color: #94E2D5;"> =</span><span> d_score</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">min</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">60</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>Key details:</p>
+<ul>
+<li><strong>Spicy counts 1.5x</strong> vs Mild — slightly more reliable, but still noisy</li>
+<li><strong>Density normalization</strong>: a 100-line file with 5 magic numbers scores the same as a 10,000-line file with 500</li>
+<li><strong>Cap at 60</strong>: prevents noisy signals from overwhelming the score</li>
+</ul>
+<h3 id="the-final-score">The Final Score</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/scoring.rs:166</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> total_score</span><span style="color: #94E2D5;"> =</span><span> n_score</span><span style="color: #94E2D5;"> +</span><span> d_score</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p>Range: 0-100. But note the asymmetry:</p>
+<ul>
+<li>Nuclear cap: 40 (high confidence)</li>
+<li>Noisy cap: 60 (volume matters more)</li>
+<li>Nuclear issues can never exceed 40% of the total score</li>
+</ul>
+<p>This means a codebase with 0 nuclear issues but lots of mild noise can still score poorly — because high-volume noise is still a quality problem.</p>
+<h2 id="quality-levels">Quality Levels</h2>
+<p>The score maps to five quality levels (<code>src/scoring.rs:33-39</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> QualityLevel</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Excellent</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;"> // 0-20</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Good</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // 21-40</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Average</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // 41-60</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Poor</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // 61-80</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Terrible</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // 81+</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>These are not arbitrary. Each level corresponds to a different response:</p>
+<table><thead><tr><th>Level</th><th>Score</th><th>Meaning</th><th>Action</th></tr></thead><tbody>
+<tr><td>Excellent</td><td>0-20</td><td>Clean code</td><td>Ship it</td></tr>
+<tr><td>Good</td><td>21-40</td><td>Minor issues</td><td>Fix when convenient</td></tr>
+<tr><td>Average</td><td>41-60</td><td>Noticeable smells</td><td>Schedule cleanup</td></tr>
+<tr><td>Poor</td><td>61-80</td><td>Significant problems</td><td>Prioritize fixes</td></tr>
+<tr><td>Terrible</td><td>81+</td><td>Systemic failure</td><td>Halt and refactor</td></tr>
+</tbody></table>
+<h2 id="why-logarithmic">Why Logarithmic?</h2>
+<p>The logarithm serves three purposes:</p>
+<h3 id="1-diminishing-returns">1. Diminishing Returns</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>log2(1 + n):</span></span>
+<span class="giallo-l"><span>  n=0   → 0.0</span></span>
+<span class="giallo-l"><span>  n=1   → 1.0</span></span>
+<span class="giallo-l"><span>  n=10  → 3.5</span></span>
+<span class="giallo-l"><span>  n=100 → 6.7</span></span>
+<span class="giallo-l"><span>  n=1000 → 10.0</span></span></code></pre>
+<p>Going from 0 to 1 issue is a 1.0 jump. Going from 100 to 101 is a 0.01 jump. This matches the "first one matters most" intuition.</p>
+<h3 id="2-scale-invariance">2. Scale Invariance</h3>
+<p>Logarithmic scoring makes the score comparable across project sizes. A 100-line file with 5 issues and a 10,000-line file with 500 issues get similar density scores.</p>
+<h3 id="3-outlier-resistance">3. Outlier Resistance</h3>
+<p>Without log, a single file with 1000 <code>println</code> calls would dominate the entire project score. With log, it contributes about 10 points — significant but not catastrophic.</p>
+<h2 id="signal-level-scoring">Signal-Level Scoring</h2>
+<p>Each individual signal also gets a normalized score (<code>src/signals.rs:82-86</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> violations_to_score</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> total_lines</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> f64</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> k_lines</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> (</span><span>total_lines</span><span style="color: #CBA6F7;"> as f64</span><span style="color: #94E2D5;"> /</span><span style="color: #FAB387;"> 1000</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">max</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">001</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> density</span><span style="color: #94E2D5;"> =</span><span> count</span><span style="color: #CBA6F7;"> as f64</span><span style="color: #94E2D5;"> /</span><span> k_lines</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    ((</span><span>density</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">log2</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 6</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">min</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">25</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each signal's score ranges from 0 to 25. This is used for:</p>
+<ul>
+<li><strong>Personality inference</strong> (Article 08): which signal dominates determines the archetype</li>
+<li><strong>Category breakdown</strong>: naming, complexity, duplication, code-smells, student-code</li>
+<li><strong>Trend tracking</strong>: signal scores over time show whether a specific smell is getting better or worse</li>
+</ul>
+<h2 id="category-scoring">Category Scoring</h2>
+<p>Beyond the two-tier model, the scorer also computes per-category scores (<code>src/scoring.rs:117-139</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Five categories, each log-scaled and capped at 20</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span style="color: #94E2D5;"> &amp;</span><span>cat_name</span><span style="color: #CBA6F7;"> in</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;naming&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;complexity&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;duplication&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;code-smells&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;student-code&quot;</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> cat_count</span><span style="color: #94E2D5;"> =</span><span> category_counts</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get</span><span style="color: #9399B2;">(</span><span>cat_name</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">copied</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap_or</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> cat_density</span><span style="color: #94E2D5;"> =</span><span> cat_count</span><span style="color: #CBA6F7;"> as f64</span><span style="color: #94E2D5;"> /</span><span> k_lines</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> cat_score</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> ((</span><span>cat_density</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">log2</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 6</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">min</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">20</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>    category_scores</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">insert</span><span style="color: #9399B2;">(</span><span>cat_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">(),</span><span> cat_score</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>These are informational — they do not affect the total score, but they help developers understand <strong>which dimension</strong> of code quality needs attention.</p>
+<h2 id="severity-classification">Severity Classification</h2>
+<p>Not all issues are equal. garbage-code-hunter classifies issues into three severity levels (<code>src/analyzer.rs:39-44</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> Severity</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Mild</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // Minor issues (naming, magic numbers)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Spicy</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // Medium issues (debug calls, shallow nesting)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Nuclear</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;"> // Serious issues (deep nesting, god functions)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The classification is not per-rule — it is per-signal. A <code>NestedHell</code> violation is always Nuclear because deep nesting is always a structural problem. A <code>NamingChaos</code> violation is always Mild because bad names are annoying but not dangerous.</p>
+<h2 id="putting-it-all-together">Putting It All Together</h2>
+<div class="mermaid-direct" data-series="garbage-code-hunter" data-name="graph.mmd">
+graph TB
+    subgraph "Per-File"
+        F1[File A] --> IR1[StyleIR]
+        F2[File B] --> IR2[StyleIR]
+        F3[File N] --> IRN[StyleIR]
+    end
+
+    subgraph "Detection"
+        IR1 --> DET[10 Detectors]
+        IR2 --> DET
+        IRN --> DET
+        DET --> FIND[StyleFindings]
+    end
+
+    subgraph "Scoring"
+        FIND --> SEV[Classify Severity]
+        SEV --> T1[Tier 1: Nuclear<br/>log2(1+n)*8]
+        SEV --> T2[Tier 2: Noisy<br/>log2(1+d)*6]
+        T1 --> TOTAL[Total: 0-100]
+        T2 --> TOTAL
+        TOTAL --> QL[Quality Level]
+    end
+</div>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/07-scoring-model/./08-fun-side-roasts-and-personality.md">The Fun Side: Roasts, Personality, and the Tool Belt</a> — Why code analysis should be entertaining, and how garbage-code-hunter makes developers actually read their reports.</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/08-fun-side-roasts-and-personality/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">The Fun Side: Roasts, Personality, and the Tool Belt</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/garbage-code-hunter/06-duplication-algorithms/">
+                                <span class="button__text">Duplication Detection Algorithms</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>
