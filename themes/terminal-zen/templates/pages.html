@@ -8,42 +8,55 @@
   </div>
   {% endif %}
 
-  {# === Reading Path === #}
-  {%- if config.extra.series_order %}
+  {# === Reading Path (auto-detect from taxonomy) === #}
+  {%- set all_series = get_taxonomy(kind="series") %}
+  {%- if all_series and all_series.items | length > 0 %}
   <div class="post on-list">
     <h2 class="post-title">Reading Path</h2>
     <div class="post-content">
 
-    {# Unified parallel reading path graph #}
+    {# Unified parallel reading path graph — auto-detects all series #}
 <pre><code data-lang="mermaid" data-name="reading-path.mmd">graph TB
-{%- for slug in config.extra.series_order %}
-{%- set info = config.extra.series_info[slug] %}
-{%- set ns = slug | slugify | replace(from="-", to="_") %}
+{# 1. classDef for each series — use config color if available, else default palette #}
+{%- set default_colors = ["#5BA3E6", "#4DD0C8", "#B388FF", "#FFB86C", "#FF79C6", "#8BE9FD"] %}
+{%- for term in all_series.items %}
+{%- set ns = term.name | slugify | replace(from="-", to="_") %}
+{%- set info = config.extra.series_info[term.name] %}
+{%- if info %}
     classDef {{ ns }} fill:{{ info.color }}22,stroke:{{ info.color }},color:#e6edf3,stroke-width:1.6px
+{%- else %}
+{%- set ci = (loop.index0) % 6 %}
+    classDef {{ ns }} fill:{{ default_colors[ci] }}22,stroke:{{ default_colors[ci] }},color:#e6edf3,stroke-width:1.6px
+{%- endif %}
 {%- endfor %}
 
     %% === Overview layer ===
     subgraph Overview[" "]
         direction LR
-{%- for slug in config.extra.series_order %}
-{%- set info = config.extra.series_info[slug] %}
-{%- set ns = slug | slugify | replace(from="-", to="_") %}
-        {{ ns }}["{{ slug }}<br/>{{ info.desc }}"]:::{{ ns }}
+{%- for term in all_series.items %}
+{%- set ns = term.name | slugify | replace(from="-", to="_") %}
+{%- set info = config.extra.series_info[term.name] %}
+{%- if info %}
+        {{ ns }}["{{ term.name }}<br/>{{ info.desc }}"]:::{{ ns }}
+{%- else %}
+        {{ ns }}["{{ term.name }}"]:::{{ ns }}
+{%- endif %}
 {%- endfor %}
+{%- if config.extra.series_edges %}
 {%- for edge in config.extra.series_edges %}
 {%- set from_ns = edge.from | slugify | replace(from="-", to="_") %}
 {%- set to_ns = edge.to | slugify | replace(from="-", to="_") %}
         {{ from_ns }} -.->|"{{ edge.label }}"| {{ to_ns }}
 {%- endfor %}
+{%- endif %}
     end
 
     %% === Parallel series tracks ===
-{%- for slug in config.extra.series_order %}
-{%- set info = config.extra.series_info[slug] %}
-{%- set series_sec = get_section(path="log/" ~ slug ~ "/_index.md") %}
+{%- for term in all_series.items %}
+{%- set ns = term.name | slugify | replace(from="-", to="_") %}
+{%- set series_sec = get_section(path="log/" ~ term.name ~ "/_index.md") %}
 {%- set pages = series_sec.pages %}
-{%- set ns = slug | slugify | replace(from="-", to="_") %}
-    subgraph {{ slug }}["{{ slug }}"]
+    subgraph {{ ns }}_track["{{ term.name }}"]
         direction TB
   {%- for page in pages %}
   {%- set num = loop.index %}
