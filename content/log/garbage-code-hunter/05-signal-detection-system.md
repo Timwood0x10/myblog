@@ -210,4 +210,4 @@ To add a `MagicNumberDetector`:
 
 ---
 
-*Next: [Duplication Detection Algorithms](./06-duplication-algorithms.md) — How to find copy-paste code across an entire codebase, and why Jaccard similarity is not enough.*
+*Next: [Duplication Detection Algorithms](@/log/garbage-code-hunter/06-duplication-algorithms.md) — How to find copy-paste code across an entire codebase, and why Jaccard similarity is not enough.*

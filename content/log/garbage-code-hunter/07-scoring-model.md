@@ -209,29 +209,37 @@ The classification is not per-rule — it is per-signal. A `NestedHell` violatio
 
 {% mermaid() %}
 graph TB
-    subgraph "Per-File"
+    subgraph PF["Per-File"]
         F1[File A] --> IR1[StyleIR]
         F2[File B] --> IR2[StyleIR]
         F3[File N] --> IRN[StyleIR]
     end
 
-    subgraph "Detection"
-        IR1 --> DET[10 Detectors]
-        IR2 --> DET
-        IRN --> DET
-        DET --> FIND[StyleFindings]
+    subgraph DET_SG["Detection"]
+        DET[10 Detectors]
+        FIND[StyleFindings]
     end
 
-    subgraph "Scoring"
-        FIND --> SEV[Classify Severity]
-        SEV --> T1[Tier 1: Nuclear<br/>log2(1+n)*8]
-        SEV --> T2[Tier 2: Noisy<br/>log2(1+d)*6]
-        T1 --> TOTAL[Total: 0-100]
-        T2 --> TOTAL
-        TOTAL --> QL[Quality Level]
+    subgraph SC["Scoring"]
+        SEV[Classify Severity]
+        T1[Tier 1: Nuclear<br/>log2 1+n * 8]
+        T2[Tier 2: Noisy<br/>log2 1+d * 6]
+        TOTAL[Total: 0-100]
+        QL[Quality Level]
     end
+
+    IR1 --> DET
+    IR2 --> DET
+    IRN --> DET
+    DET --> FIND
+    FIND --> SEV
+    SEV --> T1
+    SEV --> T2
+    T1 --> TOTAL
+    T2 --> TOTAL
+    TOTAL --> QL
 {% end %}
 
 ---
 
-*Next: [The Fun Side: Roasts, Personality, and the Tool Belt](./08-fun-side-roasts-and-personality.md) — Why code analysis should be entertaining, and how garbage-code-hunter makes developers actually read their reports.*
+*Next: [The Fun Side: Roasts, Personality, and the Tool Belt](@/log/garbage-code-hunter/08-fun-side-roasts-and-personality.md) — Why code analysis should be entertaining, and how garbage-code-hunter makes developers actually read their reports.*

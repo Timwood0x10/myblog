@@ -36,13 +36,17 @@ graph LR
     AST --> TOKENS[Extract Tokens]
     TOKENS --> NORM[Normalize]
 
-    subgraph "Normalization"
-        NORM --> ID[Identifiers → Hash]
-        NORM --> STR[Strings → STRING_LIT]
-        NORM --> NUM[Numbers → NUMBER_LIT]
-        NORM --> KEY[Keywords → Keep]
+    subgraph NORM_SG["Normalization"]
+        ID[Identifiers → Hash]
+        STR[Strings → STRING_LIT]
+        NUM[Numbers → NUMBER_LIT]
+        KEY[Keywords → Keep]
     end
 
+    NORM --> ID
+    NORM --> STR
+    NORM --> NUM
+    NORM --> KEY
     NORM --> HASH[Token Hash]
 {% end %}
 
@@ -203,4 +207,4 @@ These are configurable in `.garbage-code-hunter.toml` under the `[rules.duplicat
 
 ---
 
-*Next: [The Scoring Model](./07-scoring-model.md) — How to turn 10 signal scores into a single number between 0 and 100, and why logarithmic scaling is the right choice.*
+*Next: [The Scoring Model](@/log/garbage-code-hunter/07-scoring-model.md) — How to turn 10 signal scores into a single number between 0 and 100, and why logarithmic scaling is the right choice.*

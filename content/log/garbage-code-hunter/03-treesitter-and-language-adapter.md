@@ -247,4 +247,4 @@ This adapter pattern has clear advantages, but also tradeoffs:
 
 ---
 
-*Next: [StyleIR: The Language-Neutral Intermediate Representation](./04-style-ir-the-neutral-layer.md) — How adapter counts become a stable fact layer that detectors consume without knowing the language.*
+*Next: [StyleIR: The Language-Neutral Intermediate Representation](@/log/garbage-code-hunter/04-style-ir-the-neutral-layer.md) — How adapter counts become a stable fact layer that detectors consume without knowing the language.*

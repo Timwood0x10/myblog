@@ -40,14 +40,14 @@ Each article in this series takes one of these decisions and breaks it down: the
 
 | # | Article | Core Question |
 |---|---------|---------------|
-| 01 | [Why Multi-Language Code Quality Analysis Is Hard](./01-why-multi-language-sucks.md) | What happens when you need to analyze 11 languages with one tool? |
-| 02 | [Architecture Overview](./02-architecture-overview.md) | How do you structure a code analyzer that is both fast and extensible? |
-| 03 | [Tree-sitter and the LanguageAdapter Pattern](./03-treesitter-and-language-adapter.md) | How do you avoid writing 11 copies of the same detection logic? |
-| 04 | [StyleIR: The Language-Neutral Intermediate Representation](./04-style-ir-the-neutral-layer.md) | How do you decouple detection from language-specific AST details? |
-| 05 | [The Signal Detection System](./05-signal-detection-system.md) | Why fewer, stronger detectors beat many weak ones? |
-| 06 | [Duplication Detection Algorithms](./06-duplication-algorithms.md) | How do you find copy-paste code across an entire codebase? |
-| 07 | [The Scoring Model](./07-scoring-model.md) | How do you turn qualitative signals into a single number? |
-| 08 | [The Fun Side: Roasts, Personality, and the Tool Belt](./08-fun-side-roasts-and-personality.md) | Why should code analysis be boring? |
+| 01 | [Why Multi-Language Code Quality Analysis Is Hard](@/log/garbage-code-hunter/01-why-multi-language-sucks.md) | What happens when you need to analyze 11 languages with one tool? |
+| 02 | [Architecture Overview](@/log/garbage-code-hunter/02-architecture-overview.md) | How do you structure a code analyzer that is both fast and extensible? |
+| 03 | [Tree-sitter and the LanguageAdapter Pattern](@/log/garbage-code-hunter/03-treesitter-and-language-adapter.md) | How do you avoid writing 11 copies of the same detection logic? |
+| 04 | [StyleIR: The Language-Neutral Intermediate Representation](@/log/garbage-code-hunter/04-style-ir-the-neutral-layer.md) | How do you decouple detection from language-specific AST details? |
+| 05 | [The Signal Detection System](@/log/garbage-code-hunter/05-signal-detection-system.md) | Why fewer, stronger detectors beat many weak ones? |
+| 06 | [Duplication Detection Algorithms](@/log/garbage-code-hunter/06-duplication-algorithms.md) | How do you find copy-paste code across an entire codebase? |
+| 07 | [The Scoring Model](@/log/garbage-code-hunter/07-scoring-model.md) | How do you turn qualitative signals into a single number? |
+| 08 | [The Fun Side: Roasts, Personality, and the Tool Belt](@/log/garbage-code-hunter/08-fun-side-roasts-and-personality.md) | Why should code analysis be boring? |
 
 ## Reading Order
 
@@ -81,4 +81,4 @@ cd garbage-code-hunter
 cargo build --release
 ```
 
-Let's start with the fundamental question: [Why is multi-language code quality analysis so hard?](./01-why-multi-language-sucks.md)
+Let's start with the fundamental question: [Why is multi-language code quality analysis so hard?](@/log/garbage-code-hunter/01-why-multi-language-sucks.md)

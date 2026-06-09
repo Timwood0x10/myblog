@@ -142,19 +142,29 @@ Once you commit to Option B, the architecture becomes clear:
 
 {% mermaid() %}
 graph TB
-    subgraph "Per-Language (O(languages))"
-        RA[RustAdapter] --> |debug_call_count| IR
-        GA[GoAdapter] --> |debug_call_count| IR
-        PA[PythonAdapter] --> |debug_call_count| IR
-        VA[...11 adapters] --> |debug_call_count| IR
+    subgraph PL["Per-Language (O(languages))"]
+        RA[RustAdapter]
+        GA[GoAdapter]
+        PA[PythonAdapter]
+        VA[...11 adapters]
     end
 
-    subgraph "Language-Neutral (O(1))"
-        IR[StyleIR] --> DD[DebugPrintDetector]
-        IR --> ND[NamingDetector]
-        IR --> PD[PanicDetector]
-        IR --> SD[...10 detectors]
+    subgraph LN["Language-Neutral (O(1))"]
+        IR[StyleIR]
+        DD[DebugPrintDetector]
+        ND[NamingDetector]
+        PD[PanicDetector]
+        SD[...10 detectors]
     end
+
+    RA --> |debug_call_count| IR
+    GA --> |debug_call_count| IR
+    PA --> |debug_call_count| IR
+    VA --> |debug_call_count| IR
+    IR --> DD
+    IR --> ND
+    IR --> PD
+    IR --> SD
 {% end %}
 
 The key insight: **adapters are the complexity sink.** They absorb all language-specific knowledge so that detectors can be simple.
@@ -181,4 +191,4 @@ This is the payoff of the adapter pattern: **decoupling that actually scales.**
 
 ---
 
-*Next: [Architecture Overview](./02-architecture-overview.md) — How the four-phase pipeline works, and why the module boundaries are drawn where they are.*
+*Next: [Architecture Overview](@/log/garbage-code-hunter/02-architecture-overview.md) — How the four-phase pipeline works, and why the module boundaries are drawn where they are.*

@@ -116,40 +116,68 @@ The project is organized as a library + binary:
 
 {% mermaid() %}
 graph TB
-    subgraph "Binary (main.rs)"
-        CLI[CLI Parser<br/>clap] --> SCAN[scan<br/>14 tools in parallel]
-        CLI --> ANALYZE[analyze<br/>4-phase pipeline]
+    subgraph BIN["Binary (main.rs)"]
+        CLI[CLI Parser<br/>clap]
+        SCAN[scan<br/>14 tools in parallel]
+        ANALYZE[analyze<br/>4-phase pipeline]
     end
 
-    subgraph "Library (lib.rs)"
-        ANALYZE --> A[analyzer]
-        A --> TS[treesitter]
-        A --> LANG[language]
-        A --> SIG[signals]
-        A --> IR[style_ir]
-        A --> DET[detectors]
-        A --> DUP[duplication]
-        A --> SCORE[scoring]
-        A --> FIND[finding]
-        SCAN --> REPORT[reporter]
-        REPORT --> CONFIG[config]
-        REPORT --> I18N[i18n]
-        REPORT --> LLM[llm]
+    subgraph LIB["Library (lib.rs)"]
+        A[analyzer]
+        TS[treesitter]
+        LANG[language]
+        SIG[signals]
+        IR[style_ir]
+        DET[detectors]
+        DUP[duplication]
+        SCORE[scoring]
+        FIND[finding]
+        REPORT[reporter]
+        CONFIG[config]
+        I18N[i18n]
+        LLM[llm]
     end
 
-    subgraph "Language Adapters"
-        LANG --> RA[rust.rs]
-        LANG --> GA[go.rs]
-        LANG --> PA[python.rs]
-        LANG --> TA[ts.rs]
-        LANG --> JA[java.rs]
-        LANG --> CA[c.rs]
-        LANG --> CPA[cpp.rs]
-        LANG --> SA[swift.rs]
-        LANG --> ZA[zig.rs]
-        LANG --> RBA[ruby.rs]
-        LANG --> JSA[js.rs]
+    subgraph ADAPT["Language Adapters"]
+        RA[rust.rs]
+        GA[go.rs]
+        PA[python.rs]
+        TA[ts.rs]
+        JA[java.rs]
+        CA[c.rs]
+        CPA[cpp.rs]
+        SA[swift.rs]
+        ZA[zig.rs]
+        RBA[ruby.rs]
+        JSA[js.rs]
     end
+
+    CLI --> SCAN
+    CLI --> ANALYZE
+    ANALYZE --> A
+    A --> TS
+    A --> LANG
+    A --> SIG
+    A --> IR
+    A --> DET
+    A --> DUP
+    A --> SCORE
+    A --> FIND
+    SCAN --> REPORT
+    REPORT --> CONFIG
+    REPORT --> I18N
+    REPORT --> LLM
+    LANG --> RA
+    LANG --> GA
+    LANG --> PA
+    LANG --> TA
+    LANG --> JA
+    LANG --> CA
+    LANG --> CPA
+    LANG --> SA
+    LANG --> ZA
+    LANG --> RBA
+    LANG --> JSA
 {% end %}
 
 ### Key Modules
@@ -265,4 +293,4 @@ Two independent config systems:
 
 ---
 
-*Next: [Tree-sitter and the LanguageAdapter Pattern](./03-treesitter-and-language-adapter.md) — How 11 language adapters share a single tree-sitter query engine, and why `compute_all()` matters.*
+*Next: [Tree-sitter and the LanguageAdapter Pattern](@/log/garbage-code-hunter/03-treesitter-and-language-adapter.md) — How 11 language adapters share a single tree-sitter query engine, and why `compute_all()` matters.*

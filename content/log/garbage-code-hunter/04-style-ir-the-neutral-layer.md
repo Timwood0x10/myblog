@@ -244,27 +244,40 @@ Both return `ir.panic_call_count`. The detector has zero knowledge of Rust, Go, 
 
 {% mermaid() %}
 graph TB
-    subgraph "Language Layer"
-        R[Rust<br/>Adapter] --> AC1[AdapterCounts]
-        G[Go<br/>Adapter] --> AC2[AdapterCounts]
-        P[Python<br/>Adapter] --> AC3[AdapterCounts]
-        Z[...11] --> ACN[AdapterCounts]
+    subgraph LL["Language Layer"]
+        R[Rust<br/>Adapter]
+        G[Go<br/>Adapter]
+        P[Python<br/>Adapter]
+        Z[...11]
+        AC1[AdapterCounts]
+        AC2[AdapterCounts]
+        AC3[AdapterCounts]
+        ACN[AdapterCounts]
     end
 
-    subgraph "Fact Layer"
-        AC1 --> IR[StyleIr]
-        AC2 --> IR
-        AC3 --> IR
-        ACN --> IR
+    subgraph FL["Fact Layer"]
+        IR[StyleIr]
     end
 
-    subgraph "Judgment Layer"
-        IR --> D1[PanicAddiction<br/>Detector]
-        IR --> D2[NamingChaos<br/>Detector]
-        IR --> D3[NestedHell<br/>Detector]
-        IR --> DN[...10<br/>Detectors]
+    subgraph JL["Judgment Layer"]
+        D1[PanicAddiction<br/>Detector]
+        D2[NamingChaos<br/>Detector]
+        D3[NestedHell<br/>Detector]
+        DN[...10<br/>Detectors]
     end
 
+    R --> AC1
+    G --> AC2
+    P --> AC3
+    Z --> ACN
+    AC1 --> IR
+    AC2 --> IR
+    AC3 --> IR
+    ACN --> IR
+    IR --> D1
+    IR --> D2
+    IR --> D3
+    IR --> DN
     D1 --> F[StyleFinding]
     D2 --> F
     D3 --> F
@@ -278,4 +291,4 @@ Three layers, each with a clear responsibility:
 
 ---
 
-*Next: [The Signal Detection System](./05-signal-detection-system.md) — How 10 detectors cover the full spectrum of code smells, and why "fewer rules, stronger signals" beats the alternative.*
+*Next: [The Signal Detection System](@/log/garbage-code-hunter/05-signal-detection-system.md) — How 10 detectors cover the full spectrum of code smells, and why "fewer rules, stronger signals" beats the alternative.*
