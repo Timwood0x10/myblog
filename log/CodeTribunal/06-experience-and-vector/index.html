@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>The Experience System: Learning from Past Sessions | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="CodeTribunal does not fine-tune. It does not have a training loop. But it gets smarter over time — by distilling each game into an experience record and retrieving similar past sessions to inform future debates.">
+
+    <meta property="og:description" content="CodeTribunal does not fine-tune. It does not have a training loop. But it gets smarter over time — by distilling each game into an experience record and retrieving similar past sessions to inform future debates.">
+    <meta property="og:title" content="The Experience System: Learning from Past Sessions | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/CodeTribunal/06-experience-and-vector/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="CodeTribunal does not fine-tune. It does not have a training loop. But it gets smarter over time — by distilling each game into an experience record and retrieving similar past sessions to inform future debates.">
+    <meta name="twitter:title" content="The Experience System: Learning from Past Sessions | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/CodeTribunal/06-experience-and-vector/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/06-experience-and-vector/">The Experience System: Learning from Past Sessions</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-review/">#Code Review</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/multi-agent/">#Multi-Agent</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="the-experience-system-learning-from-past-sessions">The Experience System: Learning from Past Sessions</h1>
+<h2 id="the-problem-each-session-starts-from-zero">The Problem: Each Session Starts from Zero</h2>
+<p>Without memory, every CodeTribunal session is independent. The agents review code, debate, vote, and forget everything. Session 1000 has no advantage over session 1.</p>
+<p>This is wasteful. Past sessions contain patterns: which disguise strategies work best, which code patterns generate the most heated debates, which persona combinations produce the most insightful reviews. If the system could learn from this history, each new session could be informed by all previous sessions.</p>
+<p>Fine-tuning is one answer, but it requires training infrastructure, labeled data, and model access. CodeTribunal needs a lighter approach.</p>
+<h2 id="distillgame-compressing-a-session-into-a-record">DistillGame: Compressing a Session into a Record</h2>
+<p>After each game, <code>DistillGame</code> in <code>internal/roundtable/experience.go</code> creates an <code>ExperienceRecord</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ExperienceRecord</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    CodePattern</span><span style="color: #CBA6F7;">    string</span><span style="color: #9399B2;font-style: italic;">   // Hash of the code&#39;s structural features</span></span>
+<span class="giallo-l"><span>    KeyFindings</span><span style="color: #9399B2;">    []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;"> // Most debated findings</span></span>
+<span class="giallo-l"><span>    TroublemakerID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;font-style: italic;">   // Who was the Troublemaker</span></span>
+<span class="giallo-l"><span>    Strategy</span><span style="color: #CBA6F7;">       string</span><span style="color: #9399B2;font-style: italic;">   // Disguise strategy used</span></span>
+<span class="giallo-l"><span>    CaughtRound</span><span style="color: #CBA6F7;">    int</span><span style="color: #9399B2;font-style: italic;">      // Which round the Troublemaker was caught</span></span>
+<span class="giallo-l"><span>    VoteHistory</span><span style="color: #9399B2;">    []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;"> // How votes shifted across rounds</span></span>
+<span class="giallo-l"><span>    Insights</span><span style="color: #9399B2;">       []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;"> // Post-game analysis</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The distillation uses the LLM itself: after the game, a final LLM call summarizes the session into structured fields. This is the "reflection" step — the system analyzes its own performance.</p>
+<h2 id="the-vector-store-no-external-embedding-api">The Vector Store: No External Embedding API</h2>
+<p><code>internal/store/vector.go</code> implements vector search without any external embedding service. The <code>GenerateEmbedding</code> function at <code>vector.go:219</code> uses keyword hashing:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> GenerateEmbedding</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">text</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) []</span><span style="color: #CBA6F7;">float32</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    embedding</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">float32</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 128</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    words</span><span style="color: #94E2D5;"> :=</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Fields</span><span style="color: #9399B2;">(</span><span>strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ToLower</span><span style="color: #9399B2;">(</span><span>text</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> word</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> words</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        hash</span><span style="color: #94E2D5;"> :=</span><span> sha256</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sum256</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">byte</span><span style="color: #9399B2;">(</span><span>word</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Map hash to bucket index and sign</span></span>
+<span class="giallo-l"><span>        idx</span><span style="color: #94E2D5;"> :=</span><span> binary</span><span style="color: #9399B2;">.</span><span>BigEndian</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Uint32</span><span style="color: #9399B2;">(</span><span>hash</span><span style="color: #9399B2;">[:</span><span style="color: #FAB387;">4</span><span style="color: #9399B2;">])</span><span style="color: #94E2D5;"> %</span><span style="color: #FAB387;"> 128</span></span>
+<span class="giallo-l"><span>        sign</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> float32</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1.0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> hash</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">4</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">%</span><span style="color: #FAB387;">2</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            sign</span><span style="color: #94E2D5;"> = -</span><span style="color: #FAB387;">1.0</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span>        embedding</span><span style="color: #9399B2;">[</span><span>idx</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> +=</span><span> sign</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // L2 normalize</span></span>
+<span class="giallo-l"><span>    norm</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> float32</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> v</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> embedding</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        norm</span><span style="color: #94E2D5;"> +=</span><span> v</span><span style="color: #94E2D5;"> *</span><span> v</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    norm</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> float32</span><span style="color: #9399B2;">(</span><span>math</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sqrt</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">float64</span><span style="color: #9399B2;">(</span><span>norm</span><span style="color: #9399B2;">)))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> norm</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> i</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> embedding</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            embedding</span><span style="color: #9399B2;">[</span><span>i</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> /=</span><span> norm</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> embedding</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is a <strong>locality-sensitive hashing</strong> approach: words that co-occur across documents hash to similar buckets. It is not as accurate as transformer-based embeddings, but it has three advantages:</p>
+<ol>
+<li><strong>Zero latency</strong>: No network call, no model inference.</li>
+<li><strong>Zero cost</strong>: No embedding API charges.</li>
+<li><strong>Zero dependencies</strong>: Pure Go, no ML runtime.</li>
+</ol>
+<p>The trade-off: semantic similarity is limited to keyword overlap. "null pointer" and "nil dereference" would not match. For CodeTribunal's use case (matching code review sessions by topic), this is sufficient because code reviews use consistent terminology.</p>
+<h2 id="sqlite-vec-knn-search-in-process">SQLite-Vec: KNN Search In-Process</h2>
+<p>The vector store uses <code>sqlite-vec</code>, a SQLite extension that adds KNN similarity search:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="sql"><span class="giallo-l"><span style="color: #CBA6F7;">CREATE</span><span> VIRTUAL </span><span style="color: #CBA6F7;">TABLE</span><span> experience_vectors </span><span style="color: #CBA6F7;">USING</span><span> vec0(</span></span>
+<span class="giallo-l"><span>    id </span><span style="color: #CBA6F7;">TEXT PRIMARY KEY</span><span>,</span></span>
+<span class="giallo-l"><span>    embedding </span><span style="color: #CBA6F7;">FLOAT</span><span>[128]</span></span>
+<span class="giallo-l"><span>);</span></span></code></pre>
+<p>Search is a single SQL query:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="sql"><span class="giallo-l"><span style="color: #CBA6F7;">SELECT</span><span> id, distance</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">FROM</span><span> experience_vectors</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">WHERE</span><span> embedding </span><span style="color: #CBA6F7;">MATCH</span><span> ?</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">ORDER BY</span><span> distance</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">LIMIT</span><span style="color: #FAB387;"> 5</span></span></code></pre>
+<p>The <code>mattn/go-sqlite3</code> driver loads the <code>sqlite-vec</code> extension at runtime. The vector database lives in a separate <code>.vec</code> file from the main SQLite database.</p>
+<h2 id="buildexperiencecontext-injecting-history-into-prompts">BuildExperienceContext: Injecting History into Prompts</h2>
+<p>Before each session, <code>BuildExperienceContext</code> searches for similar past games:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DiscussionSession</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> BuildExperienceContext</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Embed the current code</span></span>
+<span class="giallo-l"><span>    embedding</span><span style="color: #94E2D5;"> :=</span><span> store</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">GenerateEmbedding</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">.</span><span>GameState</span><span style="color: #9399B2;">.</span><span>Code</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Search for similar past experiences</span></span>
+<span class="giallo-l"><span>    results</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>VectorStore</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Search</span><span style="color: #9399B2;">(</span><span>embedding</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 5</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> context</span><span style="color: #F9E2AF;font-style: italic;"> strings</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Builder</span></span>
+<span class="giallo-l"><span>    context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WriteString</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Past session insights:</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> results</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WriteString</span><span style="color: #9399B2;">(</span><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;- Code pattern: %s</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #9399B2;">.</span><span>CodePattern</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span>        context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WriteString</span><span style="color: #9399B2;">(</span><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;  Key findings: %s</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Join</span><span style="color: #9399B2;">(</span><span>r</span><span style="color: #9399B2;">.</span><span>KeyFindings</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;; &quot;</span><span style="color: #9399B2;">)))</span></span>
+<span class="giallo-l"><span>        context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WriteString</span><span style="color: #9399B2;">(</span><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;  Troublemaker strategy: %s</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #9399B2;">.</span><span>Strategy</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span>        context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WriteString</span><span style="color: #9399B2;">(</span><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;  Caught in round: %d</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #9399B2;">.</span><span>CaughtRound</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">String</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This context is injected into the agents' system prompts. The agents now "know" about past sessions with similar code. They can:</p>
+<ul>
+<li>Focus on findings that were debated heavily in the past</li>
+<li>Watch for disguise strategies that succeeded before</li>
+<li>Avoid repeating mistakes from past sessions</li>
+</ul>
+<div class="mermaid-direct" data-series="codetribunal" data-name="graph.mmd">
+flowchart LR
+    A[Current Code] --> B[GenerateEmbedding]
+    B --> C[sqlite-vec KNN]
+    C --> D[Top 5 Past Experiences]
+    D --> E[BuildExperienceContext]
+    E --> F[Inject into System Prompt]
+    F --> G[Agents Now Have History]
+</div><h2 id="the-feedback-loop">The Feedback Loop</h2>
+<p>The experience system creates a feedback loop:</p>
+<ol>
+<li>Session N produces an experience record.</li>
+<li>Session N+1 retrieves similar experiences (including session N).</li>
+<li>Session N+1's agents are informed by past debates.</li>
+<li>Session N+1 produces a better experience record (because the debate was more informed).</li>
+<li>Session N+2 retrieves even better experiences.</li>
+</ol>
+<p>Over time, the system accumulates a knowledge base of code review patterns, Troublemaker strategies, and debate dynamics. Each session benefits from all previous sessions.</p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<p><strong>Keyword hashing vs transformer embeddings</strong>: Keyword hashing is 100x faster and requires no infrastructure. Transformer embeddings are more accurate but require a model server. For code review matching (where terminology is consistent), keyword hashing is sufficient.</p>
+<p><strong>In-process vs external vector database</strong>: In-process (sqlite-vec) has no network overhead and no deployment complexity. External (Pinecone, Weaviate) is more scalable but adds operational cost. CodeTribunal's scale (hundreds of sessions, not millions) makes in-process the right choice.</p>
+<p><strong>LLM-based distillation vs rule-based</strong>: LLM distillation produces richer summaries but costs one extra LLM call per session. Rule-based is cheaper but misses nuance. The distillation call is worth it because it produces structured data that improves future sessions.</p>
+<h2 id="summary">Summary</h2>
+<p>The experience system works without fine-tuning by distilling each game into a structured record, embedding it with keyword hashing, storing it in sqlite-vec, and retrieving similar past sessions to inform future debates. The result is a system that gets smarter over time through a lightweight, zero-infrastructure feedback loop.</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/07-random-events-and-fun/">Random Events and Game Dynamics</a> — Why does a code review tool have cosmic rays and ghost reviewers?</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/07-random-events-and-fun/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Random Events and Game Dynamics</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/05-debate-and-voting/">
+                                <span class="button__text">Debate, Cross-Examination, and Voting</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

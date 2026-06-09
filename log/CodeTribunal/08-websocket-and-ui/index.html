@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>WebSocket Layer and Real-Time UI | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="CodeTribunal streams the entire game — analysis, speaking, debate, voting — to a browser in real time via WebSocket. This article breaks down the Hub, GameController, and the embedded HTML UI.">
+
+    <meta property="og:description" content="CodeTribunal streams the entire game — analysis, speaking, debate, voting — to a browser in real time via WebSocket. This article breaks down the Hub, GameController, and the embedded HTML UI.">
+    <meta property="og:title" content="WebSocket Layer and Real-Time UI | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/CodeTribunal/08-websocket-and-ui/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="CodeTribunal streams the entire game — analysis, speaking, debate, voting — to a browser in real time via WebSocket. This article breaks down the Hub, GameController, and the embedded HTML UI.">
+    <meta name="twitter:title" content="WebSocket Layer and Real-Time UI | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/CodeTribunal/08-websocket-and-ui/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/08-websocket-and-ui/">WebSocket Layer and Real-Time UI</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-review/">#Code Review</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/multi-agent/">#Multi-Agent</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="websocket-layer-and-real-time-ui">WebSocket Layer and Real-Time UI</h1>
+<h2 id="the-problem-a-game-that-runs-in-the-background-is-invisible">The Problem: A Game That Runs in the Background Is Invisible</h2>
+<p>If CodeTribunal runs as a batch process — submit code, wait 2 minutes, get a report — the user misses the best part: the debate. The back-and-forth accusations, the evidence citations, the elimination votes — these are the engaging moments. They need to be visible in real time.</p>
+<h2 id="the-hub-connection-management">The Hub: Connection Management</h2>
+<p><code>internal/chat/hub.go</code> manages WebSocket connections:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Hub</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    clients</span><span style="color: #CBA6F7;">    map</span><span style="color: #9399B2;">[</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Client</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">bool</span></span>
+<span class="giallo-l"><span>    broadcast</span><span style="color: #CBA6F7;">  chan</span><span style="color: #9399B2;"> []</span><span style="color: #CBA6F7;">byte</span></span>
+<span class="giallo-l"><span>    register</span><span style="color: #CBA6F7;">   chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Client</span></span>
+<span class="giallo-l"><span>    unregister</span><span style="color: #CBA6F7;"> chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Client</span></span>
+<span class="giallo-l"><span>    moderator</span><span style="color: #94E2D5;">  *</span><span style="color: #F9E2AF;font-style: italic;">roundtable</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Moderator</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The Hub is a classic WebSocket fan-out pattern:</p>
+<ul>
+<li><code>register</code>: new client connects</li>
+<li><code>unregister</code>: client disconnects</li>
+<li><code>broadcast</code>: send message to all connected clients</li>
+</ul>
+<p>Each <code>Client</code> has a buffered send channel. If the channel is full (client is slow), the client is disconnected. This prevents slow clients from blocking the game loop.</p>
+<h2 id="the-gamecontroller-bridging-websocket-to-game-logic">The GameController: Bridging WebSocket to Game Logic</h2>
+<p><code>internal/chat/handler.go</code> contains <code>GameController</code>, which translates WebSocket messages into Moderator calls:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> GameController</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    hub</span><span style="color: #94E2D5;">       *</span><span style="color: #F9E2AF;font-style: italic;">Hub</span></span>
+<span class="giallo-l"><span>    moderator</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">roundtable</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Moderator</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">gc </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">GameController</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> HandleSubmit</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">code</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Run the full game asynchronously</span></span>
+<span class="giallo-l"><span>    g</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #94E2D5;"> :=</span><span> errgroup</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithContext</span><span style="color: #9399B2;">(</span><span>context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Background</span><span style="color: #9399B2;">())</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Phase 1: Analysis</span></span>
+<span class="giallo-l"><span>        gc</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">broadcastPhase</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;analyzing&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        results</span><span style="color: #94E2D5;"> :=</span><span> gc</span><span style="color: #9399B2;">.</span><span>moderator</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Analyze</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> code</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Phase 2: Speaking</span></span>
+<span class="giallo-l"><span>        gc</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">broadcastPhase</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;speaking&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> _</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> results</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            gc</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">broadcastStatement</span><span style="color: #9399B2;">(</span><span>result</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Phase 3: Debate + Vote loop</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> cycle</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span><span> cycle</span><span style="color: #94E2D5;"> &lt;</span><span> MaxDebateCycles</span><span style="color: #9399B2;">;</span><span> cycle</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            gc</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">broadcastPhase</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;debate&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            accusations</span><span style="color: #94E2D5;"> :=</span><span> gc</span><span style="color: #9399B2;">.</span><span>moderator</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Debate</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            gc</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">broadcastAccusations</span><span style="color: #9399B2;">(</span><span>accusations</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>            gc</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">broadcastPhase</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;voting&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            eliminated</span><span style="color: #94E2D5;"> :=</span><span> gc</span><span style="color: #9399B2;">.</span><span>moderator</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Vote</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            gc</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">broadcastElimination</span><span style="color: #9399B2;">(</span><span>eliminated</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> gc</span><span style="color: #9399B2;">.</span><span>moderator</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">TroublemakerCaught</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                break</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Phase 4: Reveal</span></span>
+<span class="giallo-l"><span>        gc</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">broadcastPhase</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;reveal&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        gc</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">broadcastReveal</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The game runs in a goroutine via <code>errgroup.Go</code>. Each phase broadcasts its output to all connected clients as it happens. The user sees the debate unfold in real time.</p>
+<h2 id="message-types">Message Types</h2>
+<p>All WebSocket messages use a typed JSON format:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ServerMessage</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    MessageType</span><span style="color: #CBA6F7;"> string</span><span style="color: #A6E3A1;">      `json:&quot;type&quot;`</span></span>
+<span class="giallo-l"><span>    Payload</span><span style="color: #CBA6F7;">     interface</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;"> `json:&quot;payload&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Message types:</p>
+<table><thead><tr><th>Type</th><th>Payload</th><th>When</th></tr></thead><tbody>
+<tr><td><code>phase</code></td><td><code>{"phase": "analyzing"}</code></td><td>Phase transition</td></tr>
+<tr><td><code>statement</code></td><td><code>{"player": "...", "content": "..."}</code></td><td>Agent speaks</td></tr>
+<tr><td><code>accusation</code></td><td><code>{"accuser": "...", "target": "...", "evidence": "..."}</code></td><td>Debate round</td></tr>
+<tr><td><code>vote</code></td><td><code>{"voter": "...", "target": "...", "reason": "..."}</code></td><td>Vote cast</td></tr>
+<tr><td><code>elimination</code></td><td><code>{"eliminated": "...", "vote_count": 3}</code></td><td>Player eliminated</td></tr>
+<tr><td><code>reveal</code></td><td><code>{"troublemaker": "...", "strategy": "..."}</code></td><td>Game over</td></tr>
+<tr><td><code>event</code></td><td><code>{"name": "Cosmic Ray", "description": "..."}</code></td><td>Random event</td></tr>
+</tbody></table>
+<p>Each message is a self-contained JSON object. The client can render each type independently.</p>
+<h2 id="the-embedded-web-ui">The Embedded Web UI</h2>
+<p>The web UI is a single HTML file embedded in the Go binary:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//go:embed web/index.html</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> webUI</span><span style="color: #CBA6F7;"> string</span></span></code></pre>
+<p>Served at <code>/</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>http</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">HandleFunc</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;/&quot;</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">w</span><span style="color: #F9E2AF;font-style: italic;"> http</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ResponseWriter</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> r</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">http</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Request</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    w</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Header</span><span style="color: #9399B2;">().</span><span style="color: #89B4FA;font-style: italic;">Set</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Content-Type&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;text/html&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    w</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Write</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">byte</span><span style="color: #9399B2;">(</span><span>webUI</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">})</span></span></code></pre>
+<p>The HTML file contains:</p>
+<ul>
+<li>A code input textarea</li>
+<li>A WebSocket connection handler</li>
+<li>A message renderer that handles each <code>MessageType</code></li>
+<li>A debate transcript view</li>
+<li>A user voting interface (PhaseUserVote)</li>
+</ul>
+<p>No build step, no framework, no npm. One HTML file with inline JavaScript.</p>
+<h2 id="async-game-execution">Async Game Execution</h2>
+<p>The game loop runs asynchronously using <code>errgroup</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>g</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #94E2D5;"> :=</span><span> errgroup</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithContext</span><span style="color: #9399B2;">(</span><span>context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Background</span><span style="color: #9399B2;">())</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Full game loop runs here</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">})</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Don&#39;t wait — game streams results via WebSocket</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// The HTTP handler returns immediately</span></span></code></pre>
+<p>The HTTP handler returns immediately after starting the game. Results stream to clients via WebSocket. If the client disconnects, the context is cancelled and the game stops.</p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<p><strong>Single HTML file vs frontend framework</strong>: A single file is trivially deployable and has no build dependencies. A React/Vue app would be more interactive but adds complexity. CodeTribunal chose simplicity because the UI is a thin renderer — all logic lives on the server.</p>
+<p><strong>Broadcast vs per-client streaming</strong>: Broadcast (all clients see all sessions) is simpler. Per-client streaming (each client sees only their session) is more private but requires session management. CodeTribunal uses broadcast for simplicity — it is a demo tool, not a multi-tenant service.</p>
+<p><strong>errgroup vs manual goroutine management</strong>: errgroup provides context cancellation and error propagation. Manual goroutines are lighter but require manual cleanup. CodeTribunal uses errgroup because game sessions need clean cancellation when clients disconnect.</p>
+<h2 id="summary">Summary</h2>
+<p>The WebSocket layer uses a Hub for connection management, a GameController for bridging WebSocket to game logic, and a single embedded HTML file for the UI. The game runs asynchronously via errgroup, streaming typed JSON messages to all connected clients in real time. The result: users watch the debate unfold as it happens, not after it finishes.</p>
+<hr />
+<p><em>This concludes the CodeTribunal series. The project is open source at <a rel="noopener external" target="_blank" href="https://github.com/Timwood0x10/CodeTribunal">github.com/Timwood0x10/CodeTribunal</a>.</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/07-random-events-and-fun/">
+                                <span class="button__text">Random Events and Game Dynamics</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

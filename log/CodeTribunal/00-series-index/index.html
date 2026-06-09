@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>CodeTribunal Deep-Dive Series: When LLM Agents Hold a Code Review Trial | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="This series walks through CodeTribunal, a Go project where multiple LLM agents debate and critique code in a roundtable format — with one secret saboteur among them. It covers persona engineering, game mechanics, debate protocols, and the vector-based experience system that makes each session smarter than the last.">
+
+    <meta property="og:description" content="This series walks through CodeTribunal, a Go project where multiple LLM agents debate and critique code in a roundtable format — with one secret saboteur among them. It covers persona engineering, game mechanics, debate protocols, and the vector-based experience system that makes each session smarter than the last.">
+    <meta property="og:title" content="CodeTribunal Deep-Dive Series: When LLM Agents Hold a Code Review Trial | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/CodeTribunal/00-series-index/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="This series walks through CodeTribunal, a Go project where multiple LLM agents debate and critique code in a roundtable format — with one secret saboteur among them. It covers persona engineering, game mechanics, debate protocols, and the vector-based experience system that makes each session smarter than the last.">
+    <meta name="twitter:title" content="CodeTribunal Deep-Dive Series: When LLM Agents Hold a Code Review Trial | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/CodeTribunal/00-series-index/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/00-series-index/">CodeTribunal Deep-Dive Series: When LLM Agents Hold a Code Review Trial</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-review/">#Code Review</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/multi-agent/">#Multi-Agent</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="codetribunal-deep-dive-series-when-llm-agents-hold-a-code-review-trial">CodeTribunal Deep-Dive Series: When LLM Agents Hold a Code Review Trial</h1>
+<p>This series walks through CodeTribunal, a Go project where multiple LLM agents debate and critique code in a roundtable format — with one secret saboteur among them. It covers persona engineering, game mechanics, debate protocols, and the vector-based experience system that makes each session smarter than the last.</p>
+<p>CodeTribunal asks one question: <strong>if you put 8 LLM agents with different reviewing philosophies in a room and told one of them to secretly sabotage the review, could the others catch them?</strong></p>
+<p>In one sentence: CodeTribunal is a Go application that orchestrates multi-LLM code review sessions where specialized agent personas analyze code, debate findings, vote to eliminate suspects, and learn from past sessions — turning code review from a chore into a game with real engineering value.</p>
+<div class="mermaid-direct" data-series="codetribunal" data-name="graph.mmd">
+flowchart LR
+    A[Code Input] --> B[8 Agent Personas]
+    B --> C[Individual Analysis]
+    C --> D[Roundtable Speaking]
+    D --> E[Cross-Examination Debate]
+    E --> F[AI Vote + Eliminate]
+    F --> G{Troublemaker Caught?}
+    G -->|No| E
+    G -->|Yes| H[Reveal + Experience Distillation]
+    H --> I[Vector Store]
+    I --> J[Next Session Learns]
+</div><h2 id="articles">Articles</h2>
+<table><thead><tr><th>#</th><th>Article</th><th>Core Question</th></tr></thead><tbody>
+<tr><td>01</td><td><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/01-why-code-review-needs-drama/">Why Code Review Needs Drama</a></td><td>Why do developers ignore code review tools, and can gamification fix that?</td></tr>
+<tr><td>02</td><td><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/02-architecture-overview/">Architecture Overview</a></td><td>How do you wire 8 LLM agents, a debate engine, and a game loop into one Go binary?</td></tr>
+<tr><td>03</td><td><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/03-persona-system/">The Persona System</a></td><td>How do you make 8 LLM instances behave like 8 different reviewers using only prompts?</td></tr>
+<tr><td>04</td><td><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/04-troublemaker-mechanic/">The Troublemaker Mechanic</a></td><td>How do you make one agent subtly sabotage a review without breaking the game?</td></tr>
+<tr><td>05</td><td><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/05-debate-and-voting/">Debate, Cross-Examination, and Voting</a></td><td>How does the roundtable actually work — accusations, evidence, and elimination?</td></tr>
+<tr><td>06</td><td><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/06-experience-and-vector/">The Experience System: Learning from Past Sessions</a></td><td>How does CodeTribunal get smarter over time without fine-tuning?</td></tr>
+<tr><td>07</td><td><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/07-random-events-and-fun/">Random Events and Game Dynamics</a></td><td>Why does a code review tool have cosmic rays and ghost reviewers?</td></tr>
+<tr><td>08</td><td><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/08-websocket-and-ui/">WebSocket Layer and Real-Time UI</a></td><td>How does the game stream to a browser in real time?</td></tr>
+</tbody></table>
+<h2 id="reading-order">Reading Order</h2>
+<p>The articles are ordered by dependency. Each one builds on concepts introduced in the previous:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>01 Motivation (why gamify code review?)</span></span>
+<span class="giallo-l"><span> └─► 02 Architecture (how the system is wired)</span></span>
+<span class="giallo-l"><span>      └─► 03 Personas (the 8 reviewer types)</span></span>
+<span class="giallo-l"><span>           └─► 04 Troublemaker (the core game mechanic)</span></span>
+<span class="giallo-l"><span>                └─► 05 Debate (how the roundtable works)</span></span>
+<span class="giallo-l"><span>                     ├─► 06 Experience (how it learns)</span></span>
+<span class="giallo-l"><span>                     └─► 07 Events (randomness and fun)</span></span>
+<span class="giallo-l"><span>                          └─► 08 WebSocket (real-time delivery)</span></span></code></pre><h2 id="source-reading-map">Source Reading Map</h2>
+<ul>
+<li>Entry: <code>cmd/roundtable/main.go</code></li>
+<li>Core types: <code>internal/roundtable/types.go</code></li>
+<li>Personas: <code>internal/roundtable/persona.go</code></li>
+<li>Session logic: <code>internal/roundtable/session.go</code></li>
+<li>LLM layer: <code>internal/roundtable/llm.go</code></li>
+<li>Experience: <code>internal/roundtable/experience.go</code>, <code>internal/store/vector.go</code></li>
+<li>Events: <code>internal/roundtable/events.go</code></li>
+<li>WebSocket: <code>internal/chat/handler.go</code>, <code>internal/chat/hub.go</code></li>
+<li>Storage: <code>internal/store/sqlite.go</code>, <code>internal/store/vector.go</code></li>
+</ul>
+<h2 id="how-to-read">How to Read</h2>
+<p>Each article follows one implementation path: how input becomes a game session, how personas are engineered through prompts, how the troublemaker stays hidden, how debate cycles converge on a verdict, and how experience accumulates across sessions.</p>
+<p>This series is written as technical explainer content. It starts from implementation constraints, data flow, and module boundaries instead of abstract definitions. Each article follows the same pattern:</p>
+<ol>
+<li>State the engineering problem first.</li>
+<li>Show the source entry points, not just the abstraction.</li>
+<li>Break down the data structures that hold session state.</li>
+<li>Explain why the design exists and where it breaks down.</li>
+</ol>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/01-why-code-review-needs-drama/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Why Code Review Needs Drama</span>
+                            </a>
+                        </span>
+                    
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

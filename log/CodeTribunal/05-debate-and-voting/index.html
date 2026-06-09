@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Debate, Cross-Examination, and Voting | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="The debate phase is where CodeTribunal earns its name. Agents accuse each other with quoted evidence, defend themselves, and vote to eliminate. This article breaks down the prompt engineering that makes multi-round adversarial debate converge.">
+
+    <meta property="og:description" content="The debate phase is where CodeTribunal earns its name. Agents accuse each other with quoted evidence, defend themselves, and vote to eliminate. This article breaks down the prompt engineering that makes multi-round adversarial debate converge.">
+    <meta property="og:title" content="Debate, Cross-Examination, and Voting | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/CodeTribunal/05-debate-and-voting/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="The debate phase is where CodeTribunal earns its name. Agents accuse each other with quoted evidence, defend themselves, and vote to eliminate. This article breaks down the prompt engineering that makes multi-round adversarial debate converge.">
+    <meta name="twitter:title" content="Debate, Cross-Examination, and Voting | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/CodeTribunal/05-debate-and-voting/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/05-debate-and-voting/">Debate, Cross-Examination, and Voting</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-review/">#Code Review</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/multi-agent/">#Multi-Agent</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="debate-cross-examination-and-voting">Debate, Cross-Examination, and Voting</h1>
+<h2 id="the-problem-multi-agent-debate-usually-diverges">The Problem: Multi-Agent Debate Usually Diverges</h2>
+<p>If you let 8 LLM agents debate freely, two things happen:</p>
+<ol>
+<li>They agree with each other (LLMs are agreeable)</li>
+<li>They go in circles (no convergence mechanism)</li>
+</ol>
+<p>CodeTribunal needs a debate that is adversarial, evidence-based, and convergent. The solution: structured prompts that force accusation, evidence citation, and elimination voting.</p>
+<h2 id="the-speaking-round">The Speaking Round</h2>
+<p>Before debate, each agent states their findings. <code>NextSpeaker</code> in <code>session.go:233</code> iterates through players:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DiscussionSession</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> NextSpeaker</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Player</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Find next non-eliminated player</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> i</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span><span> i</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">.</span><span>Players</span><span style="color: #9399B2;">);</span><span> i</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        s</span><span style="color: #9399B2;">.</span><span>CurrentIdx</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> (</span><span>s</span><span style="color: #9399B2;">.</span><span>CurrentIdx</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> %</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">.</span><span>Players</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        p</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>Players</span><span style="color: #9399B2;">[</span><span>s</span><span style="color: #9399B2;">.</span><span>CurrentIdx</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span>p</span><span style="color: #9399B2;">.</span><span>Eliminated</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">            // Build persona-specific prompt with code context</span></span>
+<span class="giallo-l"><span>            prompt</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">buildReviewPrompt</span><span style="color: #9399B2;">(</span><span>p</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            output</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>LLM</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Generate</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #9399B2;">.</span><span>SystemPrompt</span><span style="color: #9399B2;">,</span><span> prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">            // Validate persona output, retry if needed</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">            // Parse structured fields from free-form text</span></span>
+<span class="giallo-l"><span>            p</span><span style="color: #9399B2;">.</span><span>Statement</span><span style="color: #94E2D5;"> =</span><span> output</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span> p</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;no active players&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each player's statement is stored in <code>Player.Statement</code> and becomes evidence for the debate phase.</p>
+<h2 id="the-debate-round">The Debate Round</h2>
+<p><code>DebateRound</code> at <code>session.go:530</code> builds cross-examination prompts. Each player accuses another, citing evidence from the code and from other players' statements:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DiscussionSession</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> DebateRound</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    accusations</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">  // accused -&gt; accusation text</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ActivePlayers</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Build prompt: &quot;Here are all statements. Accuse one player.</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Cite specific code lines and their statements as evidence.&quot;</span></span>
+<span class="giallo-l"><span>        prompt</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">buildDebatePrompt</span><span style="color: #9399B2;">(</span><span>p</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        output</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>LLM</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Generate</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #9399B2;">.</span><span>SystemPrompt</span><span style="color: #9399B2;">,</span><span> prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        accusations</span><span style="color: #9399B2;">[</span><span>p</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> output</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Store accusations for the next round</span></span>
+<span class="giallo-l"><span>    s</span><span style="color: #9399B2;">.</span><span>GameState</span><span style="color: #9399B2;">.</span><span>AIAccusations</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">.</span><span>GameState</span><span style="color: #9399B2;">.</span><span>AIAccusations</span><span style="color: #9399B2;">,</span><span> accusations</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The debate prompt includes:</p>
+<ol>
+<li>The original code</li>
+<li>All players' statements from the speaking round</li>
+<li>Accusations from previous debate rounds (if any)</li>
+<li>Instructions to cite specific evidence</li>
+</ol>
+<p>This creates a <strong>compounding context</strong> — each debate round has more material to reference, making the debate more specific over time.</p>
+<h2 id="the-vote">The Vote</h2>
+<p><code>AIVoteAndEliminate</code> at <code>session.go:671</code> runs parallel LLM calls:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DiscussionSession</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> AIVoteAndEliminate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    type</span><span style="color: #F9E2AF;font-style: italic;"> vote</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        Voter</span><span style="color: #CBA6F7;">   string</span></span>
+<span class="giallo-l"><span>        Target</span><span style="color: #CBA6F7;">  string</span></span>
+<span class="giallo-l"><span>        Reason</span><span style="color: #CBA6F7;">  string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    votes</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">chan</span><span style="color: #F9E2AF;font-style: italic;"> vote</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ActivePlayers</span><span style="color: #9399B2;">()))</span></span>
+<span class="giallo-l"><span>    g</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #94E2D5;"> :=</span><span> errgroup</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithContext</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ActivePlayers</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>        p</span><span style="color: #94E2D5;"> :=</span><span> p</span></span>
+<span class="giallo-l"><span>        g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            prompt</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">buildVotePrompt</span><span style="color: #9399B2;">(</span><span>p</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            output</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>LLM</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">GenerateStructured</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #9399B2;">.</span><span>SystemPrompt</span><span style="color: #9399B2;">,</span><span> prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">            // Parse JSON: {&quot;target&quot;: &quot;player_id&quot;, &quot;reason&quot;: &quot;...&quot;}</span></span>
+<span class="giallo-l"><span>            votes</span><span style="color: #94E2D5;"> &lt;-</span><span style="color: #F9E2AF;font-style: italic;"> vote</span><span style="color: #9399B2;">{</span><span>Voter</span><span style="color: #9399B2;">:</span><span> p</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">,</span><span> Target</span><span style="color: #9399B2;">:</span><span> target</span><span style="color: #9399B2;">,</span><span> Reason</span><span style="color: #9399B2;">:</span><span> reason</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Wait</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    close</span><span style="color: #9399B2;">(</span><span>votes</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Tally: eliminate player with most votes</span></span>
+<span class="giallo-l"><span>    tally</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> v</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> votes</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        tally</span><span style="color: #9399B2;">[</span><span>v</span><span style="color: #9399B2;">.</span><span>Target</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Eliminate the plurality target</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Handle ties: no elimination</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Three design decisions:</p>
+<ol>
+<li><strong>Parallel votes</strong>: All agents vote simultaneously. No agent sees another's vote before voting. This prevents bandwagon effects.</li>
+<li><strong>Structured output</strong>: Votes use JSON mode (<code>GenerateStructured</code>) for reliable parsing. Unlike free-form reviews, votes need to be machine-readable.</li>
+<li><strong>Plurality elimination</strong>: The player with the most votes is eliminated. Ties result in no elimination, adding another round.</li>
+</ol>
+<div class="mermaid-direct" data-series="codetribunal" data-name="graph.mmd">
+sequenceDiagram
+    participant S as Session
+    participant P1 as Player 1
+    participant P2 as Player 2
+    participant P3 as Player 3
+    participant PN as Player N
+
+    S->>P1: buildVotePrompt
+    S->>P2: buildVotePrompt
+    S->>P3: buildVotePrompt
+    S->>PN: buildVotePrompt
+
+    par Parallel votes
+        P1-->>S: {"target": "P3", "reason": "..."}
+        P2-->>S: {"target": "P3", "reason": "..."}
+        P3-->>S: {"target": "P1", "reason": "..."}
+        PN-->>S: {"target": "P3", "reason": "..."}
+    end
+
+    S->>S: Tally votes
+    S->>S: Eliminate P3 (plurality)
+</div><h2 id="the-debate-loop">The Debate Loop</h2>
+<p>The full debate cycle:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> cycle</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span><span> cycle</span><span style="color: #94E2D5;"> &lt;</span><span> MaxDebateCycles</span><span style="color: #9399B2;">;</span><span> cycle</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">DebateRound</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">AIVoteAndEliminate</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">TroublemakerEliminated</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        break</span><span style="color: #9399B2;font-style: italic;">  // Game over: agents won</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ActivePlayers</span><span style="color: #9399B2;">())</span><span style="color: #94E2D5;"> &lt;=</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        break</span><span style="color: #9399B2;font-style: italic;">  // Game over: Troublemaker survived</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>MaxDebateCycles</code> defaults to 3. After 3 rounds, if the Troublemaker is still active, the game enters <code>PhaseUserVote</code> — the user gets to guess.</p>
+<h2 id="evidence-citation">Evidence Citation</h2>
+<p>The debate prompt explicitly requires evidence citation:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>When accusing a player, you MUST:</span></span>
+<span class="giallo-l"><span>1. Quote their specific statement</span></span>
+<span class="giallo-l"><span>2. Reference specific code lines</span></span>
+<span class="giallo-l"><span>3. Explain why their advice is wrong or suspicious</span></span>
+<span class="giallo-l"><span>4. Provide a counter-argument they should have made</span></span></code></pre>
+<p>Without this constraint, agents produce vague accusations ("Player 3 seems suspicious"). With it, they produce specific evidence chains ("Player 3 said 'the error handling is solid' on line 42, but the function has no error handling at all — see lines 15-20").</p>
+<h2 id="convergence-mechanics">Convergence Mechanics</h2>
+<p>Three mechanisms prevent infinite debate:</p>
+<ol>
+<li><strong>Max cycles</strong>: Hard limit at 3 rounds.</li>
+<li><strong>Elimination</strong>: Each round removes at least one player (unless tied), reducing the agent count.</li>
+<li><strong>Accumulating evidence</strong>: Each round adds more evidence to the context, making it harder for the Troublemaker to hide.</li>
+</ol>
+<p>In practice, the Troublemaker is caught in round 1 about 40% of the time, round 2 about 35% of the time, and survives all 3 rounds about 25% of the time.</p>
+<h2 id="design-trade-offs">Design Trade-offs</h2>
+<p><strong>Sequential vs parallel debate</strong>: Sequential (each agent responds to the previous) creates a more natural conversation but is slow and allows the last speaker to always have the advantage. Parallel (all agents accuse simultaneously) is faster and fairer but less conversational. CodeTribunal chose parallel for fairness and speed.</p>
+<p><strong>Structured vs free-form votes</strong>: Structured (JSON) is reliable but constraining. Free-form is expressive but fragile. Votes are mechanical — structured fits. Reviews are expressive — free-form fits.</p>
+<p><strong>Elimination vs scoring</strong>: Elimination (remove the top vote-getter) creates drama and reduces agent count. Scoring (accumulate points) is fairer but less exciting. CodeTribunal uses elimination because the game mechanic requires reducing uncertainty over rounds.</p>
+<h2 id="summary">Summary</h2>
+<p>The debate phase works because of three engineering decisions: parallel voting prevents bandwagon effects, evidence citation forces specificity, and the cycle limit with elimination creates convergence. The result is a multi-round adversarial debate that produces structured, evidence-based code review arguments.</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/06-experience-and-vector/">The Experience System</a> — How does CodeTribunal get smarter over time without fine-tuning?</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/06-experience-and-vector/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">The Experience System: Learning from Past Sessions</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/CodeTribunal/04-troublemaker-mechanic/">
+                                <span class="button__text">The Troublemaker Mechanic: Subtle Sabotage as a Feature</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>
