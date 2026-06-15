@@ -12,7 +12,7 @@ series = "goagent"
 
 # GoAgent Source Deep Dive Series
 
-This series walks through the GoAgent multi-agent framework implementation, from API client to embedding service.
+This series walks through the GoAgent multi-agent framework implementation, from the API client through dynamic graph mutation and crash recovery.
 
 GoAgent is a custom multi-agent framework in Go. It is not a wrapper around an existing framework — it is built from scratch to explore how agents can collaborate, remember, and execute tasks through a clean API boundary.
 
@@ -29,6 +29,8 @@ The series follows one narrative thread: **Problem → Limitations of existing a
 7. [Workflow Engine: DAG-Based Agent Orchestration](@/log/goagent/07-workflow-engine.md)
 8. [Storage and Retrieval: PostgreSQL, pgvector, and Hybrid Search](@/log/goagent/08-storage-retrieval.md)
 9. [Embedding Service: The Engineering Boundary of Vector Generation](@/log/goagent/09-embedding-service.md)
+10. [Agent Crash Recovery: How Does the System Survive Agent Failure](@/log/goagent/0-10-agent-recovery.md)
+11. [Dynamic Graph — Runtime DAG Mutation](@/log/goagent/0-11-dynamic-graph.md)
 
 ## Reading Order
 
@@ -43,6 +45,8 @@ Read in the numbered order above. Each article builds on the previous one:
 - **Workflow Engine** handles multi-step task orchestration.
 - **Storage and Retrieval** covers where memories and knowledge live.
 - **Embedding Service** closes the loop with vector generation.
+- **Agent Crash Recovery** explains how the system recovers from agent failure using EventStore and MemoryManager checkpoints.
+- **Dynamic Graph** covers runtime DAG mutation, mid-execution graph changes, hot-reload, and HITL integration.
 
 ## Source Reading Map
 
@@ -54,7 +58,8 @@ Read in the numbered order above. Each article builds on the previous one:
 - Tools: `internal/tools/`
 - Workflow: `internal/workflow/`
 - Storage: `internal/storage/postgres/`
-- Embedding: `internal/embedding/`
+- Recovery: `runtime/`, `internal/recovery/`, `internal/storage/eventstore/`, `internal/checkpoint/`
+- Dynamic Graph: `internal/workflow/engine/mutable_dag.go`, `internal/workflow/graph/executor.go`, `internal/workflow/watcher/`
 
 ## Writing Principles
 

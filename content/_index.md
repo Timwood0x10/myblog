@@ -60,7 +60,7 @@ template = "pages.html"
 </li>
 <li class="proj" data-pillar="ai">
 <div class="proj-head">
-<a class="proj-name" href="https://github.com/Timwood0x10/goagent">go-agent</a>
+<a class="proj-name" href="https://github.com/Timwood0x10/GoAgentX">go-agent</a>
 <span class="proj-meta">
 <span class="tag lang-go">go</span>
 <span class="tag status-active">active</span>
