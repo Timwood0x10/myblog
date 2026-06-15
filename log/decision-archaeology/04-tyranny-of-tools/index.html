@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>工具的暴政 | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="garbage-code-hunter 要分析 11 种语言的代码质量。每种语言有自己的 AST、命名规范、惯用模式。工具怎么避免把所有问题都变成钉子？">
+
+    <meta property="og:description" content="garbage-code-hunter 要分析 11 种语言的代码质量。每种语言有自己的 AST、命名规范、惯用模式。工具怎么避免把所有问题都变成钉子？">
+    <meta property="og:title" content="工具的暴政 | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/04-tyranny-of-tools/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="garbage-code-hunter 要分析 11 种语言的代码质量。每种语言有自己的 AST、命名规范、惯用模式。工具怎么避免把所有问题都变成钉子？">
+    <meta name="twitter:title" content="工具的暴政 | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/04-tyranny-of-tools/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/04-tyranny-of-tools/">工具的暴政</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-quality/">#Code Quality</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/treesitter/">#TreeSitter</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="gong-ju-de-bao-zheng">工具的暴政</h1>
+<blockquote>
+<p><strong>Problem</strong>: garbage-code-hunter 要分析 11 种语言的代码质量。每种语言有自己的 AST 结构、命名规范、惯用模式。工具怎么避免"把所有问题都变成钉子"？</p>
+</blockquote>
+<h2 id="chui-zi-he-ding-zi">锤子和钉子</h2>
+<p>你写了一个代码质量分析工具。最初只支持 Rust，所有规则都是 Rust 特有的：<code>unwrap()</code> 是坏习惯，<code>panic!()</code> 是核弹，<code>unsafe</code> 块要审计，单字母变量名是命名灾难。这些规则写死了在检测逻辑里，跑得挺好。</p>
+<p>然后需求来了：支持 Python、Go、Java、JavaScript、TypeScript、C、C++、Ruby、Swift、Zig。</p>
+<p>问题立刻浮现。<code>unwrap()</code> 在 Rust 里是坏习惯，因为它绕过了 <code>Result</code> 的错误处理链。但 Python 里没有 <code>unwrap</code> 这个概念——Python 的 <code>try/except</code> 是标准写法，<code>bare except</code> 才是问题。Go 里 <code>panic()</code> 是运行时崩溃，但 Go 社区的惯例是用 <code>error</code> 返回值，<code>panic</code> 只在真正不可恢复的场景使用。</p>
+<p>"命名不规范"更复杂。Rust 用 <code>snake_case</code>，Go 用 <code>snake_case</code> 但导出标识符要大写开头，Java 用 <code>camelCase</code>，Python 的类名用 <code>PascalCase</code> 但变量用 <code>snake_case</code>。同一条规则"检查命名规范"，在 11 种语言里是 11 种完全不同的规则。</p>
+<p>如果你把 Rust 的规则直接套到 Python 上，你会得到一堆误报。如果你为每种语言写一套独立的规则，你就有了 11 个工具，没有跨语言可比性。</p>
+<p>这是工具的暴政：<strong>你手里有什么锤子，就会把什么问题都看成钉子。</strong></p>
+<h2 id="languageadapter-mei-chong-yu-yan-zi-ji-ding-yi-shen-me-shi-wen-ti">LanguageAdapter：每种语言自己定义"什么是问题"</h2>
+<p>garbage-code-hunter 的解决方案是 <code>LanguageAdapter</code> trait。它定义了一组语义方法，每种语言各自实现：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/mod.rs:78-94</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub trait</span><span style="color: #F9E2AF;font-style: italic;"> LanguageAdapter</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Send</span><span style="color: #94E2D5;"> +</span><span style="color: #F9E2AF;font-style: italic;"> Sync</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> language</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_panic_calls</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> extract_functions</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">FunctionNode</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> max_nesting_depth</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_naming_violations</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_deeply_nested_blocks</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_debug_calls</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_excessive_params</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> threshold</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_unsafe_blocks</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_magic_numbers</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_goroutine_spawns</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_defer_in_loop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... ~20 个方法，大部分有默认实现返回 0</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>关键设计：<strong>方法名是语义的，实现是语言特定的。</strong> <code>count_panic_calls</code> 这个名字表达的是"统计会导致程序崩溃的调用"，但每种语言里"崩溃"的含义不同。</p>
+<p>Rust adapter 匹配的是 <code>.unwrap()</code> 和 <code>panic!()</code> 宏：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/rust.rs:150-175</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> count_panic_from_batch</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    batch</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">QueryCapture</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> test_ranges</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> cfg_test_ranges</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>file</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">content</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> count</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> m</span><span style="color: #CBA6F7;"> in</span><span> batch</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> c</span><span style="color: #CBA6F7;"> in</span><span> m</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span style="color: #9399B2;"> (</span><span>c</span><span style="color: #94E2D5;">.</span><span>name </span><span style="color: #94E2D5;">==</span><span style="color: #A6E3A1;"> &quot;pc_method&quot;</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> c</span><span style="color: #94E2D5;">.</span><span>text </span><span style="color: #94E2D5;">==</span><span style="color: #A6E3A1;"> &quot;unwrap&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                ||</span><span style="color: #9399B2;"> (</span><span>c</span><span style="color: #94E2D5;">.</span><span>name </span><span style="color: #94E2D5;">==</span><span style="color: #A6E3A1;"> &quot;pc_m&quot;</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                    &amp;&amp;</span><span style="color: #89B4FA;font-style: italic;"> matches!</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #94E2D5;">.</span><span>text</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;panic&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;assert&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;assert_eq&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;assert_ne&quot;</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">                // 排除 #[cfg(test)] 模块里的调用</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                let</span><span> byte_offset</span><span style="color: #94E2D5;"> =</span><span> c</span><span style="color: #94E2D5;">.</span><span>node</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">start_byte</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                if</span><span> test_ranges</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">any</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|&amp;</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">,</span><span> e</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">|</span><span> byte_offset</span><span style="color: #94E2D5;"> &gt;=</span><span> s</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> byte_offset</span><span style="color: #94E2D5;"> &lt;</span><span> e</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                    continue</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span>                count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    count</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Python adapter 匹配的是 <code>bare except</code> 和 <code>except BaseException</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/python.rs:297-320</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> count_panic_from_batch</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    _file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    batch</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">QueryCapture</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> count</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> m</span><span style="color: #CBA6F7;"> in</span><span> batch</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> c</span><span style="color: #CBA6F7;"> in</span><span> m</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> c</span><span style="color: #94E2D5;">.</span><span>name </span><span style="color: #94E2D5;">==</span><span style="color: #A6E3A1;"> &quot;pc_clause&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> c</span><span style="color: #94E2D5;">.</span><span>node</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">child_by_field_name</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;value&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                    if let</span><span style="color: #F9E2AF;font-style: italic;"> Ok</span><span style="color: #9399B2;">(</span><span>vtext</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> value</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">utf8_text</span><span style="color: #9399B2;">(</span><span>_file</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">content</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">as_bytes</span><span style="color: #9399B2;">()) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                        if</span><span> vtext</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;BaseException&quot;</span><span style="color: #94E2D5;"> ||</span><span> vtext</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;Exception&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                            count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">                    // bare except — 没有 value 子节点</span></span>
+<span class="giallo-l"><span>                    count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    count</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Go adapter 匹配的是 <code>panic()</code> 函数调用：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/go.rs:138-147</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> count_panic_from_batch</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    _file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    batch</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">QueryCapture</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    batch</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">filter</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>m</span><span style="color: #94E2D5;">|</span><span> m</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">any</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>c</span><span style="color: #94E2D5;">|</span><span> c</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">name </span><span style="color: #94E2D5;">==</span><span style="color: #A6E3A1;"> &quot;pc_fn&quot;</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">count</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>三种语言，同一个方法名，三种完全不同的匹配逻辑。<strong>adapter 不是翻译层，是语义层。</strong> 它回答的不是"这个语法结构叫什么"，而是"这个行为在当前语言里意味着什么"。</p>
+<h2 id="san-ceng-jia-gou">三层架构</h2>
+<p>garbage-code-hunter 的架构分三层，每一层有明确的职责边界。</p>
+<p><strong>第一层：TreeSitter 引擎层</strong> (<code>src/treesitter/engine.rs</code>)</p>
+<p>通用 AST 解析，11 种语言共享一个 parser cache：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/treesitter/engine.rs:15-17</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> TreeSitterEngine</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    parsers</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Mutex</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Language</span><span style="color: #9399B2;">,</span><span> tree_sitter</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Parser</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>Mutex&lt;HashMap&lt;Language, Parser&gt;&gt;</code> 保证了线程安全——rayon 并行分析时，多个线程可能同时请求不同语言的 parser。引擎层只负责"把源代码变成 AST"，不关心语义。</p>
+<p><strong>第二层：LanguageAdapter 层</strong> (<code>src/language/adapter/*.rs</code>)</p>
+<p>每种语言一个 adapter 文件，定义"什么算 panic"、"什么算命名违规"、"什么算 debug 调用"。dispatch 逻辑很朴素：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/mod.rs:488-503</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> adapter_for</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">lang</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #CBA6F7;"> dyn</span><span style="color: #F9E2AF;font-style: italic;"> LanguageAdapter</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span> lang</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Rust</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">RustAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Python</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">PythonAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Go</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">GoAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">JavaScript</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">JSAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Ruby</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">RubyAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">TypeScript</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">TSAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Java</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">JavaAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">C</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">CAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cpp</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">CppAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Swift</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">SwiftAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Zig</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">ZigAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> None</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>第三层：Style IR 层</strong> (<code>src/style_ir/mod.rs</code>)</p>
+<p>语言中立的事实表示：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/style_ir/mod.rs:57-133</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> StyleIr</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> language</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> line_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> functions</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">FunctionNode</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> panic_call_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // Rust: unwrap/panic!, Python: bare except</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> naming_violation_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // 每种语言规则不同</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> deeply_nested_block_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> debug_call_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">         // println! / print() / console.log</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> excessive_param_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> unsafe_block_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> magic_number_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> commented_out_lines</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> todo_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> goroutine_spawn_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // Go 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> defer_in_loop_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Go 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> go_convention_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Go 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> python_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Python 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> java_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // Java 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> ruby_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // Ruby 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> c_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">           // C/C++ 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> ts_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">          // TypeScript 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> js_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">          // JavaScript 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> swift_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // Swift 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> dead_code_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> duplicate_import_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>StyleIr 的设计原则是<strong>存事实，不存判断</strong>。<code>panic_call_count</code> 是一个数字，不是"这个代码有问题"的判断。判断留给上层的信号检测系统。</p>
+<div class="mermaid-direct" data-series="decision-archaeology" data-name="graph.mmd">
+flowchart TD
+    A[源代码文件] --> B[TreeSitter 解析]
+    B --> C[ParsedFile AST]
+    C --> D[adapter_for language]
+    D --> E[adapter.compute_all]
+    E --> F[StyleIr 语言中立事实层]
+    F --> G[SignalDetector 10 种信号]
+    G --> H[CodeScorer 对数评分]
+</div><h2 id="pi-liang-cha-xun-you-hua">批量查询优化</h2>
+<p>每个 adapter 通过 <code>query_patterns()</code> 声明自己的 tree-sitter 查询模式。Rust adapter 有 10 个 pattern，Python adapter 有 9 个，Go adapter 有 10 个。11 种语言加起来大约 100 个 pattern。</p>
+<p>如果每个 pattern 单独执行一次 AST 遍历，100 个 pattern 就是 100 次遍历。对于大型项目（几万个文件），这是不可接受的。</p>
+<p>解决方案是 <code>collect_captures_multi</code>：把同一语言的所有 pattern 合并，在一次 cursor 遍历中收集所有匹配。每个 pattern 的 capture name 加前缀（<code>pc_</code> 表示 panic call，<code>nv_</code> 表示 naming violation，<code>dp_</code> 表示 debug call），避免不同 pattern 之间的命名冲突。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/mod.rs:278-304</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> compute_all</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> AdapterCounts</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> batch</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">batch_captures</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">);</span><span style="color: #9399B2;font-style: italic;">  // 一次遍历，收集所有 pattern 的匹配</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    AdapterCounts</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        functions</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">extract_functions_from_batch</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>batch</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        panic_calls</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count_panic_from_batch</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>batch</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        naming_violations</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count_naming_from_batch</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>batch</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        deeply_nested_blocks</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count_deeply_nested_blocks</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        debug_calls</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count_debug_from_batch</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>batch</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        excessive_params</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count_excessive_from_batch</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>batch</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // ... 所有计数都从同一个 batch 结果里提取</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这个优化把 100 次 AST 遍历变成了 11 次（每种语言一次）。在实际测试中，分析一个包含 5 万行代码的项目，TreeSitter 解析阶段的时间占比从 60% 降到了 25%——因为 adapter 层的查询不再重复遍历 AST。</p>
+<h2 id="xin-hao-jian-ce-cong-shi-shi-dao-pan-duan">信号检测：从事实到判断</h2>
+<p>StyleIr 存的是事实，但用户需要的是判断。信号检测系统 (<code>src/signals.rs</code>) 负责这个转换。</p>
+<p>10 个 <code>SignalDetector</code>，每个从 StyleIr 读取事实，输出信号分数：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/signals.rs:138-150</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> StyleSignal</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Duplication</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // 重复代码</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    PanicAddiction</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // 恐慌成瘾</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    NamingChaos</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // 命名混乱</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    NestedHell</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // 嵌套地狱</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HotfixCulture</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // 热修复文化</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OverEngineering</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // 过度工程</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CodeSmells</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // 代码异味</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    LegacyCode</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // 遗留代码</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    TodoMountain</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // 待办堆积</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    LineCountSmell</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // 文件过长</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>每个 detector 读取 StyleIr 的一个或多个字段，输出原始违规计数。然后通过密度公式转换为分数：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/signals.rs:82-86</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> violations_to_score</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> total_lines</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> f64</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> k_lines</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> (</span><span>total_lines</span><span style="color: #CBA6F7;"> as f64</span><span style="color: #94E2D5;"> /</span><span style="color: #FAB387;"> 1000</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">max</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">001</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> density</span><span style="color: #94E2D5;"> =</span><span> count</span><span style="color: #CBA6F7;"> as f64</span><span style="color: #94E2D5;"> /</span><span> k_lines</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    ((</span><span>density</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">log2</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 6</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">min</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">25</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这个公式的设计意图是：分数随密度对数增长，上限 25 分。一个 1000 行的文件有 1 个 <code>unwrap()</code> 调用，密度是 1.0，分数是 <code>(1.0 + 1.0).log2() * 6.0 = 6.0</code>。有 10 个 <code>unwrap()</code>，密度是 10.0，分数是 <code>(10.0 + 1.0).log2() * 6.0 ≈ 20.7</code>。有 100 个，分数触及 25.0 上限。</p>
+<p><strong>对数函数保证了边际递减：</strong> 从 0 到 1 个问题的分数增长，远大于从 100 到 101 个问题的增长。这避免了"问题数量线性映射到分数"导致的极端情况——一个有 1000 个 <code>unwrap()</code> 的 10 万行文件不应该得 1000 分。</p>
+<p>多个信号分数组合后，系统会生成一个 StyleProfile，将数字转化为可读的人格特征。当某个信号的分数 &gt;= 12.0 时，它成为主导信号，生成单一人格标签——比如 PanicAddiction 主导时标记为 "The Copy-Paste Artist"，Duplication 主导时标记为 "The YOLO Engineer"。当多个信号都 &gt;= 6.0 但没有单一主导时，系统组合出复合人格，比如 PanicAddiction + HotfixCulture 组合成 "The Startup Survivor"。如果所有信号都低于 6.0，则标记为 "The Enterprise Bureaucrat"——代码没有明显问题，但也缺乏活力。这套推断系统让开发者看到的不是一堆数字，而是一个有性格的代码画像。</p>
+<h2 id="xing-ye-dui-bi">行业对比</h2>
+<p>跨语言代码质量分析，行业里有三种主流方案：</p>
+<table><thead><tr><th>方案</th><th>代表</th><th>优势</th><th>问题</th></tr></thead><tbody>
+<tr><td>每种语言独立工具</td><td>ESLint + Pylint + Clippy</td><td>各自最优，规则最准</td><td>无法跨语言比较，报告格式不统一</td></tr>
+<tr><td>统一规则引擎</td><td>SonarQube</td><td>一套规则跑所有语言，部署简单</td><td>规则粒度粗，误报多，语言特性被抹平</td></tr>
+<tr><td>AST 适配器 + 统一 IR</td><td>garbage-code-hunter</td><td>跨语言可比，每种语言语义准确</td><td>IR 设计是关键瓶颈，扩展新维度成本高</td></tr>
+</tbody></table>
+<p>ESLint + Pylint + Clippy 的组合是最精准的，但你无法回答"这个 Rust 项目的代码质量和那个 Python 项目相比怎么样"——因为它们的评分标准完全不同。SonarQube 解决了可比性问题，但代价是规则粒度粗糙：它把所有语言的问题都塞进同一套"Bug / Vulnerability / Code Smell"分类里，丢失了语言特有的语义。</p>
+<p>garbage-code-hunter 选择的路线是：<strong>用 adapter 层保留语言语义，用 StyleIr 层建立可比性基础。</strong> <code>panic_call_count</code> 在 Rust 里是 <code>unwrap()</code> + <code>panic!()</code>，在 Python 里是 <code>bare except</code>，在 Go 里是 <code>panic()</code>——它们都是"程序可能在运行时崩溃"的信号，只是表现形式不同。</p>
+<p>这条路的代价是 IR 设计。StyleIr 的 30 个字段不是拍脑袋决定的，每一个都要回答一个问题：这个维度在不同语言里是否有可比的语义？<code>unsafe_block_count</code> 只对 Rust 有意义，所以它在 StyleIr 里是一个独立字段，不参与跨语言比较。<code>panic_call_count</code> 对所有语言都有意义，所以它是核心字段。</p>
+<h2 id="ru-guo-jin-tian-zhong-xin-she-ji">如果今天重新设计</h2>
+<p>考古到这里，有三件事会做得不一样。</p>
+<p><strong>第一，LanguageAdapter trait 应该拆成子 trait。</strong> 当前的 trait 有 ~20 个方法，大部分默认返回 0。Go adapter 不需要 <code>count_unsafe_blocks</code>，Rust adapter 不需要 <code>count_goroutine_spawns</code>，但它们都被迫实现（或者依赖默认的空实现）。应该拆成 <code>BaseAdapter + NamingAdapter + SafetyAdapter + ComplexityAdapter + GoSpecificAdapter</code>，每个 adapter 按需组合。这样新增一种语言时，只需要实现它实际关心的子 trait。</p>
+<p><strong>第二，StyleIr 的字段应该结构化。</strong> 当前 30 个字段是扁平的，没有分组。<code>go_convention_count</code>、<code>python_issue_count</code>、<code>java_issue_count</code> 这些语言专属字段和 <code>panic_call_count</code>、<code>naming_violation_count</code> 这些通用字段混在一起。应该用嵌套 struct：<code>naming: NamingFacts</code>、<code>safety: SafetyFacts</code>、<code>complexity: ComplexityFacts</code>、<code>lang_specific: LanguageSpecificFacts</code>。这样上层代码可以按维度读取，不用在 30 个字段里找自己需要的。</p>
+<p><strong>第三，跨语言可比性需要"语言置信度"。</strong> Python 的 <code>panic_call_count</code> 和 Rust 的 <code>panic_call_count</code> 真的可比吗？Rust 的 <code>unwrap()</code> 是显式选择——开发者写下了 <code>.unwrap()</code> 这四个字符。Python 的 <code>bare except</code> 可能是疏忽，也可能是有意为之（比如在脚本里快速捕获所有异常）。同一个数字，在不同语言里的"问题严重程度"不同。应该在 IR 层标注一个"语言置信度"系数，让评分系统知道：Rust 的 <code>panic_call_count = 5</code> 和 Python 的 <code>panic_call_count = 5</code> 不应该得到相同的分数。具体来说，可以为每种语言的 <code>panic_call_count</code> 设定一个置信度系数：Rust 的 <code>unwrap()</code> 系数为 1.0（显式选择，问题明确），Python 的 <code>bare except</code> 系数为 0.7（可能是疏忽，也可能是有意为之），Go 的 <code>panic()</code> 系数为 0.9（社区惯例明确，但使用场景多样）。这样，当 Rust 和 Python 的 <code>panic_call_count</code> 都是 5 时，评分会分别为 5.0 和 3.5，更准确地反映实际风险。</p>
+<p>工具的暴政不在于工具本身，而在于使用者忘记了工具的边界。garbage-code-hunter 的三层架构是一个尝试——用 adapter 层承认每种语言的独特性，用 StyleIr 层建立跨语言的可比性，用信号检测层把事实转化为判断。这个尝试不完美，但它至少问对了问题：<strong>不是"这个代码有没有问题"，而是"在这个语言的语境下，这个行为意味着什么"。</strong></p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/05-guarding-dangerous-boundaries/">危险边界的守卫</a> -- OmniScope 的 FFI 审计 + memscope-rs 的 Memory Passport：跨语言内存安全的两种守卫方式。</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/05-guarding-dangerous-boundaries/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">危险边界的守卫</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/03-errors-are-mirrors/">
+                                <span class="button__text">错误是设计的镜子</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

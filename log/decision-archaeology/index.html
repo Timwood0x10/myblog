@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="决策考古：从代码回溯工程直觉。五篇文章，五个项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，每个决策背后都有一个信任模型在起作用。">
+
+    <meta property="og:description" content="决策考古：从代码回溯工程直觉。五篇文章，五个项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，每个决策背后都有一个信任模型在起作用。">
+    <meta property="og:title" content="Decision Archaeology | Timwood0x10">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="决策考古：从代码回溯工程直觉。五篇文章，五个项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，每个决策背后都有一个信任模型在起作用。">
+    <meta name="twitter:title" content="Decision Archaeology | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container ">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+        <div class="posts">
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/01-the-debt-of-abstraction/">抽象的债务</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/architecture/">#Architecture</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="chou-xiang-de-zhai-wu">抽象的债务</h1>
+<blockquote>
+<p><strong>Problem</strong>: goagent 需要对接 OpenRouter、Ollama、OpenAI、Anthropic 四个 LLM 提供商。接口抽象该做到什么程度？做少了，改一个 provider 要动 N 处代码；做多了，接口本身变成维护负担。这篇文章考古的是那条线到底画在哪里。</p>
+</blockquote>
+<h2 id="ru-guo-bu-zuo-chou-xiang-zui-jian-dan-de-fang-an-chang-shen-me-yang">如果不做抽象，最简单的方案长什么样？</h2>
+<p>你有一个 Go 项目，需要调用四个 LLM 提供商。最直觉的做法是写四个函数，用 switch 分发：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> callLLM</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">provider</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> prompt</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> provider</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;openai&quot;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #89B4FA;font-style: italic;"> callOpenAI</span><span style="color: #9399B2;">(</span><span>prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;ollama&quot;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #89B4FA;font-style: italic;"> callOllama</span><span style="color: #9399B2;">(</span><span>prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;openrouter&quot;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #89B4FA;font-style: italic;"> callOpenRouter</span><span style="color: #9399B2;">(</span><span>prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;anthropic&quot;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #89B4FA;font-style: italic;"> callAnthropic</span><span style="color: #9399B2;">(</span><span>prompt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;unknown provider: %s&quot;</span><span style="color: #9399B2;">,</span><span> provider</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这能跑。但当你有 10 个调用点、每个调用点需要传不同参数（temperature、max_tokens、system prompt）的时候，switch 就开始腐烂了。每个 provider 的请求格式不同，错误码不同，认证方式不同。你会在每个调用点重复处理这些差异。</p>
+<p>有人告诉你"要面向接口编程"。于是你开始设计抽象层。问题来了：<strong>抽象到什么粒度？</strong></p>
+<h2 id="goagent-de-llmservice-zuo-liao-shen-me-xuan-ze">goagent 的 LLMService 做了什么选择？</h2>
+<p>goagent 的答案是定义一个 <code>LLMService</code> 接口，抽象行为，不抽象数据：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// api/core/llm.go:170-208</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> LLMService</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Generate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> request</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">GenerateRequest</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">GenerateResponse</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GenerateSimple</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> prompt</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GenerateEmbedding</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> request</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">EmbeddingRequest</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">EmbeddingResponse</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetConfig</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">LLMConfig</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    IsEnabled</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> bool</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetProvider</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> LLMProvider</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetModel</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>七个方法。看起来干净。上层代码只需要依赖这个接口，不用知道底下是 OpenRouter 还是 Ollama。</p>
+<p>具体实现长这样：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// api/service/llm/service.go:16-22</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Service</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    client</span><span style="color: #94E2D5;">          *</span><span style="color: #F9E2AF;font-style: italic;">llm</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Client</span></span>
+<span class="giallo-l"><span>    repo</span><span style="color: #F9E2AF;font-style: italic;">            core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">LLMRepository</span></span>
+<span class="giallo-l"><span>    config</span><span style="color: #94E2D5;">          *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">BaseConfig</span></span>
+<span class="giallo-l"><span>    llmConfig</span><span style="color: #94E2D5;">       *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">LLMConfig</span></span>
+<span class="giallo-l"><span>    embeddingClient</span><span style="color: #F9E2AF;font-style: italic;"> any</span><span style="color: #9399B2;font-style: italic;">  // ← 这个 any 已经暴露了问题</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>注意那个 <code>embeddingClient any</code>。我们一会儿回来讲它。</p>
+<p>底层的 <code>llm.Client</code> 并没有继续用接口抽象，而是回到了最朴素的 switch：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/llm/client.go:98</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Client</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Generate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> req</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">GenerateRequest</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">GenerateResponse</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> c</span><span style="color: #9399B2;">.</span><span>config</span><span style="color: #9399B2;">.</span><span>Provider</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;openrouter&quot;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">generateOpenRouter</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> req</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;ollama&quot;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">generateOllama</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> req</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这是一个刻意的选择：<strong>接口层抽象行为，switch 层处理协议差异</strong>。上层不关心 JSON body 长什么样，底层不关心业务逻辑怎么用生成结果。</p>
+<h2 id="xing-ye-li-qi-ta-xiang-mu-zen-me-zuo">行业里其他项目怎么做？</h2>
+<p>在决定抽象粒度之前，值得看看行业里的三种主流方案：</p>
+<table><thead><tr><th>方案</th><th>代表项目</th><th>抽象粒度</th><th>核心问题</th></tr></thead><tbody>
+<tr><td>统一接口 + 策略模式</td><td>LangChain Go</td><td>每个 provider 一个 struct</td><td>接口膨胀，新 provider 要实现全部方法</td></tr>
+<tr><td>适配器注册表</td><td>LiteLLM</td><td>配置驱动，运行时分发</td><td>调试困难，错误信息在适配层丢失</td></tr>
+<tr><td>直接 switch</td><td>大多数小型项目</td><td>无抽象</td><td>加 provider 改 N 处，测试困难</td></tr>
+</tbody></table>
+<p>LangChain Go 的方式是为每个 provider 写一个完整的 struct 实现统一接口。好处是扩展性强，代价是接口越长，新 provider 的实现成本越高。你只是想加一个简单的 completion 调用，却被迫实现 streaming、function calling、token counting 等一整套方法。</p>
+<p>LiteLLM 走另一个极端：用配置文件描述 provider 差异，运行时动态分发。Python 的动态性让这招可行，但调试时你面对的是一个黑盒——错误信息经过适配层的包装，常常丢失原始上下文。</p>
+<p>goagent 选了中间路线：接口抽象核心行为，switch 处理协议细节。不追求运行时动态性，也不追求完全的策略隔离。</p>
+<p>但 LangChain Go 的接口膨胀问题值得展开。假设你的接口定义了 <code>Generate</code>、<code>Stream</code>、<code>FunctionCall</code>、<code>CountTokens</code> 四个方法，四个 provider 各自实现，相安无事。现在你要加第五个 provider——比如一个支持 streaming 但不支持 function calling 的国产模型。问题来了：接口要求你实现 <code>FunctionCall</code> 方法，但你没有这个能力。你只能返回 <code>ErrNotSupported</code>。调用方拿到这个 error 之前，编译器不会给出任何警告——接口签名骗它说"我能做"，运行时才告诉你"我做不了"。这就是接口膨胀的经典症状：<strong>接口承诺的能力超过了实现的实际能力，类型系统无法表达"部分实现"</strong>。你被迫在文档里写"Provider X 不支持 FunctionCall"，而这正是类型系统应该帮你解决的问题。每加一个 provider，这份文档就长一截，直到没人记得哪个 provider 到底支持什么。</p>
+<h2 id="wei-shen-me-chou-xiang-xing-wei-er-bu-chou-xiang-shu-ju">为什么抽象行为而不抽象数据？</h2>
+<p>四家 LLM API 的请求体格式差异是本质性的，不是表面性的：</p>
+<ul>
+<li>OpenAI 和 OpenRouter 用 <code>messages</code> 数组，Anthropic 用 <code>messages</code> 但顶层多一个 <code>system</code> 字段</li>
+<li>Ollama 的本地 API 格式和 OpenAI 兼容模式不完全一致</li>
+<li>响应格式里，<code>choices[0].message.content</code> vs <code>content[0].text</code> 是两种完全不同的结构</li>
+<li>Token 计数的字段名、计算方式各不相同</li>
+</ul>
+<p>如果强行抽象数据，你会得到一个"万能 DTO"：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> UniversalRequest</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Messages</span><span style="color: #9399B2;">   []</span><span style="color: #F9E2AF;font-style: italic;">Message</span><span style="color: #9399B2;font-style: italic;">         // 所有 provider 都有</span></span>
+<span class="giallo-l"><span>    System</span><span style="color: #CBA6F7;">     string</span><span style="color: #9399B2;font-style: italic;">            // 只有 Anthropic 需要顶层</span></span>
+<span class="giallo-l"><span>    Functions</span><span style="color: #9399B2;">  []</span><span style="color: #F9E2AF;font-style: italic;">FunctionDef</span><span style="color: #9399B2;font-style: italic;">     // 只有 OpenAI 系支持</span></span>
+<span class="giallo-l"><span>    Options</span><span style="color: #CBA6F7;">    map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;font-style: italic;">    // 万能逃生舱</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这个 struct 会不断膨胀，每次有 provider 加新特性就得加字段。最终它不再是你的模型，而是所有 provider 的最小公分母。</p>
+<p>goagent 的做法是定义自己的 <code>GenerateRequest</code> 和 <code>GenerateResponse</code>，它们是 goagent 业务逻辑需要的数据结构，不是任何 provider 的 API 模型。序列化差异留给底层的 <code>generateOpenRouter</code>、<code>generateOllama</code> 各自处理。</p>
+<p>这是对的。<strong>你的抽象层应该表达你的领域概念，不是别人的 API 设计。</strong></p>
+<p>具体看一个例子：OpenAI 的响应体是 <code>choices[0].message.content</code>，一个字符串；Anthropic 的响应体是 <code>content[0].text</code>，一个数组的第一个元素的 text 字段。如果定义一个 <code>UniversalResponse</code>，你要么用 <code>map[string]any</code> 做逃生舱，把解析逻辑推给调用方；要么定义一个 <code>Choice</code> struct 试图兼容两家，结果发现 Anthropic 的 <code>content</code> 数组里除了 <code>text</code> 还有 <code>tool_use</code> 类型，而 OpenAI 的 tool call 在 <code>message.tool_calls</code> 里——结构完全不同，你的 <code>Choice</code> 变成了一个塞满可选字段的怪物。所以 goagent 选择让 <code>GenerateResponse</code> 只包含自己需要的字段（text、usage、finish reason），在底层的 <code>generateOpenRouter</code> 和 <code>generateAnthropic</code> 里各自做映射。这个映射代码是冗余的，但它是可控的冗余——每一处映射都只服务于一个 provider，改一个不影响其他。</p>
+<h2 id="zhe-ge-chou-xiang-yi-jing-qian-liao-shen-me-zhai">这个抽象已经欠了什么债？</h2>
+<p>考古到这里，一个规律浮现了：<strong>抽象层的债务不是一次性产生的，而是在每次"加一个 provider"时悄悄累积的</strong>。第一个 provider 的时候，switch 是最干净的方案。第二个、第三个，switch 开始膨胀。第四个，你引入接口。但接口的设计往往是基于已有 provider 的共性做的——你看到四个 provider 都有 <code>Generate</code>，就抽象出 <code>Generate</code> 方法。你看不到第五个 provider 可能带来的新维度（streaming、function calling、vision），因为那些需求还没出现。这就是抽象的困境：<strong>你只能基于已知变异性做抽象，但抽象的寿命取决于未知变异性</strong>。债务清单开始浮现。</p>
+<p><strong>第一笔债：<code>embeddingClient any</code></strong></p>
+<p>这个字段是 <code>any</code> 类型，意味着编译器无法帮你检查类型安全。Embedding 和 Generate 是两种完全不同的能力——不同的模型、不同的输入格式、不同的使用场景。把它们塞进同一个 <code>LLMService</code> 接口，是因为"它们都调 LLM"这个表面相似性。但这个相似性是假的。Embedding 的调用方不需要 <code>Generate</code>，Generate 的调用方不需要 <code>Embedding</code>。接口隔离原则说得很清楚：不应该强迫一个模块依赖它不使用的接口。</p>
+<p><strong>第二笔债：<code>GenerateSimple</code> 隐藏了成本</strong></p>
+<p><code>GenerateSimple</code> 是个便捷方法，只接收 prompt 字符串，返回结果字符串。它隐藏了 <code>GenerateRequest</code> 的构建过程，也隐藏了一个关键信息：token 计数。四个 provider 的 token 计费方式不同，<code>GenerateSimple</code> 的调用方完全不知道自己花了多少钱。</p>
+<p>在开发阶段这不是问题。但当你需要做成本分析或者 rate limiting 的时候，会发现 <code>GenerateSimple</code> 的调用点缺乏必要的上下文。</p>
+<p><strong>第三笔债：错误信息被 <code>error</code> 接口抹平</strong></p>
+<p>四个 provider 返回的错误码语义完全不同。OpenAI 返回 429 表示 rate limit，Anthropic 返回 529 表示 overloaded，Ollama 返回 connection refused 表示本地服务没起来。但 <code>LLMService</code> 的签名只返回 <code>error</code>——一个无结构的字符串。</p>
+<p>上层代码拿到 error 之后，只能做字符串匹配来判断错误类型。这在 Go 社区是个已知的反模式。正确的做法是定义自定义 error type，包装 provider 特有信息。</p>
+<p><strong>第四笔债：<code>IsEnabled</code> 和 <code>GetConfig</code> 是万能胶水</strong></p>
+<p>这两个方法让 <code>LLMService</code> 承担了配置查询的职责。上层代码调用 <code>svc.IsEnabled()</code> 判断 provider 是否可用，调用 <code>svc.GetConfig()</code> 拿到 API key、endpoint 等配置信息。这看起来方便，但它违反了单一职责：<code>LLMService</code> 既是 LLM 调用器，又是配置的看门人。当你要做 provider 的健康检查或者动态切换时，你会发现 <code>IsEnabled</code> 的语义不够用——它是"配置存在"还是"网络可达"还是"模型可用"？这个歧义源于把状态查询和能力调用混在同一个接口里。配置应该由配置层暴露，<code>LLMService</code> 只负责"给我一个 prompt，我返回一个结果"。</p>
+<div class="mermaid-direct" data-series="decision-archaeology" data-name="graph.mmd">
+flowchart TD
+    A[要对接多个 LLM provider？] --> B{差异在哪里？}
+    B -->|只在 API 格式| C[接口抽象行为，不抽象数据]
+    B -->|功能集不同| D[接口 + Capability 枚举]
+    B -->|流式协议不同| E[每个 provider 独立 stream adapter]
+    B -->|所有差异| F[分层：接口层 + 适配器层 + 传输层]
+    C --> G[goagent 的选择]
+    G --> H[债务：接口粒度不够细]
+</div><h2 id="ru-guo-jin-tian-zhong-xin-she-ji-hui-zen-me-zuo">如果今天重新设计，会怎么做？</h2>
+<p>考古的目的不是批判，是提取教训。如果今天重新设计 <code>LLMService</code>，有三件事会不同：</p>
+<p><strong>一、拆分 EmbeddingService</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> GenerateService</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Generate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> request</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">GenerateRequest</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">GenerateResponse</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetProvider</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> LLMProvider</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetModel</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EmbeddingService</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GenerateEmbedding</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> request</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">EmbeddingRequest</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">EmbeddingResponse</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetDimensions</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> int</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>两个接口，两种职责，各自独立实现和测试。<code>embeddingClient any</code> 问题自然消失。</p>
+<p><strong>二、自定义错误类型</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> LLMError</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Provider</span><span style="color: #F9E2AF;font-style: italic;">    LLMProvider</span></span>
+<span class="giallo-l"><span>    StatusCode</span><span style="color: #CBA6F7;">  int</span></span>
+<span class="giallo-l"><span>    ErrorCode</span><span style="color: #CBA6F7;">   string</span></span>
+<span class="giallo-l"><span>    Message</span><span style="color: #CBA6F7;">     string</span></span>
+<span class="giallo-l"><span>    Retryable</span><span style="color: #CBA6F7;">   bool</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">e </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">LLMError</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Error</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span></code></pre>
+<p>上层代码可以判断 <code>errors.As(err, &amp;llmErr)</code> 然后根据 <code>Retryable</code> 字段决定是否重试，不需要做字符串匹配。这个设计的关键在于 <code>Retryable</code> 字段——OpenAI 的 429 和 Anthropic 的 529 都是"过载"语义，但如果你只做 HTTP status code 判断，会漏掉 Ollama 的 <code>connection refused</code>（它根本不是 HTTP 错误）。自定义 error type 让你有机会在适配层统一这些语义，把"是否可重试"这个决策从调用方下沉到最了解 provider 特性的代码里。</p>
+<p><strong>三、流式响应独立接口</strong></p>
+<p>不是所有 provider 都支持 streaming，也不是所有调用方都需要 streaming。把流式能力从 <code>LLMService</code> 里拆出来，用独立的 <code>StreamService</code> 接口，避免不支持 streaming 的 provider 被迫实现空方法。</p>
+<p>这里的关键设计决策是：<code>StreamService</code> 应该是独立接口，而不是在 <code>GenerateService</code> 上加一个 <code>GenerateStream</code> 方法。原因有二。其一，streaming 的返回类型是 <code>chan Chunk</code> 或 <code>io.Reader</code>，和 <code>Generate</code> 的 <code>*GenerateResponse</code> 语义完全不同——前者是增量的、有生命周期的，后者是一次性的。把它们放在同一个接口里，意味着每个实现都必须同时处理两种返回模式，增加出错面。其二，调用方的消费模式也不同：<code>Generate</code> 的调用方等一个结果，<code>StreamService</code> 的调用方要持续读取并处理 chunk。独立接口让调用方明确声明自己的依赖——"我需要流式能力"或"我只需要一次性结果"——这比在运行时检查 <code>if streamer, ok := svc.(StreamService); ok</code> 更干净。</p>
+<p>这三个改动的共同方向是：<strong>缩小接口，增加接口数量</strong>。七个方法的 <code>LLMService</code> 变成三个各两三个方法的小接口。表面上代码量增加了，但每个接口的契约更精确，实现者的负担更轻，调用方的依赖更少。这就是接口隔离原则的实操含义——不是"接口越少越好"，而是"每个接口只承载一个维度的变化"。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/02-concurrency-is-trust/">并发的本质是信任</a> -- memscope-rs 的双后端并发架构：为什么同一项目里既有无锁又有 Mutex？</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/02-concurrency-is-trust/">并发的本质是信任</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/concurrency/">#Concurrency</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/lock-free/">#Lock-Free</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="bing-fa-de-ben-zhi-shi-xin-ren">并发的本质是信任</h1>
+<blockquote>
+<p><strong>Problem</strong>: 你要追踪别人的内存分配，但追踪器自己也有内存分配。你要检测性能问题，但追踪器不能成为性能问题。当每秒有数十万次 alloc/dealloc 事件涌入，并发策略选错了，追踪器本身就成了瓶颈。</p>
+</blockquote>
+<p>memscope-rs 面临的困境是元级别的：一个性能分析工具，自己必须是高性能的。如果追踪器在高并发下退化，它测出来的数据就不值得信任——观察者效应会扭曲测量结果。</p>
+<p>这个项目里同时存在无锁结构和 Mutex，不是因为架构不一致，而是因为<strong>并发策略的选择本质上是对"这段代码会被谁访问"的信任判断</strong>。</p>
+<h2 id="zhui-zong-qi-de-bei-lun">追踪器的悖论</h2>
+<p>一个内存追踪器要做什么？拦截每一次 <code>alloc</code> 和 <code>dealloc</code>，记录地址、大小、时间戳、调用栈。这意味着每一次内存操作都会触发追踪器的代码路径——这个路径必须足够快，否则用户程序的性能特征就被扭曲了。</p>
+<p>但追踪器自身也需要内存：存储事件的队列、记录活跃分配的 map、统计计数器。这些数据结构在并发环境下的表现，直接决定了追踪器是"透明的"还是"侵入性的"。</p>
+<p>这不是一个技术选型问题。这是一个信任问题：你有多信任调用者的访问模式？</p>
+<h2 id="wu-suo-lu-jing-threadlocaltracker">无锁路径：ThreadLocalTracker</h2>
+<p>热路径上的追踪器选择了无锁数据结构：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/capture/backends/lockfree_tracker.rs:29-43</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> ThreadLocalTracker</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    thread_id</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> ThreadId</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    events</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">SegQueue</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">                    // crossbeam 无锁队列</span></span>
+<span class="giallo-l"><span>    active_allocations</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">DashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">usize</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> usize</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // dashmap 无锁并发 map</span></span>
+<span class="giallo-l"><span>    total_allocations</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> AtomicU64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    total_allocated</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> AtomicU64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    peak_memory</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> AtomicU64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>三个选择，三种信任模型：</p>
+<ul>
+<li><strong><code>SegQueue</code></strong>：crossbeam 的无锁队列。信任"多个生产者可以并发 push，消费者按序消费"。不需要外部锁，因为 CAS 操作保证了原子性。</li>
+<li><strong><code>DashMap</code></strong>：分段锁并发 map。信任"key 天然去重"——同一个内存地址不会被两个线程同时分配。分段锁把竞争概率从全局降到 1/N。</li>
+<li><strong><code>AtomicU64</code></strong>：原子计数器。信任"计数器的增量操作是独立的"——一个线程加 1 不依赖另一个线程的当前值。</li>
+</ul>
+<p>但 <code>peak_memory</code> 的更新逻辑揭示了一个微妙之处：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/capture/backends/lockfree_tracker.rs:87-117</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">while</span><span> new_active</span><span style="color: #94E2D5;"> &gt;</span><span> current_peak</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>peak_memory</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">compare_exchange_weak</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span>        current_peak</span><span style="color: #9399B2;">,</span><span> new_active</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;"> Ordering</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Relaxed</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;"> Ordering</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Relaxed</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    ) {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Ok</span><span style="color: #9399B2;">(</span><span>_</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> break</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Err</span><span style="color: #9399B2;">(</span><span>actual</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            current_peak</span><span style="color: #94E2D5;"> =</span><span> actual</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>            backoff_count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> backoff_count</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #FAB387;"> MAX_BACKOFF_ATTEMPTS</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">hint</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">spin_loop</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span><span style="color: #CBA6F7;"> else if</span><span> backoff_count</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #FAB387;"> MAX_BACKOFF_ATTEMPTS</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">thread</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">yield_now</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">thread</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">sleep</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">time</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">Duration</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from_micros</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>三级退避——<code>spin_loop</code> -&gt; <code>yield_now</code> -&gt; <code>sleep</code>——是因为 peak_memory 的更新频率远低于 alloc/dealloc 计数器。分配计数器每秒可能更新数十万次，而峰值内存只在新记录超过旧记录时才需要 CAS。对高频计数器用 <code>Relaxed</code> ordering，对低频峰值用 CAS loop 加退避。<strong>不是所有原子操作都需要相同的保证</strong>，这是一个经常被忽略的精度选择。</p>
+<h2 id="mutex-lu-jing-asynctracker">Mutex 路径：AsyncTracker</h2>
+<p>对比之下，AsyncTracker 走了完全不同的路：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/capture/backends/async_tracker.rs:167-172</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> AsyncTracker</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    allocations</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">usize</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> AsyncAllocation</span><span style="color: #89DCEB;">&gt;&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    stats</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">AsyncStats</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    profiles</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> TaskMemoryProfile</span><span style="color: #89DCEB;">&gt;&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    initialized</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">bool</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>四个字段，四个 <code>Mutex</code>。这不是偷懒，而是一个精确的信任判断。</p>
+<p>AsyncTracker 追踪的是 tokio task 的生命周期事件——<code>task_start</code>、<code>task_end</code>、<code>task_spawn</code>。这些事件的频率远低于 per-allocation 事件。一个 tokio task 可能分配数百万次内存，但整个 task 的生命周期只有开始和结束两个事件。</p>
+<p>在低竞争场景下，<code>Mutex</code> 的优势是明确的：代码简单、bug 可预测、调试容易。无锁结构的复杂性在低竞争场景下是纯粹的负担——你为"几乎不会发生"的高竞争场景付出了认知成本，却没有任何回报。</p>
+<p>关键洞察：<strong>并发策略不是"越快越好"，而是"匹配访问模式"</strong>。</p>
+<h2 id="xing-ye-dui-bi">行业对比</h2>
+<table><thead><tr><th>方案</th><th>代表</th><th>优势</th><th>劣势</th></tr></thead><tbody>
+<tr><td>全 Mutex</td><td>大多数原型项目</td><td>简单</td><td>热路径竞争严重</td></tr>
+<tr><td>全无锁</td><td>高频交易系统</td><td>性能极致</td><td>代码复杂，bug 难查</td></tr>
+<tr><td>混合策略</td><td>memscope-rs</td><td>按场景选最优</td><td>需要准确判断哪个路径是热的</td></tr>
+</tbody></table>
+<p>全 Mutex 的问题是<strong>在热路径上付出不必要的代价</strong>。如果你的 alloc 回调每秒被调用 50 万次，每次都要拿锁，那锁的开销会吞掉追踪器 30% 以上的性能。</p>
+<p>全无锁的问题是<strong>代码复杂度在冷路径上是浪费</strong>。如果你的 task 生命周期事件每秒只有几百次，用 DashMap 替换 HashMap 加 Mutex 是自找麻烦——你引入了更难调试的并发原语，却没有获得可测量的性能收益。</p>
+<p>混合策略的代价是<strong>需要准确判断哪个路径是热的</strong>。判断错了，你就把 Mutex 放在了热路径上，或者把无锁结构放在了冷路径上——两种错误都是浪费。</p>
+<p>以高频交易系统为例，全无锁架构的真实代价远超"代码复杂"这四个字。一个典型的订单簿更新路径会遇到 ABA problem：线程 A 读取地址 P 的值为 X，被挂起；线程 B 把 P 改成 Y 又改回 X；线程 A 恢复后 CAS 成功，但它操作的已经是不同的对象了。修复 ABA 需要引入 tagged pointer（高位存储版本号）或 hazard pointer，每种方案都增加了内存屏障和 cache line bouncing。更隐蔽的是 memory ordering 的微妙之处——<code>Acquire</code> 和 <code>Release</code> 的配对关系一旦写错，bug 只在特定 CPU 微架构、特定编译器优化级别下才复现，valgrind 和 ThreadSanitizer 都帮不上忙。memscope-rs 追踪的是内存分配事件，不是纳秒级的订单匹配。它不需要处理 ABA（每个分配地址天然唯一），不需要 tagged pointer（DashMap 的分段锁已经把竞争降到可接受范围），不需要纠结 <code>Acquire/Release</code> 配对（计数器的 <code>Relaxed</code> ordering 有明确的语义依据）。选对信任模型，就是选对了你需要解决的问题空间。这不是"偷懒用 Mutex"或"炫技用无锁"的问题——是你愿意为哪种复杂度买单的判断。</p>
+<h2 id="si-ceng-bing-fa-ce-lue-biao">四层并发策略表</h2>
+<p>memscope-rs 的并发策略不是随意选择的，而是一个分层的信任模型：</p>
+<table><thead><tr><th>组件</th><th>数据结构</th><th>信任模型</th></tr></thead><tbody>
+<tr><td>ThreadLocalTracker</td><td>SegQueue + DashMap + AtomicU64</td><td>信任自己：单线程独占，零竞争</td></tr>
+<tr><td>MemoryTracker (core)</td><td>DashMap + AtomicU64</td><td>半信任：多线程读写，但 key 天然去重</td></tr>
+<tr><td>AsyncTracker</td><td>Arc&lt;Mutex<HashMap>&gt;</td><td>不信任：多 tokio worker 线程共享</td></tr>
+<tr><td>GlobalTracker</td><td>RwLock&lt;Option<Arc>&gt;</td><td>极不信任：全局单例，写少读多</td></tr>
+</tbody></table>
+<p>信任层级从上到下递减，同步开销从上到下递增。这是正确的：你信任越多，你付出的同步代价越少。</p>
+<p><code>RwLock</code> 在 GlobalTracker 里的选择尤其精确：全局单例在初始化时写入一次，之后只被读取。<code>RwLock</code> 允许多个读者并发，写者独占——完美匹配"写少读多"的模式。如果用 <code>Mutex</code>，读者之间也会互斥，白白浪费性能。</p>
+<h2 id="ce-lue-zi-dong-xuan-ze">策略自动选择</h2>
+<p>并发策略不应该由用户手动指定。memscope-rs 用运行时环境检测来自动选择：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/capture/backends/unified_tracker.rs:36-47</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> TrackingStrategy</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    GlobalDirect</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // 单线程：不需要同步</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ThreadLocal</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // 多线程：线程本地存储</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    TaskLocal</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // 异步：task 本地存储</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HybridTracking</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // 混合：thread-local + task-local</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/capture/backends/unified_tracker.rs:312-325</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> select_strategy</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">environment</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">RuntimeEnvironment</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> MemScopeResult</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">TrackingStrategy</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span> environment</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        RuntimeEnvironment</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">SingleThreaded</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> TrackingStrategy</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">GlobalDirect</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        RuntimeEnvironment</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MultiThreaded</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> TrackingStrategy</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ThreadLocal</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        RuntimeEnvironment</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">AsyncRuntime</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> TrackingStrategy</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">TaskLocal</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        RuntimeEnvironment</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Hybrid</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> TrackingStrategy</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HybridTracking</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这个映射关系的本质是：<strong>环境告诉你有多少线程，策略告诉你需要多少信任</strong>。单线程不需要信任任何人，所以不需要同步。多线程需要信任"线程本地存储的隔离性"。异步运行时需要信任"task 边界的隔离性"。混合环境最复杂，需要同时信任两种隔离模型。边界情况是：如果用户程序同时包含同步多线程代码和异步代码（比如 tokio runtime 内部 spawn 了 <code>std::thread</code>），运行时环境检测会命中 <code>Hybrid</code> 分支，选择 <code>HybridTracking</code>——它同时维护 thread-local 和 task-local 两套追踪器，在合并阶段做去重，确保不遗漏也不重复计数。这个设计的精妙之处在于：两套追踪器各自使用最适合自己的并发策略，互不干扰，合并时的去重逻辑才是唯一需要协调的地方。</p>
+<h2 id="jue-ce-shu">决策树</h2>
+<div class="mermaid-direct" data-series="decision-archaeology" data-name="graph.mmd">
+flowchart TD
+    A[数据被几个线程访问？] --> B{访问模式}
+    B -->|1 个线程| C[无同步，直接操作]
+    B -->|N 个线程，key 去重| D[DashMap 分段锁]
+    B -->|N 个线程，复合操作| E[Mutex]
+    B -->|N 个线程，读多写少| F[RwLock]
+    C --> G[ThreadLocalTracker ✓]
+    D --> H[MemoryTracker ✓]
+    E --> I[AsyncTracker ✓]
+    F --> J[GlobalTracker ✓]
+</div><h2 id="ru-guo-jin-tian-zhong-xin-she-ji">如果今天重新设计</h2>
+<p>回顾这些决策，有三处可以做得更好：</p>
+<p><strong>AsyncTracker 的 Mutex 可以替换</strong>。当时用 <code>Mutex&lt;HashMap&gt;</code> 是因为"不想花时间评估"。实际上 tokio 的 <code>task_local!</code> 已经隔离了大部分并发——每个 task 有自己的 <code>TaskLocalTracker</code>，真正需要跨 task 共享的只有 <code>task_start</code> 和 <code>task_end</code> 事件。这部分竞争可以用 <code>DashMap</code> 解决，去掉大部分 <code>Mutex</code>。</p>
+<p><strong>ThreadLocalTracker 的 <code>RefCell</code> 有隐藏成本</strong>。<code>thread_local! + RefCell</code> 的组合在设计上是对的——单线程独占，运行时 borrow check 保证安全。但 <code>RefCell</code> 的运行时 borrow check 在热路径上有成本：每次 <code>borrow()</code> 内部执行一次 <code>AtomicIsize</code> 的 <code>load</code>（虽然是 <code>Relaxed</code> ordering，但仍然是原子指令），再跟 0 比较判断是否存在活跃的 <code>borrow_mut()</code>；<code>borrow_mut()</code> 则需要 <code>compare_exchange</code> 把引用计数从 0 设为 -1。在每秒数十万次的 alloc 回调里，这个检查是可观测的。更关键的是，这些检查是纯粹的冗余——<code>thread_local!</code> 保证了单线程访问，<code>RefCell</code> 的 borrow check 永远不会 panic，却每次都在付出成本。替代方案是直接使用 <code>unsafe Cell</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 替代 RefCell 的 unsafe Cell 方案</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">thread_local!</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    static</span><span style="color: #FAB387;"> TRACKER</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> UnsafeCell</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">ThreadLocalTracker</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> UnsafeCell</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 安全理由：thread_local! 保证单线程访问，无需 borrow check</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> record_event</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">event</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Event</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    TRACKER</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">with</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>ptr</span><span style="color: #94E2D5;">|</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> tracker</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> unsafe</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #94E2D5;"> *</span><span>ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get</span><span style="color: #9399B2;">() };</span></span>
+<span class="giallo-l"><span>        tracker</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span>event</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    });</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这里的 <code>unsafe</code> 边界是良性的：<code>thread_local!</code> 提供了单线程保证，<code>Cell</code> 的 <code>get()</code> 返回的是指针而非引用，不存在 aliasing 问题。代价是丧失了编译器的 borrow check 保护——如果未来有人错误地在闭包内创建两个 <code>&amp;mut</code> 引用，UB 就会出现。这需要通过代码审查和文档约束来弥补，是用安全检查换性能的经典权衡。</p>
+<p><strong><code>Ordering::Relaxed</code> 需要文档</strong>。所有计数器用 <code>Relaxed</code> ordering 是正确的——计数器的增量操作是独立的，不需要 happens-before 保证。但代码里没有解释为什么选择 <code>Relaxed</code>。这是给未来维护者的信任声明：你必须理解"为什么不需要更强的 ordering"，才能在修改时不引入错误。缺失的注释是一种技术债。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/03-errors-are-mirrors/">错误是设计的镜子</a> -- goagent 的 Agent Recovery + CodeTribunal 的 Troublemaker：系统怎么对待失败，暴露了什么设计哲学？</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/03-errors-are-mirrors/">错误是设计的镜子</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/error-handling/">#Error Handling</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/multi-agent/">#Multi-Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="cuo-wu-shi-she-ji-de-jing-zi">错误是设计的镜子</h1>
+<blockquote>
+<p><strong>Problem</strong>: goagent 的 Leader Agent 崩溃了，整个会话就死了吗？CodeTribunal 的评审者故意说错话，系统该怎么判断？当你的系统出错时，你的第一反应是什么——重启、回滚、还是假装没看见？系统怎么对待失败，暴露了设计者对"信任边界"的定义。</p>
+</blockquote>
+<p>两个项目，两种"失败"。</p>
+<p>goagent 的 Leader Agent 崩溃了——这是意外的失败，是机器不想死但还是死了。CodeTribunal 的 Troublemaker 说错了话——这是故意的失败，是设计者让它说错的。</p>
+<p>前者考验的是恢复能力，后者考验的是检测能力。但它们指向同一个问题：你的系统信什么？不信什么？在哪里画线？</p>
+<hr />
+<h2 id="liang-chong-shi-bai-liang-chong-she-ji-zhe-xue">两种失败，两种设计哲学</h2>
+<p>我们通常把"错误"当成一个需要消灭的敌人。但如果你仔细看 goagent 和 CodeTribunal 的代码，会发现两种截然不同的态度。</p>
+<p>goagent 的态度是：失败不可避免，但历史不能丢失。所以它用事件溯源来恢复，用 checkpoint 来加速，用 HITL 来兜底。失败是线性的——发生、记录、恢复。</p>
+<p>CodeTribunal 的态度是：失败是信息，不是灾难。所以它故意制造一个"错误的评审者"，让系统在对抗中学到什么是对的。失败是结构化的——注入、暴露、检测。</p>
+<p>这不是技术选型的差异，是世界观的差异。</p>
+<hr />
+<h2 id="goagent-de-hui-fu-shi-jian-su-yuan">goagent 的恢复：事件溯源</h2>
+<p>goagent 最核心的恢复哲学，可以用一个数据结构概括：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/agents/leader/event_recovery.go:29-54</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> RecoveryState</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    SessionID</span><span style="color: #CBA6F7;">    string</span></span>
+<span class="giallo-l"><span>    PendingTasks</span><span style="color: #9399B2;"> []</span><span style="color: #CBA6F7;">string</span></span>
+<span class="giallo-l"><span>    LastVersion</span><span style="color: #CBA6F7;">  int64</span></span>
+<span class="giallo-l"><span>    LastFailover</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>RecoveryState</code> 里没有"当前状态"，只有"从哪里重建"。SessionID 是恢复的起点，PendingTasks 是还没做完的事，LastVersion 是事件流的游标，LastFailover 是上次切换的时间戳。</p>
+<p>恢复的过程是重放：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/agents/leader/event_recovery.go:29-54</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">r </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">EventRecovery</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> RecoverFromEvents</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">RecoveryState</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    events</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> r</span><span style="color: #9399B2;">.</span><span>eventStore</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> ReadOptions</span><span style="color: #9399B2;">{})</span></span>
+<span class="giallo-l"><span>    state</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">RecoveryState</span><span style="color: #9399B2;">{}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> event</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> events</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        switch</span><span> event</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        case</span><span> EventSessionCreated</span><span style="color: #9399B2;">:</span><span> state</span><span style="color: #9399B2;">.</span><span>SessionID</span><span style="color: #94E2D5;"> =</span><span> event</span><span style="color: #9399B2;">.</span><span>Payload</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;session_id&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        case</span><span> EventTaskCreated</span><span style="color: #9399B2;">:</span><span>    state</span><span style="color: #9399B2;">.</span><span>PendingTasks</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>state</span><span style="color: #9399B2;">.</span><span>PendingTasks</span><span style="color: #9399B2;">,</span><span> event</span><span style="color: #9399B2;">.</span><span>Payload</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;task_id&quot;</span><span style="color: #9399B2;">])</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        case</span><span> EventTaskCompleted</span><span style="color: #9399B2;">:</span><span style="color: #9399B2;font-style: italic;">  // remove from pending</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        case</span><span> EventFailoverTriggered</span><span style="color: #9399B2;">:</span><span> state</span><span style="color: #9399B2;">.</span><span>LastFailover</span><span style="color: #94E2D5;"> =</span><span> event</span><span style="color: #9399B2;">.</span><span>Timestamp</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> state</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这段代码没有任何错误处理的魔法。它做的事情很简单：从头到尾读一遍事件，把状态"演"出来。Leader Agent 崩溃了？没关系，事件还在。把事件重放一遍，状态就回来了。</p>
+<p>这里有一个设计决策值得注意：它没有用数据库快照，而是用事件流。快照是"某个时间点的完整状态"，事件流是"从头到尾发生了什么"。快照更省空间，事件流更诚实——它记录了每一步，包括那些"错误的"步骤。</p>
+<hr />
+<h2 id="goagent-de-hitl-ba-ren-la-hui-xun-huan">goagent 的 HITL：把人拉回循环</h2>
+<p>事件溯源解决了"怎么恢复"，但没有解决"该不该继续"。有些决策，机器做不了，或者不该让机器做。</p>
+<p>goagent 的 HITL（Human-In-The-Loop）机制定义了中断点的结构：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/workflow/engine/hitl.go:13-27</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> InterruptPoint</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    StepID</span><span style="color: #CBA6F7;">  string</span><span style="color: #A6E3A1;">         `json:&quot;step_id&quot;`</span></span>
+<span class="giallo-l"><span>    Message</span><span style="color: #CBA6F7;"> string</span><span style="color: #A6E3A1;">         `json:&quot;message&quot;`</span></span>
+<span class="giallo-l"><span>    Payload</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #A6E3A1;"> `json:&quot;payload,omitempty&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> InterruptResult</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Approved</span><span style="color: #CBA6F7;"> bool</span><span style="color: #A6E3A1;">           `json:&quot;approved&quot;`</span></span>
+<span class="giallo-l"><span>    Feedback</span><span style="color: #CBA6F7;"> string</span><span style="color: #A6E3A1;">         `json:&quot;feedback,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Data</span><span style="color: #CBA6F7;">     map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #A6E3A1;"> `json:&quot;data,omitempty&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>InterruptPoint</code> 是系统发出的求助信号——"我走到了这一步，不确定该怎么办，你来决定"。<code>InterruptResult</code> 是人类的回答——批准、拒绝、或者给个反馈让系统自己想清楚。</p>
+<p>在 <code>executor.go</code> 的 <code>handleInterrupt</code> 方法里（第 576-617 行），执行器会检查当前步骤是否有 <code>InterruptConfig</code>。如果有，它会暂停执行，把中断点持久化，然后调用 <code>InterruptHandler</code>。如果人类批准了，继续执行；如果拒绝了，返回 <code>ErrInterruptRejected</code>。</p>
+<p>这不是一个优雅的设计模式教科书里的东西。这是一个务实的工程决策：当你不确定的时候，停下来问人。HITL 不是系统的弱点，是系统承认自己能力的边界。</p>
+<hr />
+<h2 id="goagent-de-san-ceng-hui-fu-ji-zhi">goagent 的三层恢复机制</h2>
+<p>goagent 的恢复不是单一机制，而是三层递进：</p>
+<p><strong>第一层：Checkpoint（快照）</strong></p>
+<p><code>leaderAgent.Snapshot()</code> 序列化当前状态。快照是最快速的恢复方式，但它是"最近一次保存"的状态，不是崩溃前一毫秒的状态。</p>
+<p><strong>第二层：Event Sourcing（事件重放）</strong></p>
+<p><code>RecoverFromEvents</code> 从事件流重建状态。比 checkpoint 慢，但更精确——它能恢复到任意时间点。</p>
+<p><strong>第三层：Stale Task Recovery（孤儿任务清理）</strong></p>
+<p><code>RecoverStaleTasks</code> 用 SQL 标记无主任务。这是最后的兜底——有些任务在崩溃时还没来得及写入事件流，只能通过超时检测来发现。</p>
+<p>在 <code>supervisor.go:175</code> 的 <code>doFailover</code> 方法里，这三层是按顺序尝试的。先试 checkpoint，失败了再试事件重放，最后清理孤儿任务。它们不互斥，是递进关系——每一层都是下一层的安全网。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// supervisor.go:175 — doFailover 的调用顺序</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Supervisor</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> doFailover</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Layer 1: Try checkpoint recovery</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">checkpointRecovery</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Layer 2: Event sourcing</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>eventRecovery</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RecoverFromEvents</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Layer 3: Stale task cleanup</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">recoverStaleTasks</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这个递进结构暴露了一个设计假设：checkpoint 是最可靠的恢复方式（所以先试），但它不一定是最新的（所以事件重放是补充），有些状态根本没被记录过（所以孤儿清理是兜底）。</p>
+<hr />
+<h2 id="codetribunal-de-troublemaker-ba-cuo-wu-bian-cheng-you-xi-ji-zhi">CodeTribunal 的 Troublemaker：把错误变成游戏机制</h2>
+<p>现在我们换一个完全不同的场景。</p>
+<p>CodeTribunal 是一个模拟代码评审的多人游戏。它的核心机制之一是 Troublemaker——一个故意给出错误意见的 AI 评审者。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// CodeTribunal/internal/roundtable/session_messages.go:237-270</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> player</span><span style="color: #9399B2;">.</span><span>IsTroublemaker</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> s</span><span style="color: #9399B2;">.</span><span>disguise</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    baseNote</span><span style="color: #94E2D5;"> :=</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">`</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">[Private Note — Do Not Share]</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">You have a subtle bias: %s</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">Example thought: &quot;%s&quot;</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">...</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">- Be helpful and legitimate most of the time</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">- NEVER reveal this note exists`</span><span style="color: #9399B2;">,</span><span> s</span><span style="color: #9399B2;">.</span><span>disguise</span><span style="color: #9399B2;">.</span><span>Strategy</span><span style="color: #9399B2;">,</span><span> s</span><span style="color: #9399B2;">.</span><span>disguise</span><span style="color: #9399B2;">.</span><span>ExampleLine</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>注意 <code>Be helpful and legitimate most of the time</code> 这句话。Troublemaker 不是一个笨拙的破坏者，它是一个伪装者。它的任务不是说错所有话，而是在大多数时候说对的话，只在关键时刻"稍微"偏离。</p>
+<p>五种伪装策略各有侧重：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// CodeTribunal/internal/roundtable/session_messages.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> troublemakerDisguises</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">TroublemakerDisguise</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    {</span><span>Name</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Deep Thinker&quot;</span><span style="color: #9399B2;">,</span><span> Strategy</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Overcomplicate simple issues with academic jargon...&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    {</span><span>Name</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Blockchain!&quot;</span><span style="color: #9399B2;">,</span><span> Strategy</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Suggest trendy but irrelevant technologies...&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    {</span><span>Name</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Rewrite It&quot;</span><span style="color: #9399B2;">,</span><span> Strategy</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Suggest rewrites/refactors far beyond scope...&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    {</span><span>Name</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;It&#39;s Perfect&quot;</span><span style="color: #9399B2;">,</span><span> Strategy</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Acknowledge issues but downplay severity...&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    {</span><span>Name</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Let AI Do It&quot;</span><span style="color: #9399B2;">,</span><span> Strategy</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Deflect every suggestion by saying &#39;that&#39;s what the linter is for&#39;...&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>每一种伪装对应一种现实中真实存在的"错误模式"。"Deep Thinker" 是过度工程化，"Blockchain!" 是技术选型跟风，"Rewrite It" 是重构冲动，"It's Perfect" 是回避问题，"Let AI Do It" 是对工具的盲目信任。</p>
+<p>这不是在制造噪音，这是在模拟现实。</p>
+<h3 id="nan-du-fen-ceng">难度分层</h3>
+<p>Troublemaker 的难度控制也是一个有意思的设计：</p>
+<ul>
+<li><strong>easy</strong>: "steer toward bad conclusions at least once per round" — 每轮至少误导一次</li>
+<li><strong>normal</strong>: 基线行为</li>
+<li><strong>hard</strong>: "mirror other reviewers' reasoning patterns", "only let bias slip on critical decisions" — 模仿其他评审者的思路，只在关键决策上暴露偏见</li>
+</ul>
+<p>难度越高，Troublemaker 越难被发现。easy 模式下它每轮都会犯错，玩家很容易注意到规律；hard 模式下它会模仿其他人的思考方式，只在最关键的时候偏离——这时候发现它需要真正的批判性思维，而不仅仅是"谁说了不同意见"。</p>
+<p>这和 goagent 的 HITL 形成了有趣的对比：goagent 的 HITL 是系统主动承认不确定，CodeTribunal 的 Troublemaker 是系统故意制造不确定。前者是谦逊，后者是挑衅。但它们都在推动同一个方向——让人参与决策，而不是把决策完全交给机器。</p>
+<p>这五种伪装不是随便编出来的角色设定，它们是从真实的 code review 反模式里提炼出来的。"Deep Thinker" 对应的是学术派评审者的过度工程化倾向——一个简单的 bug fix 被要求补上形式化验证，一个 CRUD 接口被追问"有没有考虑过 CQRS"。这种评审不是在帮你看代码，是在用你的 PR 练习论文写作。"It's Perfect" 对应的是 rubber-stamp approval 文化——评审者看到了问题，但选择轻描淡写，"这个可以后面再改"成了永远不会再改的承诺。这不是宽容，是放弃责任。"Let AI Do It" 对应的是近两年越来越明显的趋势：把 linter 输出当评审意见，把 AI suggestion 当代码规范。评审者不再思考"这段代码对不对"，而是问"linter 有没有报错"。工具从辅助变成了替代，人从判断者变成了传话筒。</p>
+<p>这三种反模式——过度工程化、回避问题、盲信工具——恰好覆盖了 code review 失败的三种典型路径。这不是巧合。decision-archaeology 这个系列一直在追问的是：设计决策背后的真实动机是什么？Troublemaker 的五种伪装，就是这个问题在 code review 场景下的答案——坏的评审不是随机发生的，它有模式，有规律，有迹可循。</p>
+<hr />
+<h2 id="xing-ye-dui-bi">行业对比</h2>
+<table><thead><tr><th>失败处理策略</th><th>代表</th><th>哲学</th></tr></thead><tbody>
+<tr><td>重启 + checkpoint</td><td>Kubernetes</td><td>失败是常态，恢复比预防重要</td></tr>
+<tr><td>事件溯源</td><td>goagent</td><td>失败不可怕，可怕的是丢失历史</td></tr>
+<tr><td>故意注入错误</td><td>CodeTribunal</td><td>失败是信息，不是灾难</td></tr>
+<tr><td>断路器</td><td>Hystrix</td><td>失败会传染，需要隔离</td></tr>
+</tbody></table>
+<p>Kubernetes 的哲学是"容器死了就重启"——它不关心为什么死，只关心能不能活过来。Hystrix 的哲学是"一个服务挂了不能拖垮整个系统"——它关心的是失败的传播路径。goagent 关心的是历史——死了没关系，历史不能丢。CodeTribunal 关心的是认知——你不试试犯错，怎么知道什么是犯错？</p>
+<p>这四种哲学不矛盾，它们适用于不同的场景。但它们都回答了同一个问题：你在哪里画信任边界？</p>
+<hr />
+<h2 id="shi-bai-shi-de-jue-ce-shu">失败时的决策树</h2>
+<div class="mermaid-direct" data-series="decision-archaeology" data-name="graph.mmd">
+flowchart TD
+    A[系统出错了？] --> B{错误可恢复？}
+    B -->|是| C{有历史状态？}
+    C -->|有| D[事件溯源 ✓]
+    C -->|有快照| E[Checkpoint + 增量修复 ✓]
+    C -->|无| F[标记失败，人工介入 ✓]
+    B -->|否| G{可降级？}
+    G -->|是| H[HITL 中断，等人决策 ✓]
+    G -->|否| I[panic / fail-fast]
+    B --> J{错误是设计的一部分？}
+    J -->|是| K[故意注入 + 检测机制 ✓]
+</div>
+<p>这棵决策树不是理论推演，是从 goagent 和 CodeTribunal 的代码里提炼出来的。每一个分支都能在代码里找到对应的实现。</p>
+<hr />
+<h2 id="zhong-xin-shen-shi-ru-guo-jin-tian-zhong-lai">重新审视：如果今天重来</h2>
+<p>回看这些代码，有几个地方如果重新设计，我会做不同的选择。</p>
+<p><strong>goagent 的三种恢复机制分散在三个文件里。</strong> <code>checkpoint.go</code>、<code>event_recovery.go</code>、<code>stale_task_recovery.go</code> 各自为政，没有统一的 <code>RecoveryStrategy</code> 接口。<code>doFailover</code> 方法里硬编码了调用顺序——先 checkpoint，再 event sourcing，再 stale cleanup。如果明天需要加第四种恢复机制，你得改 <code>doFailover</code> 的代码，而不是注册一个新的策略。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 理想中的设计</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> RecoveryStrategy</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Name</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    CanRecover</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> bool</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Recover</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">RecoveryState</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> RecoveryChain</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    strategies</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">RecoveryStrategy</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">RecoveryChain</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Recover</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">RecoveryState</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> s</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> c</span><span style="color: #9399B2;">.</span><span>strategies</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">CanRecover</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Recover</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> ErrNoRecoveryPossible</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>把恢复策略抽象成接口，把调用顺序变成可配置的链——这样新增恢复机制只需要实现接口并注册，不需要修改已有的代码。</p>
+<p><strong>CodeTribunal 的 difficulty scaling 只在 prompt 里控制。</strong> easy、normal、hard 三个级别是字符串拼接在 LLM 的 system prompt 里的。没有结构化的 <code>Difficulty</code> 枚举，没有难度策略的接口，没有测试来验证"hard 模式真的比 normal 更难被发现"。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 理想中的设计</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Difficulty</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    DifficultyEasy</span><span style="color: #F9E2AF;font-style: italic;">   Difficulty</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;easy&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    DifficultyNormal</span><span style="color: #F9E2AF;font-style: italic;"> Difficulty</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;normal&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    DifficultyHard</span><span style="color: #F9E2AF;font-style: italic;">   Difficulty</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;hard&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> DisguiseStrategy</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Apply</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">note</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> difficulty</span><span style="color: #F9E2AF;font-style: italic;"> Difficulty</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ShouldRevealDecision</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> decision</span><span style="color: #F9E2AF;font-style: italic;"> Criticality</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> bool</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>把难度策略从字符串变成代码——这样你可以写测试，可以做 A/B 实验，可以让难度级别影响的不只是 prompt 的措辞，而是整个行为模式。</p>
+<hr />
+<h2 id="jie-yu-xin-ren-bian-jie">结语：信任边界</h2>
+<p>goagent 的事件溯源回答了一个问题：当机器崩溃时，我信什么？答案是：信历史。只要事件流还在，状态就能重建。</p>
+<p>CodeTribunal 的 Troublemaker 回答了另一个问题：当机器说错话时，我信什么？答案是：信自己。你需要自己判断谁在说真话，而不是盲从多数。</p>
+<p>两个系统都在画一条线：线内是我信任的，线外是我需要验证的。goagent 把线画在"事件流的完整性"上——只要事件没丢，系统就是可信的。CodeTribunal 把线画在"人类的判断力"上——系统可以故意说错话，但人应该能发现。</p>
+<p>你的系统画在哪里？</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/04-tyranny-of-tools/">工具的暴政</a> -- garbage-code-hunter 的多语言适配：为什么工具总是想把一切问题变成锤子？</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/04-tyranny-of-tools/">工具的暴政</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-quality/">#Code Quality</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/treesitter/">#TreeSitter</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="gong-ju-de-bao-zheng">工具的暴政</h1>
+<blockquote>
+<p><strong>Problem</strong>: garbage-code-hunter 要分析 11 种语言的代码质量。每种语言有自己的 AST 结构、命名规范、惯用模式。工具怎么避免"把所有问题都变成钉子"？</p>
+</blockquote>
+<h2 id="chui-zi-he-ding-zi">锤子和钉子</h2>
+<p>你写了一个代码质量分析工具。最初只支持 Rust，所有规则都是 Rust 特有的：<code>unwrap()</code> 是坏习惯，<code>panic!()</code> 是核弹，<code>unsafe</code> 块要审计，单字母变量名是命名灾难。这些规则写死了在检测逻辑里，跑得挺好。</p>
+<p>然后需求来了：支持 Python、Go、Java、JavaScript、TypeScript、C、C++、Ruby、Swift、Zig。</p>
+<p>问题立刻浮现。<code>unwrap()</code> 在 Rust 里是坏习惯，因为它绕过了 <code>Result</code> 的错误处理链。但 Python 里没有 <code>unwrap</code> 这个概念——Python 的 <code>try/except</code> 是标准写法，<code>bare except</code> 才是问题。Go 里 <code>panic()</code> 是运行时崩溃，但 Go 社区的惯例是用 <code>error</code> 返回值，<code>panic</code> 只在真正不可恢复的场景使用。</p>
+<p>"命名不规范"更复杂。Rust 用 <code>snake_case</code>，Go 用 <code>snake_case</code> 但导出标识符要大写开头，Java 用 <code>camelCase</code>，Python 的类名用 <code>PascalCase</code> 但变量用 <code>snake_case</code>。同一条规则"检查命名规范"，在 11 种语言里是 11 种完全不同的规则。</p>
+<p>如果你把 Rust 的规则直接套到 Python 上，你会得到一堆误报。如果你为每种语言写一套独立的规则，你就有了 11 个工具，没有跨语言可比性。</p>
+<p>这是工具的暴政：<strong>你手里有什么锤子，就会把什么问题都看成钉子。</strong></p>
+<h2 id="languageadapter-mei-chong-yu-yan-zi-ji-ding-yi-shen-me-shi-wen-ti">LanguageAdapter：每种语言自己定义"什么是问题"</h2>
+<p>garbage-code-hunter 的解决方案是 <code>LanguageAdapter</code> trait。它定义了一组语义方法，每种语言各自实现：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/mod.rs:78-94</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub trait</span><span style="color: #F9E2AF;font-style: italic;"> LanguageAdapter</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Send</span><span style="color: #94E2D5;"> +</span><span style="color: #F9E2AF;font-style: italic;"> Sync</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> language</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_panic_calls</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> extract_functions</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">FunctionNode</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> max_nesting_depth</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_naming_violations</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_deeply_nested_blocks</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_debug_calls</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_excessive_params</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> threshold</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_unsafe_blocks</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_magic_numbers</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_goroutine_spawns</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> count_defer_in_loop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... ~20 个方法，大部分有默认实现返回 0</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>关键设计：<strong>方法名是语义的，实现是语言特定的。</strong> <code>count_panic_calls</code> 这个名字表达的是"统计会导致程序崩溃的调用"，但每种语言里"崩溃"的含义不同。</p>
+<p>Rust adapter 匹配的是 <code>.unwrap()</code> 和 <code>panic!()</code> 宏：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/rust.rs:150-175</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> count_panic_from_batch</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    batch</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">QueryCapture</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> test_ranges</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> cfg_test_ranges</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>file</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">content</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> count</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> m</span><span style="color: #CBA6F7;"> in</span><span> batch</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> c</span><span style="color: #CBA6F7;"> in</span><span> m</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span style="color: #9399B2;"> (</span><span>c</span><span style="color: #94E2D5;">.</span><span>name </span><span style="color: #94E2D5;">==</span><span style="color: #A6E3A1;"> &quot;pc_method&quot;</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> c</span><span style="color: #94E2D5;">.</span><span>text </span><span style="color: #94E2D5;">==</span><span style="color: #A6E3A1;"> &quot;unwrap&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                ||</span><span style="color: #9399B2;"> (</span><span>c</span><span style="color: #94E2D5;">.</span><span>name </span><span style="color: #94E2D5;">==</span><span style="color: #A6E3A1;"> &quot;pc_m&quot;</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                    &amp;&amp;</span><span style="color: #89B4FA;font-style: italic;"> matches!</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #94E2D5;">.</span><span>text</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;panic&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;assert&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;assert_eq&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;assert_ne&quot;</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">                // 排除 #[cfg(test)] 模块里的调用</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                let</span><span> byte_offset</span><span style="color: #94E2D5;"> =</span><span> c</span><span style="color: #94E2D5;">.</span><span>node</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">start_byte</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                if</span><span> test_ranges</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">any</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|&amp;</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">,</span><span> e</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">|</span><span> byte_offset</span><span style="color: #94E2D5;"> &gt;=</span><span> s</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> byte_offset</span><span style="color: #94E2D5;"> &lt;</span><span> e</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                    continue</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span>                count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    count</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Python adapter 匹配的是 <code>bare except</code> 和 <code>except BaseException</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/python.rs:297-320</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> count_panic_from_batch</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    _file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    batch</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">QueryCapture</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> count</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> m</span><span style="color: #CBA6F7;"> in</span><span> batch</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> c</span><span style="color: #CBA6F7;"> in</span><span> m</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> c</span><span style="color: #94E2D5;">.</span><span>name </span><span style="color: #94E2D5;">==</span><span style="color: #A6E3A1;"> &quot;pc_clause&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> c</span><span style="color: #94E2D5;">.</span><span>node</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">child_by_field_name</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;value&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                    if let</span><span style="color: #F9E2AF;font-style: italic;"> Ok</span><span style="color: #9399B2;">(</span><span>vtext</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> value</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">utf8_text</span><span style="color: #9399B2;">(</span><span>_file</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">content</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">as_bytes</span><span style="color: #9399B2;">()) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                        if</span><span> vtext</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;BaseException&quot;</span><span style="color: #94E2D5;"> ||</span><span> vtext</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;Exception&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                            count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">                    // bare except — 没有 value 子节点</span></span>
+<span class="giallo-l"><span>                    count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    count</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Go adapter 匹配的是 <code>panic()</code> 函数调用：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/go.rs:138-147</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> count_panic_from_batch</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    _file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    batch</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">QueryCapture</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    batch</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">filter</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>m</span><span style="color: #94E2D5;">|</span><span> m</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">any</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>c</span><span style="color: #94E2D5;">|</span><span> c</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">name </span><span style="color: #94E2D5;">==</span><span style="color: #A6E3A1;"> &quot;pc_fn&quot;</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span style="color: #89B4FA;font-style: italic;">count</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>三种语言，同一个方法名，三种完全不同的匹配逻辑。<strong>adapter 不是翻译层，是语义层。</strong> 它回答的不是"这个语法结构叫什么"，而是"这个行为在当前语言里意味着什么"。</p>
+<h2 id="san-ceng-jia-gou">三层架构</h2>
+<p>garbage-code-hunter 的架构分三层，每一层有明确的职责边界。</p>
+<p><strong>第一层：TreeSitter 引擎层</strong> (<code>src/treesitter/engine.rs</code>)</p>
+<p>通用 AST 解析，11 种语言共享一个 parser cache：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/treesitter/engine.rs:15-17</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> TreeSitterEngine</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    parsers</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Mutex</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Language</span><span style="color: #9399B2;">,</span><span> tree_sitter</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Parser</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>Mutex&lt;HashMap&lt;Language, Parser&gt;&gt;</code> 保证了线程安全——rayon 并行分析时，多个线程可能同时请求不同语言的 parser。引擎层只负责"把源代码变成 AST"，不关心语义。</p>
+<p><strong>第二层：LanguageAdapter 层</strong> (<code>src/language/adapter/*.rs</code>)</p>
+<p>每种语言一个 adapter 文件，定义"什么算 panic"、"什么算命名违规"、"什么算 debug 调用"。dispatch 逻辑很朴素：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/mod.rs:488-503</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> adapter_for</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">lang</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #CBA6F7;"> dyn</span><span style="color: #F9E2AF;font-style: italic;"> LanguageAdapter</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span> lang</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Rust</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">RustAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Python</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">PythonAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Go</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">GoAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">JavaScript</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">JSAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Ruby</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">RubyAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">TypeScript</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">TSAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Java</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">JavaAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">C</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">CAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cpp</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">CppAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Swift</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">SwiftAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Zig</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">ZigAdapter</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> None</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>第三层：Style IR 层</strong> (<code>src/style_ir/mod.rs</code>)</p>
+<p>语言中立的事实表示：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/style_ir/mod.rs:57-133</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> StyleIr</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> language</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> line_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> functions</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">FunctionNode</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> panic_call_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // Rust: unwrap/panic!, Python: bare except</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> naming_violation_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // 每种语言规则不同</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> deeply_nested_block_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> debug_call_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">         // println! / print() / console.log</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> excessive_param_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> unsafe_block_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> magic_number_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> commented_out_lines</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> todo_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> goroutine_spawn_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // Go 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> defer_in_loop_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Go 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> go_convention_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Go 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> python_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Python 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> java_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // Java 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> ruby_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // Ruby 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> c_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">           // C/C++ 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> ts_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">          // TypeScript 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> js_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">          // JavaScript 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> swift_issue_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // Swift 专属</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> dead_code_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> duplicate_import_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>StyleIr 的设计原则是<strong>存事实，不存判断</strong>。<code>panic_call_count</code> 是一个数字，不是"这个代码有问题"的判断。判断留给上层的信号检测系统。</p>
+<div class="mermaid-direct" data-series="decision-archaeology" data-name="graph.mmd">
+flowchart TD
+    A[源代码文件] --> B[TreeSitter 解析]
+    B --> C[ParsedFile AST]
+    C --> D[adapter_for language]
+    D --> E[adapter.compute_all]
+    E --> F[StyleIr 语言中立事实层]
+    F --> G[SignalDetector 10 种信号]
+    G --> H[CodeScorer 对数评分]
+</div><h2 id="pi-liang-cha-xun-you-hua">批量查询优化</h2>
+<p>每个 adapter 通过 <code>query_patterns()</code> 声明自己的 tree-sitter 查询模式。Rust adapter 有 10 个 pattern，Python adapter 有 9 个，Go adapter 有 10 个。11 种语言加起来大约 100 个 pattern。</p>
+<p>如果每个 pattern 单独执行一次 AST 遍历，100 个 pattern 就是 100 次遍历。对于大型项目（几万个文件），这是不可接受的。</p>
+<p>解决方案是 <code>collect_captures_multi</code>：把同一语言的所有 pattern 合并，在一次 cursor 遍历中收集所有匹配。每个 pattern 的 capture name 加前缀（<code>pc_</code> 表示 panic call，<code>nv_</code> 表示 naming violation，<code>dp_</code> 表示 debug call），避免不同 pattern 之间的命名冲突。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/language/adapter/mod.rs:278-304</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> compute_all</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> file</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">ParsedFile</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> AdapterCounts</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> batch</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">batch_captures</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">);</span><span style="color: #9399B2;font-style: italic;">  // 一次遍历，收集所有 pattern 的匹配</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    AdapterCounts</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        functions</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">extract_functions_from_batch</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>batch</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        panic_calls</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count_panic_from_batch</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>batch</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        naming_violations</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count_naming_from_batch</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>batch</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        deeply_nested_blocks</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count_deeply_nested_blocks</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        debug_calls</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count_debug_from_batch</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>batch</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        excessive_params</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">count_excessive_from_batch</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>batch</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // ... 所有计数都从同一个 batch 结果里提取</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这个优化把 100 次 AST 遍历变成了 11 次（每种语言一次）。在实际测试中，分析一个包含 5 万行代码的项目，TreeSitter 解析阶段的时间占比从 60% 降到了 25%——因为 adapter 层的查询不再重复遍历 AST。</p>
+<h2 id="xin-hao-jian-ce-cong-shi-shi-dao-pan-duan">信号检测：从事实到判断</h2>
+<p>StyleIr 存的是事实，但用户需要的是判断。信号检测系统 (<code>src/signals.rs</code>) 负责这个转换。</p>
+<p>10 个 <code>SignalDetector</code>，每个从 StyleIr 读取事实，输出信号分数：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/signals.rs:138-150</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> StyleSignal</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Duplication</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // 重复代码</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    PanicAddiction</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // 恐慌成瘾</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    NamingChaos</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // 命名混乱</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    NestedHell</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // 嵌套地狱</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HotfixCulture</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // 热修复文化</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OverEngineering</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // 过度工程</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CodeSmells</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // 代码异味</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    LegacyCode</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // 遗留代码</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    TodoMountain</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // 待办堆积</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    LineCountSmell</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // 文件过长</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>每个 detector 读取 StyleIr 的一个或多个字段，输出原始违规计数。然后通过密度公式转换为分数：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/signals.rs:82-86</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> violations_to_score</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> total_lines</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> f64</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> k_lines</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> (</span><span>total_lines</span><span style="color: #CBA6F7;"> as f64</span><span style="color: #94E2D5;"> /</span><span style="color: #FAB387;"> 1000</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">max</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">001</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> density</span><span style="color: #94E2D5;"> =</span><span> count</span><span style="color: #CBA6F7;"> as f64</span><span style="color: #94E2D5;"> /</span><span> k_lines</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    ((</span><span>density</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">log2</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 6</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">min</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">25</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这个公式的设计意图是：分数随密度对数增长，上限 25 分。一个 1000 行的文件有 1 个 <code>unwrap()</code> 调用，密度是 1.0，分数是 <code>(1.0 + 1.0).log2() * 6.0 = 6.0</code>。有 10 个 <code>unwrap()</code>，密度是 10.0，分数是 <code>(10.0 + 1.0).log2() * 6.0 ≈ 20.7</code>。有 100 个，分数触及 25.0 上限。</p>
+<p><strong>对数函数保证了边际递减：</strong> 从 0 到 1 个问题的分数增长，远大于从 100 到 101 个问题的增长。这避免了"问题数量线性映射到分数"导致的极端情况——一个有 1000 个 <code>unwrap()</code> 的 10 万行文件不应该得 1000 分。</p>
+<p>多个信号分数组合后，系统会生成一个 StyleProfile，将数字转化为可读的人格特征。当某个信号的分数 &gt;= 12.0 时，它成为主导信号，生成单一人格标签——比如 PanicAddiction 主导时标记为 "The Copy-Paste Artist"，Duplication 主导时标记为 "The YOLO Engineer"。当多个信号都 &gt;= 6.0 但没有单一主导时，系统组合出复合人格，比如 PanicAddiction + HotfixCulture 组合成 "The Startup Survivor"。如果所有信号都低于 6.0，则标记为 "The Enterprise Bureaucrat"——代码没有明显问题，但也缺乏活力。这套推断系统让开发者看到的不是一堆数字，而是一个有性格的代码画像。</p>
+<h2 id="xing-ye-dui-bi">行业对比</h2>
+<p>跨语言代码质量分析，行业里有三种主流方案：</p>
+<table><thead><tr><th>方案</th><th>代表</th><th>优势</th><th>问题</th></tr></thead><tbody>
+<tr><td>每种语言独立工具</td><td>ESLint + Pylint + Clippy</td><td>各自最优，规则最准</td><td>无法跨语言比较，报告格式不统一</td></tr>
+<tr><td>统一规则引擎</td><td>SonarQube</td><td>一套规则跑所有语言，部署简单</td><td>规则粒度粗，误报多，语言特性被抹平</td></tr>
+<tr><td>AST 适配器 + 统一 IR</td><td>garbage-code-hunter</td><td>跨语言可比，每种语言语义准确</td><td>IR 设计是关键瓶颈，扩展新维度成本高</td></tr>
+</tbody></table>
+<p>ESLint + Pylint + Clippy 的组合是最精准的，但你无法回答"这个 Rust 项目的代码质量和那个 Python 项目相比怎么样"——因为它们的评分标准完全不同。SonarQube 解决了可比性问题，但代价是规则粒度粗糙：它把所有语言的问题都塞进同一套"Bug / Vulnerability / Code Smell"分类里，丢失了语言特有的语义。</p>
+<p>garbage-code-hunter 选择的路线是：<strong>用 adapter 层保留语言语义，用 StyleIr 层建立可比性基础。</strong> <code>panic_call_count</code> 在 Rust 里是 <code>unwrap()</code> + <code>panic!()</code>，在 Python 里是 <code>bare except</code>，在 Go 里是 <code>panic()</code>——它们都是"程序可能在运行时崩溃"的信号，只是表现形式不同。</p>
+<p>这条路的代价是 IR 设计。StyleIr 的 30 个字段不是拍脑袋决定的，每一个都要回答一个问题：这个维度在不同语言里是否有可比的语义？<code>unsafe_block_count</code> 只对 Rust 有意义，所以它在 StyleIr 里是一个独立字段，不参与跨语言比较。<code>panic_call_count</code> 对所有语言都有意义，所以它是核心字段。</p>
+<h2 id="ru-guo-jin-tian-zhong-xin-she-ji">如果今天重新设计</h2>
+<p>考古到这里，有三件事会做得不一样。</p>
+<p><strong>第一，LanguageAdapter trait 应该拆成子 trait。</strong> 当前的 trait 有 ~20 个方法，大部分默认返回 0。Go adapter 不需要 <code>count_unsafe_blocks</code>，Rust adapter 不需要 <code>count_goroutine_spawns</code>，但它们都被迫实现（或者依赖默认的空实现）。应该拆成 <code>BaseAdapter + NamingAdapter + SafetyAdapter + ComplexityAdapter + GoSpecificAdapter</code>，每个 adapter 按需组合。这样新增一种语言时，只需要实现它实际关心的子 trait。</p>
+<p><strong>第二，StyleIr 的字段应该结构化。</strong> 当前 30 个字段是扁平的，没有分组。<code>go_convention_count</code>、<code>python_issue_count</code>、<code>java_issue_count</code> 这些语言专属字段和 <code>panic_call_count</code>、<code>naming_violation_count</code> 这些通用字段混在一起。应该用嵌套 struct：<code>naming: NamingFacts</code>、<code>safety: SafetyFacts</code>、<code>complexity: ComplexityFacts</code>、<code>lang_specific: LanguageSpecificFacts</code>。这样上层代码可以按维度读取，不用在 30 个字段里找自己需要的。</p>
+<p><strong>第三，跨语言可比性需要"语言置信度"。</strong> Python 的 <code>panic_call_count</code> 和 Rust 的 <code>panic_call_count</code> 真的可比吗？Rust 的 <code>unwrap()</code> 是显式选择——开发者写下了 <code>.unwrap()</code> 这四个字符。Python 的 <code>bare except</code> 可能是疏忽，也可能是有意为之（比如在脚本里快速捕获所有异常）。同一个数字，在不同语言里的"问题严重程度"不同。应该在 IR 层标注一个"语言置信度"系数，让评分系统知道：Rust 的 <code>panic_call_count = 5</code> 和 Python 的 <code>panic_call_count = 5</code> 不应该得到相同的分数。具体来说，可以为每种语言的 <code>panic_call_count</code> 设定一个置信度系数：Rust 的 <code>unwrap()</code> 系数为 1.0（显式选择，问题明确），Python 的 <code>bare except</code> 系数为 0.7（可能是疏忽，也可能是有意为之），Go 的 <code>panic()</code> 系数为 0.9（社区惯例明确，但使用场景多样）。这样，当 Rust 和 Python 的 <code>panic_call_count</code> 都是 5 时，评分会分别为 5.0 和 3.5，更准确地反映实际风险。</p>
+<p>工具的暴政不在于工具本身，而在于使用者忘记了工具的边界。garbage-code-hunter 的三层架构是一个尝试——用 adapter 层承认每种语言的独特性，用 StyleIr 层建立跨语言的可比性，用信号检测层把事实转化为判断。这个尝试不完美，但它至少问对了问题：<strong>不是"这个代码有没有问题"，而是"在这个语言的语境下，这个行为意味着什么"。</strong></p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/05-guarding-dangerous-boundaries/">危险边界的守卫</a> -- OmniScope 的 FFI 审计 + memscope-rs 的 Memory Passport：跨语言内存安全的两种守卫方式。</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/05-guarding-dangerous-boundaries/">危险边界的守卫</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory-safety/">#Memory Safety</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/zig/">#Zig</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="wei-xian-bian-jie-de-shou-wei">危险边界的守卫</h1>
+<blockquote>
+<p><strong>Problem</strong>: Rust 的 borrow checker 保证了 safe 代码的内存安全，但 unsafe 块和 FFI 调用打破了这个保证。一块内存从 Rust 交给 C，再从 C 交回 Rust——中间发生了什么？谁能保证这段旅程是安全的？</p>
+</blockquote>
+<p>Rust 的内存安全模型建立在一个清晰的信任边界上：safe 代码由编译器担保，unsafe 代码由程序员担保。问题在于，真实世界的 Rust 程序不可能只用 safe 代码。系统编程必然涉及 unsafe 块，跨语言交互必然经过 FFI 边界。当一块 <code>Vec&lt;u8&gt;</code> 通过 <code>into_raw()</code> 交到 C 库手上时，borrow checker 的管辖权就到此为止了。</p>
+<p>这条边界是内存安全的最大盲区。两个项目从不同角度守卫它：OmniScope 在编译后的 LLVM IR 层做静态分析，memscope-rs 在运行时追踪内存的完整生命周期。一个在事前审查，一个在事中监控。</p>
+<h2 id="an-quan-de-bian-jie-zai-na-li">安全的边界在哪里</h2>
+<p>Rust 编译器对 safe 代码的保证是绝对的——不存在 use-after-free，不存在 data race。但这个保证有严格的适用范围。一旦进入 unsafe 块，程序员接管了安全责任：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/ffi/bridge.rs</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">unsafe fn</span><span style="color: #89B4FA;font-style: italic;"> pass_to_c</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">data</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">mut u8</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> len</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 从这一刻起，编译器不再追踪 data 的生命周期</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    c_library_process</span><span style="color: #9399B2;">(</span><span>data</span><span style="color: #9399B2;">,</span><span> len</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 如果 C 那边提前释放了这块内存？</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 如果 C 持有了这个指针，但 Rust 这边 drop 了 Vec？</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这不是假设性的问题。FFI 边界的 bug 是最难调试的——它们表现为随机的段错误、数据损坏、或者安静的内存泄漏，而且往往在生产环境中才暴露。</p>
+<h2 id="omniscope-de-zone-fen-lei-bu-zuo-shen-me-bi-zuo-shen-me-geng-zhong-yao">OmniScope 的 Zone 分类：不做什么比做什么更重要</h2>
+<p>OmniScope 的第一个设计决策不是"怎么检测问题"，而是"在哪里检测"。Zone 分类系统决定了分析器关注什么、忽略什么：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/types/zone_types.zig:13-31</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub const</span><span> ZoneKind</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> enum</span><span>(</span><span style="color: #CBA6F7;">u8</span><span>) {</span></span>
+<span class="giallo-l"><span>    safe</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">              // 语言保证生效，跳过分析</span></span>
+<span class="giallo-l"><span>    unsafe</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">            // 显式安全逃逸，高优先级</span></span>
+<span class="giallo-l"><span>    ffi</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">               // 跨语言调用，最高优先级</span></span>
+<span class="giallo-l"><span>    runtime_internal</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // 标准库/运行时，跳过</span></span>
+<span class="giallo-l"><span>    unknown</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">           // 需要分类</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p>五个枚举值背后是一条信任链：safe zone 由编译器保证，runtime_internal 由语言实现保证（假设标准库是正确的），只有 unsafe、ffi、unknown 才需要人工审查。</p>
+<p>这个分类通过一个 gate 函数转化为分析策略：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/pass/analysis/pass.zig:360-367</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> shouldAnalyzeZone</span><span>(zone</span><span style="color: #94E2D5;">:</span><span> ZoneKind) </span><span style="color: #CBA6F7;">bool</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> !</span><span>PassContext</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">shouldAnalyzeZone</span><span>(</span><span style="color: #94E2D5;">.</span><span>safe) </span><span style="color: #CBA6F7;">and</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">           !</span><span>PassContext</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">shouldAnalyzeZone</span><span>(</span><span style="color: #94E2D5;">.</span><span>runtime_internal)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 只分析 .unknown, .unsafe, .ffi</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>跳过 safe zone 不仅是性能优化，更是一种设计哲学：信任语言的保证，只关注语言保证失效的地方。这和安全工程中的"最小信任面"原则一致——你审查的范围越小，审查的质量越高。</p>
+<h2 id="dangersurface-cong-wei-xian-biao-mian-xiang-wai-zhui-zong">DangerSurface：从危险表面向外追踪</h2>
+<p>传统的静态分析是"扫描所有节点"，这在大型代码库上代价高昂。OmniScope 的 DangerSurface 算法做了一个关键转变：从危险表面出发，只追踪与危险相关的路径。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/pass/analysis/danger_surface.zig:31-258</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 核心逻辑（简化）：</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 1. 收集所有 danger surfaces —— FFI boundary 上的 CrossLangEdge</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 2. 如果没有 FFI 边界，early return（整个程序没有跨语言调用）</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 3. 对每个 surface，通过 call_arg/call_ret 边找到关联的指针</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 4. 只检查那些在 danger path 上的指针</span></span></code></pre>
+<p>这个算法的复杂度从 O(N x B)（N 个节点 x B 个边界）降到 O(E x avg_args)（E 条边 x 平均参数数量）。对于一个只有少量 FFI 调用但大量 safe Rust 代码的项目，这个差距是数量级的。</p>
+<p>决策的核心洞察是：危险不在于内存本身，而在于内存跨越边界的行为。一块分配在 Rust 堆上、从未离开 Rust 管辖的内存，不需要任何审查。只有那些穿过 FFI 边界的指针才是真正的"危险表面"。</p>
+<h2 id="rust-ffi-auditor-10-tiao-gui-ze">Rust FFI Auditor：10 条规则</h2>
+<p>OmniScope 的 Rust FFI Auditor 实现了 10 条专门针对 Rust-C 交互的规则。这些规则不是凭空想象的——每一条都对应着真实世界中反复出现的 bug 模式。</p>
+<p>Rust 专有规则覆盖了 <code>into_raw</code>/<code>from_raw</code> 的配对、<code>as_ptr</code> 的借用逃逸、跨语言 alloc/free 不匹配、所有权转移协议、以及 <code>as_ptr</code> 悬垂检测。通用 FFI 规则则处理 unsafe 块中的 FFI 调用、栈地址逃逸、回调所有权、const 指针写入、以及 use-after-free。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/pass/analysis/rust_ffi/rust_ffi_auditor.zig:60-340</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Fast path: 只有 FFI 候选函数才进入完整审计</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span> is_ffi_candidate</span><span style="color: #94E2D5;"> =</span><span> fir</span><span style="color: #94E2D5;">.</span><span>calls</span><span style="color: #94E2D5;">.</span><span>len</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #CBA6F7;"> or</span></span>
+<span class="giallo-l"><span>    ctx</span><span style="color: #94E2D5;">.</span><span>rust_into_raw_set</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span>(func_name) </span><span style="color: #CBA6F7;">or</span></span>
+<span class="giallo-l"><span>    ctx</span><span style="color: #94E2D5;">.</span><span>rust_from_raw_set</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span>(func_name)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> (</span><span style="color: #94E2D5;">!</span><span>is_ffi_candidate) </span><span style="color: #CBA6F7;">return</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p>Fast path 的设计值得注意：通过检查函数是否包含 FFI 调用、是否使用 <code>into_raw</code>/<code>from_raw</code>，快速跳过大量无关函数。这是 DangerSurface 思路的延续——只在必要的地方做必要的工作。</p>
+<p>Rule 3（跨语言 alloc/free 不匹配）是一个典型的例子。Rust 分配的内存必须由 Rust 释放，C 分配的内存必须由 C 释放。混用会导致堆损坏，而且往往不会立即崩溃——它安静地腐蚀着程序的状态，直到某个不相关的操作触发段错误。</p>
+<p>但最常见的 FFI bug 其实来自 Rule 1 和 Rule 2。Rule 1 检测 <code>into_raw</code>/<code>from_raw</code> 的配对：<code>into_raw()</code> 将 <code>Vec</code> 或 <code>Box</code> 的所有权转移给 C 侧，返回一个裸指针，同时 Rust 放弃了这块内存的管理权。如果 C 侧从未调用对应的释放函数，或者调用了 <code>free()</code> 而不是 Rust 的 <code>from_raw()</code>，这块内存就永远无法被回收——一个安静的泄漏。Rule 2 检测 <code>as_ptr</code> 的借用逃逸：<code>as_ptr()</code> 返回的是一个借用指针，底层 <code>Vec</code> 仍然由 Rust 拥有。如果 Rust 侧的 <code>Vec</code> 在 C 仍然持有这个指针时被 drop，C 侧就持有了一个悬垂指针——经典的 use-after-free。这两类 bug 的共同特征是它们完全合法地通过编译，Rust 编译器无法判断一个裸指针在 C 侧的使用是否安全，它们是纯粹的逻辑错误，只能通过静态规则匹配或运行时追踪来发现。在实践中，开发者经常混淆这两个 API 的语义——<code>into_raw</code> 是所有权转移，<code>as_ptr</code> 是临时借用，选错一个就意味着要么泄漏、要么悬垂，而编译器对此完全沉默。</p>
+<h2 id="memscope-rs-de-memory-passport-yun-xing-shi-sheng-ming-zhou-qi-zhui-zong">memscope-rs 的 Memory Passport：运行时生命周期追踪</h2>
+<p>OmniScope 在编译时审查 FFI 边界，memscope-rs 则在运行时追踪每一块跨过边界的内存。它的核心抽象是 Memory Passport——一块内存的"护照"，记录了它从分配到释放的完整旅程。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/analysis/memory_passport_tracker.rs:15-54</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> MemoryPassport</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> passport_id</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> allocation_ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> lifecycle_events</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">PassportEvent</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> status_at_shutdown</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PassportStatus</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> PassportStatus</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FreedByRust</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HandoverToFfi</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // 交给 C 了</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FreedByForeign</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // C 帮忙释放了</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ReclaimedByRust</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // 从 C 要回来了</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    InForeignCustody</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // 交给 C 了但没释放 → 泄漏</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Unknown</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>六种状态覆盖了内存跨 FFI 边界的所有可能命运。其中 <code>InForeignCustody</code> 是最关键的——它意味着一块内存被交给了 C，但既没有被 C 释放，也没有被 Rust 回收。这是一个确定的泄漏。</p>
+<p>状态机的实现简洁而精确：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// src/analysis/memory_passport_tracker.rs:705-739</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> determine_final_status</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> events</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">PassportEvent</span><span style="color: #9399B2;">])</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> PassportStatus</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> has_handover</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> false</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> has_reclaim</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> false</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> has_foreign_free</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> false</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> event</span><span style="color: #CBA6F7;"> in</span><span> events</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        match</span><span> event</span><span style="color: #94E2D5;">.</span><span>event_type </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PassportEventType</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HandoverToFfi</span><span style="color: #94E2D5;"> =&gt;</span><span> has_handover</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> true</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PassportEventType</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ReclaimedByRust</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                has_reclaim</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> true</span><span style="color: #9399B2;">;</span><span> has_handover</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> false</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PassportEventType</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">FreedByForeign</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                has_foreign_free</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> true</span><span style="color: #9399B2;">;</span><span> has_handover</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> false</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span>            _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> has_handover</span><span style="color: #94E2D5;"> &amp;&amp; !</span><span>has_reclaim</span><span style="color: #94E2D5;"> &amp;&amp; !</span><span>has_foreign_free</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        PassportStatus</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InForeignCustody</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span><span style="color: #CBA6F7;"> else if</span><span> has_foreign_free</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        PassportStatus</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">FreedByForeign</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span><span style="color: #CBA6F7;"> else if</span><span> has_reclaim</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        PassportStatus</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ReclaimedByRust</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        PassportStatus</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">FreedByRust</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>注意 <code>has_handover = false</code> 的重置逻辑——每次 reclaim 或 foreign free 都会"关闭"当前的 handover 周期。这处理了同一块内存多次跨越 FFI 边界的场景。</p>
+<h2 id="liang-chong-shou-wei-de-hu-bu">两种守卫的互补</h2>
+<p>OmniScope 和 memscope-rs 不是竞争关系，它们覆盖了互补的维度：</p>
+<table><thead><tr><th>维度</th><th>OmniScope (静态分析)</th><th>memscope-rs (运行时追踪)</th></tr></thead><tbody>
+<tr><td>检测时机</td><td>编译后 / IR 层</td><td>运行时</td></tr>
+<tr><td>覆盖范围</td><td>FFI 边界全覆盖</td><td>真实路径全覆盖</td></tr>
+<tr><td>误报率</td><td>可能有（路径不可达）</td><td>低（实际执行到了）</td></tr>
+<tr><td>漏报率</td><td>可能有（动态生成的 FFI）</td><td>可能有（未执行到的路径）</td></tr>
+<tr><td>性能影响</td><td>零运行时开销</td><td>有运行时开销</td></tr>
+<tr><td>最佳场景</td><td>CI / code review</td><td>开发 / 测试</td></tr>
+</tbody></table>
+<p>静态分析的优势是覆盖率——它看到所有代码路径，包括那些运行时不会触发的边界情况。运行时追踪的优势是精确性——它只报告真实发生的事件，不会有误报。</p>
+<p>考虑一个具体场景：一个 Rust 库封装了 C 的图像处理库，通过 <code>into_raw()</code> 将像素缓冲区交给 C 函数进行滤镜运算，然后期望 C 通过回调释放缓冲区。OmniScope 在 CI 阶段扫描 LLVM IR，发现 <code>into_raw()</code> 的返回值没有对应的 <code>from_raw()</code> 回收路径，标记为 Rule 1 违规——但此时你还不知道这个路径在真实执行中是否会被触发。memscope-rs 在集成测试中运行同一段代码，追踪到缓冲区的 Passport 状态最终停留在 <code>InForeignCustody</code>，确认泄漏真实发生。只有两者配合，才能从"可能存在风险"推进到"确认存在 bug"，然后定位到具体的函数和调用栈。</p>
+<h2 id="shuang-tong-dao-jian-ce">双通道检测</h2>
+<div class="mermaid-direct" data-series="decision-archaeology" data-name="graph.mmd">
+flowchart LR
+    A[内存跨越 FFI 边界] --> B{检测方式}
+    B --> C[编译时：OmniScope]
+    B --> D[运行时：memscope-rs]
+    C --> E[Zone 分类]
+    E --> F{在哪个 zone？}
+    F -->|safe| G[跳过]
+    F -->|ffi/unsafe| H[10 条规则检查]
+    D --> I[Passport 追踪]
+    I --> J{生命周期事件}
+    J -->|Handover → Reclaim| K[安全]
+    J -->|Handover → 无后续| L[泄漏]
+</div>
+<p>两条通道在 CI 和开发环境中交替运行：OmniScope 在每次提交时扫描，确保没有新的 FFI 风险引入；memscope-rs 在集成测试中运行，捕获那些只有特定执行路径才会触发的生命周期问题。实际工作流中，开发者先通过 OmniScope 的 CI 检查获得一份 FFI 风险报告，然后在本地用 memscope-rs 对报告中的高风险点做针对性验证。这个流程把静态分析的广度和运行时追踪的深度结合在一起——前者告诉你哪里可能有问题，后者告诉你问题是否真的会发生。单独依赖任何一方都会有盲区：只做静态分析，你会被误报淹没；只做运行时追踪，你会漏掉那些未被测试覆盖的路径。</p>
+<h2 id="ru-guo-jin-tian-zhong-xin-she-ji">如果今天重新设计</h2>
+<p>回溯这些决策，有三件事值得重新考虑。</p>
+<p><strong>OmniScope 的 PassContext 过于庞大。</strong> 它是一个 50+ 字段的巨大 struct，所有 pass 共享。这导致了隐式的依赖关系——你不知道一个 pass 读了哪些数据、写了哪些数据。更好的设计是让每个 pass 显式声明它的读/写依赖，用类型系统强制隔离。</p>
+<p><strong>memscope-rs 的 Passport 存储可能成为瓶颈。</strong> 所有 passport 存在一个 <code>Arc&lt;Mutex&lt;HashMap&gt;&gt;</code> 中。在高频分配场景下（比如解析器或网络服务器），这个锁竞争会成为性能问题。<code>DashMap</code> 或分片锁是更合适的选择。</p>
+<p><strong>两个项目应该互相利用。</strong> OmniScope 的静态分析结果可以指导 memscope-rs 的运行时追踪——只对静态分析标记为高风险的 FFI 边界启用运行时追踪，大幅减少运行时开销。反过来，memscope-rs 发现的真实 bug 可以反馈给 OmniScope，作为规则优化的依据。具体实现上，OmniScope 的 FFI Auditor 可以在分析完成后输出一份 <code>high_risk_ffi.json</code>，包含每个高风险调用点的文件路径、函数名、违规规则编号和风险等级。memscope-rs 启动时读取这份清单，在 <code>MemoryPassportTracker</code> 中只为清单上的 FFI 边界启用 Passport 追踪，其余边界只做轻量级的 alloc/free 计数。这样运行时开销从"追踪所有跨边界的内存"降到"只追踪静态分析怀疑有问题的那几个点"，在生产环境的性能开销可以忽略不计，同时保留了对关键边界的完整可观测性。</p>
+<p>这不是事后诸葛亮——这些想法在设计阶段都讨论过，但被"先让它工作"的优先级压下去了。这是工程中常见的权衡：完美设计和可交付产品之间的距离，往往就是这些被推迟的重构和技术债务。</p>
+<hr />
+<p><em>系列完结。五篇文章，五个项目的决策回溯。抽象、并发、错误处理、工具设计、安全边界——每个决策背后都有一个信任模型在起作用。</em></p>
+
+        </div>
+
+                </div>
+            <div class="pagination">
+                <div class="pagination__buttons"></div>
+            </div>
+        </div>
+        
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+</body>
+
+</html>

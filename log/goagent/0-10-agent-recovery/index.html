@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>GoAgent Source Deep Dive 10: Agent Crash Recovery | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="## The Problem: How Does the System Survive Agent Failure">
+
+    <meta property="og:description" content="## The Problem: How Does the System Survive Agent Failure">
+    <meta property="og:title" content="GoAgent Source Deep Dive 10: Agent Crash Recovery | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/goagent/0-10-agent-recovery/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="## The Problem: How Does the System Survive Agent Failure">
+    <meta name="twitter:title" content="GoAgent Source Deep Dive 10: Agent Crash Recovery | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/goagent/0-10-agent-recovery/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/0-10-agent-recovery/">GoAgent Source Deep Dive 10: Agent Crash Recovery</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="agent-crash-recovery">Agent Crash Recovery</h1>
+<p>When an agent crashes in GoAgentX, the Runtime detects it, creates a fresh instance, replays events to restore operational state, and loads conversation history from the memory store. The agent resumes with full context -- as if nothing happened.</p>
+<h2 id="recovery-architecture">Recovery Architecture</h2>
+<p>The recovery system operates across five layers:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
+<span class="giallo-l"><span>    subgraph runtime [&quot;Runtime Layer&quot;]</span></span>
+<span class="giallo-l"><span>        RT[Runtime Manager]</span></span>
+<span class="giallo-l"><span>        RT --&gt;|&quot;detects death&quot;| HC[Health Checker]</span></span>
+<span class="giallo-l"><span>        RT --&gt;|&quot;triggers restore&quot;| RA[RestoreAgent]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph detection [&quot;Death Detection&quot;]</span></span>
+<span class="giallo-l"><span>        HC --&gt;|&quot;panic recovery&quot;| PANIC[Panic Handler]</span></span>
+<span class="giallo-l"><span>        HC --&gt;|&quot;Start() error&quot;| STARTERR[Start Error Handler]</span></span>
+<span class="giallo-l"><span>        HC --&gt;|&quot;periodic check&quot;| TICKER[Health Ticker - 10s]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph recovery [&quot;Recovery Pipeline&quot;]</span></span>
+<span class="giallo-l"><span>        RA --&gt;|&quot;step 1&quot;| STOP[Stop Old Agent]</span></span>
+<span class="giallo-l"><span>        RA --&gt;|&quot;step 2&quot;| FACTORY[Factory Creates New Agent]</span></span>
+<span class="giallo-l"><span>        RA --&gt;|&quot;step 3&quot;| EVENTS[Replay Events from EventStore]</span></span>
+<span class="giallo-l"><span>        RA --&gt;|&quot;step 4&quot;| STATE[Build Cognitive State from MemoryManager]</span></span>
+<span class="giallo-l"><span>        RA --&gt;|&quot;step 5&quot;| START2[Register and Start New Agent]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph storage [&quot;Persistence Layer&quot;]</span></span>
+<span class="giallo-l"><span>        ES[(EventStore)]</span></span>
+<span class="giallo-l"><span>        MM[(MemoryManager)]</span></span>
+<span class="giallo-l"><span>        CP[(Checkpoint Store)]</span></span>
+<span class="giallo-l"><span>        ES --&gt;|&quot;operational state&quot;| EVENTS</span></span>
+<span class="giallo-l"><span>        MM --&gt;|&quot;session + messages&quot;| STATE</span></span>
+<span class="giallo-l"><span>        CP --&gt;|&quot;leader checkpoint&quot;| LEADER[Leader Failover]</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre><h2 id="how-an-agent-dies">How an Agent Dies</h2>
+<p>An agent can die in three ways. All are handled in <code>internal/runtime/manager.go</code>.</p>
+<h3 id="1-panic-during-execution">1. Panic During Execution</h3>
+<p>Each agent runs in a goroutine wrapped with <code>defer recover()</code>. When a panic is caught, it calls <code>NotifyAgentDead</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/runtime/manager.go:146-166</span></span>
+<span class="giallo-l"><span>m</span><span style="color: #9399B2;">.</span><span>g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> recover</span><span style="color: #9399B2;">();</span><span> r</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            slog</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Error</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;runtime: agent panicked in Start&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;agent_id&quot;</span><span style="color: #9399B2;">,</span><span> id</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;panic&quot;</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            )</span></span>
+<span class="giallo-l"><span>            m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NotifyAgentDead</span><span style="color: #9399B2;">(</span><span>id</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;panic: %v&quot;</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> agent</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Start</span><span style="color: #9399B2;">(</span><span>agentCtx</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> agentCtx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Err</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;font-style: italic;">  // intentional stop, do not resurrect</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span>        m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NotifyAgentDead</span><span style="color: #9399B2;">(</span><span>id</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;start failed: %v&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;font-style: italic;"> // do not propagate; runtime must keep running</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">})</span></span></code></pre><h3 id="2-start-returns-an-error">2. Start() Returns an Error</h3>
+<p>If <code>agent.Start()</code> returns a non-nil error and the context was not intentionally cancelled, <code>NotifyAgentDead</code> is called. The <code>agentCtx.Err() != nil</code> check distinguishes intentional stops from crashes.</p>
+<h3 id="3-health-check-failure">3. Health Check Failure</h3>
+<p>A background ticker runs every <code>HealthCheckInterval</code> (default 10s). It checks agents via two mechanisms:</p>
+<ul>
+<li><strong>Heartbeat</strong>: If the agent implements <code>base.Heartbeater</code>, the checker calls <code>IsAlive()</code>. The leader agent returns <code>true</code> only when status is <code>Ready</code> or <code>Busy</code>.</li>
+<li><strong>Status fallback</strong>: Otherwise, it checks <code>agent.Status()</code> for <code>Offline</code> or <code>Stopping</code>.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant Ticker as Health Ticker (10s)</span></span>
+<span class="giallo-l"><span>    participant Agent as Agent</span></span>
+<span class="giallo-l"><span>    participant Runtime as Runtime Manager</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    loop Every 10 seconds</span></span>
+<span class="giallo-l"><span>        Ticker-&gt;&gt;Agent: IsAlive() / Status()</span></span>
+<span class="giallo-l"><span>        alt Agent is alive</span></span>
+<span class="giallo-l"><span>            Agent--&gt;&gt;Ticker: true / Ready|Busy</span></span>
+<span class="giallo-l"><span>        else Agent is dead</span></span>
+<span class="giallo-l"><span>            Agent--&gt;&gt;Ticker: false / Offline</span></span>
+<span class="giallo-l"><span>            Ticker-&gt;&gt;Runtime: NotifyAgentDead(id, reason)</span></span>
+<span class="giallo-l"><span>        end</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre><h2 id="notifyagentdead-the-safety-gate">NotifyAgentDead -- The Safety Gate</h2>
+<p><code>NotifyAgentDead</code> is the central dispatch point. It runs under a write lock and performs several checks before triggering recovery:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    DEAD[Agent Death Detected] --&gt; LOCK[Acquire Write Lock]</span></span>
+<span class="giallo-l"><span>    LOCK --&gt; STOPPED{Was agent&lt;br&gt;intentionally stopped?}</span></span>
+<span class="giallo-l"><span>    STOPPED --&gt;|Yes| SKIP[Skip recovery]</span></span>
+<span class="giallo-l"><span>    STOPPED --&gt;|No| FACTORY{AgentFactory&lt;br&gt;exists?}</span></span>
+<span class="giallo-l"><span>    FACTORY --&gt;|No| WARN[Log warning, skip]</span></span>
+<span class="giallo-l"><span>    FACTORY --&gt;|Yes| LIMIT{Restart count&lt;br&gt;&lt; MaxRestartsPerAgent?}</span></span>
+<span class="giallo-l"><span>    LIMIT --&gt;|No| REFUSE[Log error, refuse recovery]</span></span>
+<span class="giallo-l"><span>    LIMIT --&gt;|Yes| INC[Increment restart counters]</span></span>
+<span class="giallo-l"><span>    INC --&gt; ASYNC[Launch RestoreAgent in errgroup]</span></span>
+<span class="giallo-l"><span>    ASYNC --&gt; TIMEOUT[&quot;Timeout: 60s&quot;]</span></span></code></pre>
+<p>The actual code from <code>internal/runtime/manager.go:416-454</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Manager</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> NotifyAgentDead</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> reason</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Write lock for check-and-increment to prevent TOCTOU race.</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>    factory</span><span style="color: #9399B2;">,</span><span> hasFactory</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span>factories</span><span style="color: #9399B2;">[</span><span>agentID</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>    ma</span><span style="color: #9399B2;">,</span><span> hasAgent</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span>agents</span><span style="color: #9399B2;">[</span><span>agentID</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>    intentionallyStopped</span><span style="color: #94E2D5;"> :=</span><span> hasAgent</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> ma</span><span style="color: #9399B2;">.</span><span>stopped</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> m</span><span style="color: #9399B2;">.</span><span>isStopped</span><span style="color: #94E2D5;"> ||</span><span> intentionallyStopped</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>hasFactory</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Check restart limit under the same lock.</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> hasAgent</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> m</span><span style="color: #9399B2;">.</span><span>config</span><span style="color: #9399B2;">.</span><span>MaxRestartsPerAgent</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;"> &amp;&amp;</span></span>
+<span class="giallo-l"><span>        ma</span><span style="color: #9399B2;">.</span><span>restarts</span><span style="color: #94E2D5;"> &gt;=</span><span> m</span><span style="color: #9399B2;">.</span><span>config</span><span style="color: #9399B2;">.</span><span>MaxRestartsPerAgent</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Increment BEFORE launching goroutine.</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> hasAgent</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        ma</span><span style="color: #9399B2;">.</span><span>restarts</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>totalRestarts</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... launch RestoreAgent via errgroup</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Key design: the restart limit check and increment happen under the same write lock. Two concurrent <code>NotifyAgentDead</code> calls could both pass the check under RLock, then both schedule <code>RestoreAgent</code>, exceeding the intended restart count.</p>
+<h2 id="the-restoreagent-pipeline">The RestoreAgent Pipeline</h2>
+<p><code>RestoreAgent</code> performs a five-step recovery:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant RT as Runtime Manager</span></span>
+<span class="giallo-l"><span>    participant Old as Old Agent</span></span>
+<span class="giallo-l"><span>    participant Factory as AgentFactory</span></span>
+<span class="giallo-l"><span>    participant ES as EventStore</span></span>
+<span class="giallo-l"><span>    participant MM as MemoryManager</span></span>
+<span class="giallo-l"><span>    participant New as New Agent</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;Old: Stop (cancel context, call Stop())</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;Factory: Create fresh instance</span></span>
+<span class="giallo-l"><span>    Factory--&gt;&gt;RT: new agent</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;ES: Read(agentID, MaxReplayEvents=10000)</span></span>
+<span class="giallo-l"><span>    ES--&gt;&gt;RT: event stream</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;RT: buildStateFromEvents -&gt; extract session_id</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;MM: GetLatestSessionForLeader + GetMessages</span></span>
+<span class="giallo-l"><span>    MM--&gt;&gt;RT: session + conversation history</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;New: RestoreState(state)</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;New: ReplayEvents(events)</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;New: Register + Start(ctx)</span></span>
+<span class="giallo-l"><span>    New--&gt;&gt;RT: Agent alive with restored context</span></span></code></pre><h3 id="step-1-stop-old-agent">Step 1: Stop Old Agent</h3>
+<p>The old agent is marked <code>stopped = true</code> under write lock, its context is cancelled, and <code>agent.Stop()</code> is called with a 10s timeout.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/runtime/manager.go:310-328</span></span>
+<span class="giallo-l"><span>m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>oldMA</span><span style="color: #9399B2;">,</span><span> oldExists</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span>agents</span><span style="color: #9399B2;">[</span><span>agentID</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> oldExists</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> oldMA</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    oldMA</span><span style="color: #9399B2;">.</span><span>stopped</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span>m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> oldExists</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> oldMA</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> oldMA</span><span style="color: #9399B2;">.</span><span>cancel</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        oldMA</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">cancel</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    stopCtx</span><span style="color: #9399B2;">,</span><span> stopCancel</span><span style="color: #94E2D5;"> :=</span><span> context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithTimeout</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> m</span><span style="color: #9399B2;">.</span><span>config</span><span style="color: #9399B2;">.</span><span>AgentStopTimeout</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> oldMA</span><span style="color: #9399B2;">.</span><span>agent</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Stop</span><span style="color: #9399B2;">(</span><span>stopCtx</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        slog</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Warn</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;runtime: restore stop old agent failed&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;agent_id&quot;</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;error&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    stopCancel</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="step-2-create-new-agent">Step 2: Create New Agent</h3>
+<p><code>AgentFactory</code> (a <code>func() base.Agent</code>) creates a fresh instance.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>newAgent</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> factory</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> newAgent</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;runtime: factory returned nil for agent %s&quot;</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="step-3-replay-events-operational-recovery">Step 3: Replay Events (Operational Recovery)</h3>
+<p>The <code>replayEvents</code> method reads the agent's event stream from the <code>EventStore</code>, using the agent ID as the stream ID. It reads up to 10,000 events in ascending order.</p>
+<h3 id="step-4-build-cognitive-state">Step 4: Build Cognitive State</h3>
+<p>Two sub-steps:</p>
+<ul>
+<li><code>buildStateFromEvents</code> extracts <code>session_id</code> from <code>EventSessionCreated</code> events.</li>
+<li><code>buildCognitiveState</code> loads conversation history from the <code>MemoryManager</code>. It first tries the session_id from events, then falls back to <code>GetLatestSessionForLeader</code> (5s timeout). Messages are loaded via <code>GetMessages</code> (5s timeout).</li>
+</ul>
+<p>If the agent implements <code>StatefulAgent</code>, both <code>RestoreState</code> and <code>ReplayEvents</code> are called.</p>
+<h3 id="step-5-register-and-start">Step 5: Register and Start</h3>
+<p>The new agent is registered under write lock, launched in a goroutine with panic recovery, and <code>agent.Start()</code> is called.</p>
+<h2 id="statefulagent-interface">StatefulAgent Interface</h2>
+<p>Agents that need custom recovery logic implement this interface from <code>internal/agents/base/agent.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> StatefulAgent</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    RestoreState</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">state</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ReplayEvents</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">events</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Snapshot</span><span style="color: #9399B2;">() (</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The leader agent implements all three:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/agents/leader/agent.go:767-816</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">a </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">LeaderAgent</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> RestoreState</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">state</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> sid</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> state</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;session_id&quot;</span><span style="color: #9399B2;">].(</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">);</span><span> ok</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> sid</span><span style="color: #94E2D5;"> !=</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        a</span><span style="color: #9399B2;">.</span><span>sessionID</span><span style="color: #94E2D5;"> =</span><span> sid</span></span>
+<span class="giallo-l"><span>        slog</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Info</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;LeaderAgent restored session_id&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;session_id&quot;</span><span style="color: #9399B2;">,</span><span> sid</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">a </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">LeaderAgent</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> ReplayEvents</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">events</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> ev</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> events</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> ev</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #94E2D5;"> ==</span><span> events</span><span style="color: #9399B2;">.</span><span>EventSessionCreated</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> sid</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> ev</span><span style="color: #9399B2;">.</span><span>Payload</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;session_id&quot;</span><span style="color: #9399B2;">].(</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">);</span><span> ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                a</span><span style="color: #9399B2;">.</span><span>sessionID</span><span style="color: #94E2D5;"> =</span><span> sid</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">a </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">LeaderAgent</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Snapshot</span><span style="color: #9399B2;">() (</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;session_id&quot;</span><span style="color: #9399B2;">:</span><span> a</span><span style="color: #9399B2;">.</span><span>sessionID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;agent_id&quot;</span><span style="color: #9399B2;">:</span><span>   a</span><span style="color: #9399B2;">.</span><span>agentID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;status&quot;</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;">     string</span><span style="color: #9399B2;">(</span><span>a</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Status</span><span style="color: #9399B2;">()),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    },</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="leader-failover">Leader Failover</h2>
+<p>Leader agents have an additional failover layer via <code>LeaderSupervisor</code>. When the leader dies, the supervisor performs checkpoint-based recovery:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant SV as LeaderSupervisor</span></span>
+<span class="giallo-l"><span>    participant HB as HeartbeatMonitor</span></span>
+<span class="giallo-l"><span>    participant Old as Old Leader</span></span>
+<span class="giallo-l"><span>    participant CP as CheckpointStore</span></span>
+<span class="giallo-l"><span>    participant ER as EventRecovery</span></span>
+<span class="giallo-l"><span>    participant TR as TaskRecovery</span></span>
+<span class="giallo-l"><span>    participant New as New Leader</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SV-&gt;&gt;HB: CheckTimeouts()</span></span>
+<span class="giallo-l"><span>    HB--&gt;&gt;SV: Leader timeout detected</span></span>
+<span class="giallo-l"><span>    SV-&gt;&gt;SV: Emit EventFailoverTriggered</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SV-&gt;&gt;Old: Stop (30s timeout)</span></span>
+<span class="giallo-l"><span>    SV-&gt;&gt;CP: GetLatest(leaderID)</span></span>
+<span class="giallo-l"><span>    alt Checkpoint exists</span></span>
+<span class="giallo-l"><span>        CP--&gt;&gt;SV: LeaderCheckpoint</span></span>
+<span class="giallo-l"><span>    else Checkpoint missing</span></span>
+<span class="giallo-l"><span>        SV-&gt;&gt;ER: RecoverFromEvents(leaderID)</span></span>
+<span class="giallo-l"><span>        ER--&gt;&gt;SV: RecoveryState (session + pending tasks)</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SV-&gt;&gt;SV: HandleFailover (ColdRestartStrategy, 3 retries)</span></span>
+<span class="giallo-l"><span>    SV-&gt;&gt;New: Create + Inject checkpoint + Start</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SV-&gt;&gt;TR: RecoverStaleTasks(sessionID)</span></span>
+<span class="giallo-l"><span>    TR--&gt;&gt;SV: Orphaned tasks marked as failed</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SV-&gt;&gt;SV: Emit EventFailoverCompleted</span></span></code></pre><h3 id="checkpoint">Checkpoint</h3>
+<p>The <code>LeaderCheckpoint</code> stores <code>leader_id</code>, <code>session_id</code>, <code>status</code>, and <code>metadata</code>. It is persisted to PostgreSQL with upsert semantics. The leader saves a checkpoint whenever it creates or recovers a session.</p>
+<h3 id="event-recovery">Event Recovery</h3>
+<p>If the checkpoint is missing or incomplete, <code>EventRecovery.RecoverFromEvents</code> reconstructs state by replaying the full event stream:</p>
+<ul>
+<li><code>EventSessionCreated</code> -&gt; captures session ID</li>
+<li><code>EventTaskCreated</code> -&gt; adds task to pending list</li>
+<li><code>EventTaskCompleted</code> -&gt; removes task from pending list</li>
+</ul>
+<h3 id="orphaned-task-cleanup">Orphaned Task Cleanup</h3>
+<p><code>TaskRecovery.RecoverStaleTasks</code> marks tasks with status <code>pending</code> or <code>running</code> as <code>failed</code> with error <code>"leader failover: task orphaned"</code>.</p>
+<h2 id="resurrection-plugin">Resurrection Plugin</h2>
+<p>The <code>resurrection.Supervisor</code> is a generic, agent-type-agnostic resurrection mechanism from <code>internal/plugins/resurrection/</code>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    SUP[Resurrection Supervisor] --&gt;|Watch| A1[Agent 1 + Factory]</span></span>
+<span class="giallo-l"><span>    SUP --&gt;|Watch| A2[Agent 2 + Factory]</span></span>
+<span class="giallo-l"><span>    SUP --&gt;|Watch| A3[Agent 3 + Factory]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SUP --&gt;|checks every 10s| HC[HealthChecker]</span></span>
+<span class="giallo-l"><span>    HC --&gt;|OnFailure| RES[resurrect goroutine]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RES --&gt;|1| NEW[Factory -&gt; New Agent]</span></span>
+<span class="giallo-l"><span>    RES --&gt;|2| REPLAY[Replay Events]</span></span>
+<span class="giallo-l"><span>    RES --&gt;|3| RESTORE[RestoreState]</span></span>
+<span class="giallo-l"><span>    RES --&gt;|4| START[Start New Agent]</span></span>
+<span class="giallo-l"><span>    RES --&gt;|5| OLD[Stop Old Agent]</span></span></code></pre>
+<p>Configuration defaults:</p>
+<ul>
+<li><code>CheckInterval</code>: 10s</li>
+<li><code>ResurrectTimeout</code>: 60s</li>
+<li><code>MaxAttempts</code>: 3</li>
+<li><code>HeartbeatInterval</code>: 5s</li>
+</ul>
+<h2 id="event-sourcing">Event Sourcing</h2>
+<p>All state changes are persisted as events. The <code>EventStore</code> interface supports:</p>
+<ul>
+<li><code>Append(ctx, streamID, events, expectedVersion)</code> -- optimistic concurrency control</li>
+<li><code>Read(ctx, streamID, opts)</code> -- read a single stream</li>
+<li><code>Subscribe(ctx, filter)</code> -- real-time event channel</li>
+</ul>
+<p>Event types: <code>agent.started</code>, <code>agent.stopped</code>, <code>task.created</code>, <code>task.dispatched</code>, <code>task.completed</code>, <code>task.failed</code>, <code>session.created</code>, <code>message.added</code>, <code>memory.distilled</code>, <code>failover.triggered</code>, <code>failover.completed</code>, <code>llm.call</code>.</p>
+<h2 id="configuration">Configuration</h2>
+<table><thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>HealthCheckInterval</code></td><td>10s</td><td>How often to check agent health</td></tr>
+<tr><td><code>MaxRestartsPerAgent</code></td><td>10</td><td>Max restarts before giving up</td></tr>
+<tr><td><code>MaxReplayEvents</code></td><td>10,000</td><td>Max events to replay during recovery</td></tr>
+<tr><td><code>AgentStopTimeout</code></td><td>10s</td><td>Timeout for stopping old agent</td></tr>
+<tr><td><code>RestoreTimeout</code></td><td>60s</td><td>Total timeout for RestoreAgent</td></tr>
+<tr><td><code>OverallStopTimeout</code></td><td>30s</td><td>Timeout for stopping all agents</td></tr>
+</tbody></table>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/0-11-dynamic-graph/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">GoAgent Source Deep Dive 11: Dynamic Graph — Runtime DAG Mutation</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/09-embedding-service/">
+                                <span class="button__text">GoAgent Source Deep Dive 09: Embedding Service — The Engineering Boundary of Vector Generation</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

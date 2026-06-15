@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>GoAgent Source Deep Dive 11: Dynamic Graph — Runtime DAG Mutation | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="## The Problem: Can Graph Structure Change While Running">
+
+    <meta property="og:description" content="## The Problem: Can Graph Structure Change While Running">
+    <meta property="og:title" content="GoAgent Source Deep Dive 11: Dynamic Graph — Runtime DAG Mutation | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/goagent/0-11-dynamic-graph/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="## The Problem: Can Graph Structure Change While Running">
+    <meta name="twitter:title" content="GoAgent Source Deep Dive 11: Dynamic Graph — Runtime DAG Mutation | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/goagent/0-11-dynamic-graph/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/0-11-dynamic-graph/">GoAgent Source Deep Dive 11: Dynamic Graph — Runtime DAG Mutation</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-05-21
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ai/">#AI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="dynamic-graph">Dynamic Graph</h1>
+<p>GoAgentX supports runtime graph mutation -- add nodes, remove edges, hot-reload from YAML -- while the workflow is executing. The <code>DynamicExecutor</code> recomputes the topological order between steps and applies mutations without stopping.</p>
+<h2 id="architecture">Architecture</h2>
+<p>The dynamic graph system has three layers:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
+<span class="giallo-l"><span>    subgraph api [&quot;API Layer&quot;]</span></span>
+<span class="giallo-l"><span>        SVC[WorkflowService]</span></span>
+<span class="giallo-l"><span>        PARSE[Config Parser]</span></span>
+<span class="giallo-l"><span>        BUILD[Graph Builder]</span></span>
+<span class="giallo-l"><span>        PARSE --&gt;|&quot;YAML config&quot;| BUILD</span></span>
+<span class="giallo-l"><span>        BUILD --&gt;|&quot;executable graph&quot;| SVC</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph engine [&quot;Engine Layer&quot;]</span></span>
+<span class="giallo-l"><span>        MDAG[MutableDAG]</span></span>
+<span class="giallo-l"><span>        DEXEC[DynamicExecutor]</span></span>
+<span class="giallo-l"><span>        RELOAD[WorkflowReloader]</span></span>
+<span class="giallo-l"><span>        MDAG --&gt;|&quot;version + topology&quot;| DEXEC</span></span>
+<span class="giallo-l"><span>        RELOAD --&gt;|&quot;file changes&quot;| MDAG</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph core [&quot;Core Layer&quot;]</span></span>
+<span class="giallo-l"><span>        DAG[DAG]</span></span>
+<span class="giallo-l"><span>        TOPO[Topological Sort]</span></span>
+<span class="giallo-l"><span>        CYCLE[Cycle Detection]</span></span>
+<span class="giallo-l"><span>        EVENTS[GraphEventHub]</span></span>
+<span class="giallo-l"><span>        DAG --&gt; TOPO</span></span>
+<span class="giallo-l"><span>        DAG --&gt; CYCLE</span></span>
+<span class="giallo-l"><span>        MDAG --&gt; DAG</span></span>
+<span class="giallo-l"><span>        MDAG --&gt; EVENTS</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre><h2 id="core-data-structures">Core Data Structures</h2>
+<h3 id="dag">DAG</h3>
+<p>The immutable graph representation from <code>internal/workflow/engine/types.go</code>:</p>
+<ul>
+<li><code>Nodes map[string]*DAGNode</code> -- node registry</li>
+<li><code>Edges map[string][]string</code> -- adjacency list</li>
+<li>Each <code>DAGNode</code> tracks <code>InDegree</code> and <code>OutDegree</code> for topological sort</li>
+</ul>
+<h3 id="mutabledag">MutableDAG</h3>
+<p>Thread-safe wrapper from <code>internal/workflow/engine/mutable_dag.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MutableDAG</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">      sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span>    dag</span><span style="color: #94E2D5;">     *</span><span style="color: #F9E2AF;font-style: italic;">DAG</span></span>
+<span class="giallo-l"><span>    steps</span><span style="color: #CBA6F7;">   map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Step</span></span>
+<span class="giallo-l"><span>    version</span><span style="color: #CBA6F7;"> uint64</span></span>
+<span class="giallo-l"><span>    hub</span><span style="color: #94E2D5;">     *</span><span style="color: #F9E2AF;font-style: italic;">GraphEventHub</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewMutableDAG</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">steps</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Step</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MutableDAG</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    dag</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> NewDAG</span><span style="color: #9399B2;">(</span><span>steps</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">  // validates + cycle detection</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    stepsMap</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Step</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>steps</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> s</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> steps</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        stepsMap</span><span style="color: #9399B2;">[</span><span>s</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> s</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">MutableDAG</span><span style="color: #9399B2;">{</span><span>dag</span><span style="color: #9399B2;">:</span><span> dag</span><span style="color: #9399B2;">,</span><span> steps</span><span style="color: #9399B2;">:</span><span> stepsMap</span><span style="color: #9399B2;">,</span><span> hub</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;"> NewGraphEventHub</span><span style="color: #9399B2;">()},</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="step">Step</h3>
+<p>Workflow step with <code>ID</code>, <code>Name</code>, <code>AgentType</code>, <code>Input</code>, <code>DependsOn []string</code>, <code>Timeout</code>, <code>RetryPolicy</code>, <code>Interrupt</code> (HITL config), and <code>Status</code>.</p>
+<h2 id="graph-lifecycle">Graph Lifecycle</h2>
+<h3 id="1-construction">1. Construction</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    YAML[YAML Config] --&gt; PARSE[ParseGraphConfig]</span></span>
+<span class="giallo-l"><span>    PARSE --&gt; VALIDATE[Validate: required fields,&lt;br&gt;node uniqueness, edge existence]</span></span>
+<span class="giallo-l"><span>    VALIDATE --&gt; BUILD[GraphBuilder.Build]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    BUILD --&gt; NODES[Build Nodes by type:&lt;br&gt;FuncNode / AgentNode / ToolNode]</span></span>
+<span class="giallo-l"><span>    BUILD --&gt; EDGES[Build Edges with&lt;br&gt;optional conditions]</span></span>
+<span class="giallo-l"><span>    BUILD --&gt; START[Set Start Node]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    NODES --&gt; DAG[NewDAG]</span></span>
+<span class="giallo-l"><span>    EDGES --&gt; DAG</span></span>
+<span class="giallo-l"><span>    START --&gt; DAG</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    DAG --&gt; DUP{Duplicate IDs?}</span></span>
+<span class="giallo-l"><span>    DUP --&gt;|Yes| ERR1[ErrDuplicateID]</span></span>
+<span class="giallo-l"><span>    DUP --&gt;|No| DEPS[Process Dependencies]</span></span>
+<span class="giallo-l"><span>    DEPS --&gt; INV{Invalid&lt;br&gt;dependency?}</span></span>
+<span class="giallo-l"><span>    INV --&gt;|Yes| ERR2[ErrInvalidDependency]</span></span>
+<span class="giallo-l"><span>    INV --&gt;|No| CYCLE[hasCycle: DFS cycle detection]</span></span>
+<span class="giallo-l"><span>    CYCLE --&gt;|Cycle found| ERR3[ErrCycleDetected]</span></span>
+<span class="giallo-l"><span>    CYCLE --&gt;|No cycle| DONE[DAG ready]</span></span></code></pre>
+<p><code>NewDAG</code> runs <code>hasCycle()</code> -- a DFS with recursion stack. If a node in the current DFS path is revisited, a cycle exists.</p>
+<p><code>GetExecutionOrder()</code> uses Kahn's algorithm (BFS-based topological sort) from <code>internal/workflow/engine/types.go:227-249</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">d </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DAG</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> GetExecutionOrder</span><span style="color: #9399B2;">() ([]</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    inDegree</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> node</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> d</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        inDegree</span><span style="color: #9399B2;">[</span><span>node</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> d</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">[</span><span>node</span><span style="color: #9399B2;">].</span><span>InDegree</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    queue</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> node</span><span style="color: #9399B2;">,</span><span> degree</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> inDegree</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> degree</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            queue</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>queue</span><span style="color: #9399B2;">,</span><span> node</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    result</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>d</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>queue</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        node</span><span style="color: #94E2D5;"> :=</span><span> queue</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>        queue</span><span style="color: #94E2D5;"> =</span><span> queue</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">:]</span></span>
+<span class="giallo-l"><span>        result</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>result</span><span style="color: #9399B2;">,</span><span> node</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> _</span><span style="color: #9399B2;">,</span><span> neighbor</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> d</span><span style="color: #9399B2;">.</span><span>Edges</span><span style="color: #9399B2;">[</span><span>node</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span>            inDegree</span><span style="color: #9399B2;">[</span><span>neighbor</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">--</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> inDegree</span><span style="color: #9399B2;">[</span><span>neighbor</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                queue</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>queue</span><span style="color: #9399B2;">,</span><span> neighbor</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>result</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> !=</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>d</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> ErrCycleDetected</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> result</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="2-runtime-mutation">2. Runtime Mutation</h3>
+<p>All mutations acquire a write lock and are validated before applying:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant Caller as Caller (Planner / API)</span></span>
+<span class="giallo-l"><span>    participant MDAG as MutableDAG</span></span>
+<span class="giallo-l"><span>    participant CYCLE as wouldCreateCycle</span></span>
+<span class="giallo-l"><span>    participant HUB as GraphEventHub</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Caller-&gt;&gt;MDAG: AddNode(ctx, step)</span></span>
+<span class="giallo-l"><span>    MDAG-&gt;&gt;MDAG: Acquire write lock</span></span>
+<span class="giallo-l"><span>    MDAG-&gt;&gt;MDAG: Validate step (non-nil, non-empty ID)</span></span>
+<span class="giallo-l"><span>    MDAG-&gt;&gt;MDAG: Check duplicate ID</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    loop For each dependency</span></span>
+<span class="giallo-l"><span>        MDAG-&gt;&gt;MDAG: Verify dependency node exists</span></span>
+<span class="giallo-l"><span>        MDAG-&gt;&gt;CYCLE: wouldCreateCycle(from, to)</span></span>
+<span class="giallo-l"><span>        alt Would create cycle</span></span>
+<span class="giallo-l"><span>            CYCLE--&gt;&gt;MDAG: true</span></span>
+<span class="giallo-l"><span>            MDAG-&gt;&gt;MDAG: Rollback all partial edges</span></span>
+<span class="giallo-l"><span>            MDAG--&gt;&gt;Caller: ErrCycleDetected</span></span>
+<span class="giallo-l"><span>        else Safe</span></span>
+<span class="giallo-l"><span>            CYCLE--&gt;&gt;MDAG: false</span></span>
+<span class="giallo-l"><span>            MDAG-&gt;&gt;MDAG: Add edge, update degrees</span></span>
+<span class="giallo-l"><span>        end</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    MDAG-&gt;&gt;MDAG: Increment version</span></span>
+<span class="giallo-l"><span>    MDAG-&gt;&gt;HUB: Publish ChangeAddNode</span></span>
+<span class="giallo-l"><span>    MDAG--&gt;&gt;Caller: nil (success)</span></span></code></pre>
+<p><strong>Incremental cycle detection</strong> (<code>wouldCreateCycle</code>): BFS from <code>to</code>, following outgoing edges. If <code>from</code> is reachable from <code>to</code>, adding edge <code>from-&gt;to</code> would create a cycle.</p>
+<p>The actual AddNode code with rollback from <code>internal/workflow/engine/mutable_dag.go:80-123</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> _</span><span style="color: #9399B2;">,</span><span> dep</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> step</span><span style="color: #9399B2;">.</span><span>DependsOn</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> _</span><span style="color: #9399B2;">,</span><span> exists</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">[</span><span>dep</span><span style="color: #9399B2;">];</span><span style="color: #94E2D5;"> !</span><span>exists</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Rollback: remove the node and any edges added so far.</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        delete</span><span style="color: #9399B2;">(</span><span>m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">,</span><span> step</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> _</span><span style="color: #9399B2;">,</span><span> e</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> addedEdges</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">removeEdgeFromSlice</span><span style="color: #9399B2;">(</span><span>e</span><span style="color: #9399B2;">.</span><span>from</span><span style="color: #9399B2;">,</span><span> e</span><span style="color: #9399B2;">.</span><span>to</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">[</span><span>e</span><span style="color: #9399B2;">.</span><span>from</span><span style="color: #9399B2;">].</span><span>OutDegree</span><span style="color: #94E2D5;">--</span></span>
+<span class="giallo-l"><span>            m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">[</span><span>e</span><span style="color: #9399B2;">.</span><span>to</span><span style="color: #9399B2;">].</span><span>InDegree</span><span style="color: #94E2D5;">--</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> ErrInvalidDependency</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Check for cycle before adding edge.</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">wouldCreateCycle</span><span style="color: #9399B2;">(</span><span>dep</span><span style="color: #9399B2;">,</span><span> step</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Rollback.</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        delete</span><span style="color: #9399B2;">(</span><span>m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">,</span><span> step</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> _</span><span style="color: #9399B2;">,</span><span> e</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> addedEdges</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">removeEdgeFromSlice</span><span style="color: #9399B2;">(</span><span>e</span><span style="color: #9399B2;">.</span><span>from</span><span style="color: #9399B2;">,</span><span> e</span><span style="color: #9399B2;">.</span><span>to</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">[</span><span>e</span><span style="color: #9399B2;">.</span><span>from</span><span style="color: #9399B2;">].</span><span>OutDegree</span><span style="color: #94E2D5;">--</span></span>
+<span class="giallo-l"><span>            m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">[</span><span>e</span><span style="color: #9399B2;">.</span><span>to</span><span style="color: #9399B2;">].</span><span>InDegree</span><span style="color: #94E2D5;">--</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> ErrCycleDetected</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Edges</span><span style="color: #9399B2;">[</span><span>dep</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Edges</span><span style="color: #9399B2;">[</span><span>dep</span><span style="color: #9399B2;">],</span><span> step</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">[</span><span>step</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">].</span><span>InDegree</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Nodes</span><span style="color: #9399B2;">[</span><span>dep</span><span style="color: #9399B2;">].</span><span>OutDegree</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span>    addedEdges</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>addedEdges</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> addedEdge</span><span style="color: #9399B2;">{</span><span>from</span><span style="color: #9399B2;">:</span><span> dep</span><span style="color: #9399B2;">,</span><span> to</span><span style="color: #9399B2;">:</span><span> step</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">})</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>m</span><span style="color: #9399B2;">.</span><span>steps</span><span style="color: #9399B2;">[</span><span>step</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> step</span></span>
+<span class="giallo-l"><span>m</span><span style="color: #9399B2;">.</span><span>version</span><span style="color: #94E2D5;">++</span></span></code></pre>
+<p>The BFS cycle check from <code>internal/workflow/engine/mutable_dag.go:407-431</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MutableDAG</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> wouldCreateCycle</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">from</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> to</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    visited</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">bool</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    queue</span><span style="color: #94E2D5;"> :=</span><span style="color: #9399B2;"> []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">{</span><span>to</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>queue</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        current</span><span style="color: #94E2D5;"> :=</span><span> queue</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>        queue</span><span style="color: #94E2D5;"> =</span><span> queue</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">:]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> current</span><span style="color: #94E2D5;"> ==</span><span> from</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #FAB387;"> true</span><span style="color: #9399B2;font-style: italic;">  // from is reachable from to -&gt; cycle</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> visited</span><span style="color: #9399B2;">[</span><span>current</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            continue</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span>        visited</span><span style="color: #9399B2;">[</span><span>current</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> _</span><span style="color: #9399B2;">,</span><span> neighbor</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> m</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span>Edges</span><span style="color: #9399B2;">[</span><span>current</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span style="color: #94E2D5;"> !</span><span>visited</span><span style="color: #9399B2;">[</span><span>neighbor</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span>                queue</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>queue</span><span style="color: #9399B2;">,</span><span> neighbor</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Four mutation operations:</p>
+<table><thead><tr><th>Operation</th><th>Validation</th><th>Rollback</th></tr></thead><tbody>
+<tr><td><code>AddNode</code></td><td>Duplicate ID, dependency existence, cycle check</td><td>Removes all partial edges + node</td></tr>
+<tr><td><code>RemoveNode</code></td><td>No dependents (<code>ErrNodeHasDependents</code>)</td><td>N/A (fails fast)</td></tr>
+<tr><td><code>AddEdge</code></td><td>Both nodes exist, no duplicate edge, cycle check</td><td>N/A (fails fast)</td></tr>
+<tr><td><code>RemoveEdge</code></td><td>Both nodes exist, edge exists</td><td>N/A (fails fast)</td></tr>
+</tbody></table>
+<h3 id="3-execution-with-mutations">3. Execution with Mutations</h3>
+<p>The <code>DynamicExecutor</code> supports mid-execution graph changes:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    START[ExecuteDynamic] --&gt; ORDER[Get initial execution order]</span></span>
+<span class="giallo-l"><span>    ORDER --&gt; LOOP[runDynamicSteps]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    LOOP --&gt; CHECK{ApplyMode?}</span></span>
+<span class="giallo-l"><span>    CHECK --&gt;|ApplyImmediate| RECOMP1[recomputeOrder&lt;br&gt;before step]</span></span>
+<span class="giallo-l"><span>    CHECK --&gt;|ApplyAtCheckpoint| RUN[Run step]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RECOMP1 --&gt; LOOKUP{Step exists&lt;br&gt;in MutableDAG?}</span></span>
+<span class="giallo-l"><span>    LOOKUP --&gt;|No, removed| SKIP[emit StepStatusSkipped]</span></span>
+<span class="giallo-l"><span>    LOOKUP --&gt;|Yes| DEPS{All dependencies&lt;br&gt;completed?}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RUN --&gt; DONE_STEP[Step completed]</span></span>
+<span class="giallo-l"><span>    DONE_STEP --&gt; RECOMP2[recomputeOrder&lt;br&gt;after step]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    DEPS --&gt;|No| WAIT[Wait on stepDone channel&lt;br&gt;5s timeout for deadlock]</span></span>
+<span class="giallo-l"><span>    DEPS --&gt;|Yes| HITL{HITL interrupt?}</span></span>
+<span class="giallo-l"><span>    HITL --&gt;|Yes| BLOCK[Block for human approval]</span></span>
+<span class="giallo-l"><span>    HITL --&gt;|No| EXEC[Execute step]</span></span>
+<span class="giallo-l"><span>    BLOCK --&gt; EXEC</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    EXEC --&gt; RESULT[Send result]</span></span>
+<span class="giallo-l"><span>    RESULT --&gt; MORE{More steps?}</span></span>
+<span class="giallo-l"><span>    MORE --&gt;|Yes| LOOP</span></span>
+<span class="giallo-l"><span>    MORE --&gt;|No| DONE[Workflow complete]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SKIP --&gt; RESULT</span></span>
+<span class="giallo-l"><span>    RECOMP2 --&gt; MORE</span></span>
+<span class="giallo-l"><span>    WAIT --&gt; DEPS</span></span></code></pre>
+<p><strong>ApplyMode</strong> controls when mutations take effect:</p>
+<ul>
+<li><code>ApplyAtCheckpoint</code> (default): recomputes order after each step completes</li>
+<li><code>ApplyImmediate</code>: recomputes before each step starts</li>
+</ul>
+<p><strong>recomputeOrder</strong> is the mutation integration point. The actual code from <code>internal/workflow/engine/dynamic_executor.go:576-615</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">e </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DynamicExecutor</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> recomputeOrder</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    mutableDAG</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">MutableDAG</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    lastVersion</span><span style="color: #94E2D5;"> *</span><span style="color: #CBA6F7;">uint64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    currentOrder</span><span style="color: #94E2D5;"> *</span><span style="color: #9399B2;">[]</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    completed</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">bool</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    processed</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">bool</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    mu</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // M9 fix: hold mu across the entire version-check-and-update</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // to prevent concurrent calls from appending duplicate steps.</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    currentVersion</span><span style="color: #94E2D5;"> :=</span><span> mutableDAG</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Version</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> *</span><span>lastVersion</span><span style="color: #94E2D5;"> ==</span><span> currentVersion</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    newOrder</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> mutableDAG</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">GetExecutionOrder</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        slog</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Warn</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;recomputeOrder failed, keeping existing order&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;error&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        *</span><span>lastVersion</span><span style="color: #94E2D5;"> =</span><span> currentVersion</span><span style="color: #9399B2;font-style: italic;">  // prevent repeated detection</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    *</span><span>lastVersion</span><span style="color: #94E2D5;"> =</span><span> currentVersion</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Find steps in newOrder not yet in currentOrder.</span></span>
+<span class="giallo-l"><span>    existing</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">bool</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">*</span><span>currentOrder</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> id</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span style="color: #94E2D5;"> *</span><span>currentOrder</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        existing</span><span style="color: #9399B2;">[</span><span>id</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> id</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> newOrder</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span>existing</span><span style="color: #9399B2;">[</span><span>id</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            *</span><span>currentOrder</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">*</span><span>currentOrder</span><span style="color: #9399B2;">,</span><span> id</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>mu</code> lock prevents a race where two concurrent <code>recomputeOrder</code> calls both detect the same version change and append duplicate steps.</p>
+<h3 id="4-hot-reload">4. Hot-Reload</h3>
+<p>The <code>WorkflowReloader</code> watches a directory for file changes:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    FS[File System&lt;br&gt;.json / .yaml / .yml] --&gt;|fsnotify or&lt;br&gt;5s polling| FW[FileWatcher]</span></span>
+<span class="giallo-l"><span>    FW --&gt;|file changed| SCAN[scanAndLoad]</span></span>
+<span class="giallo-l"><span>    SCAN --&gt;|atomic swap&lt;br&gt;under write lock| MAP[Workflow Map]</span></span>
+<span class="giallo-l"><span>    MAP --&gt;|notify| CB[Callbacks]</span></span>
+<span class="giallo-l"><span>    CB --&gt;|update| ENGINE[Engine Layer]</span></span></code></pre>
+<ul>
+<li><code>fsnotify</code> for real-time file change events</li>
+<li>Falls back to 5-second polling if fsnotify is unavailable</li>
+<li>Atomic swap under write lock prevents TOCTOU races</li>
+<li>Deep-copy of workflow map before passing to callbacks prevents mutation of shared state</li>
+</ul>
+<h2 id="graph-execution-engine-state-based">Graph Execution Engine (State-Based)</h2>
+<p>The <code>Graph.Execute(ctx, state)</code> method from <code>internal/workflow/graph/executor.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    EXEC[Execute] --&gt; INDEG[Build in-degree map]</span></span>
+<span class="giallo-l"><span>    INDEG --&gt; SEED[Seed ready queue with&lt;br&gt;zero-in-degree nodes]</span></span>
+<span class="giallo-l"><span>    SEED --&gt; LOOP{Ready queue&lt;br&gt;empty?}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    LOOP --&gt;|No| SCHED[Scheduler selects&lt;br&gt;next node]</span></span>
+<span class="giallo-l"><span>    SCHED --&gt; EXEC_NODE[Execute node]</span></span>
+<span class="giallo-l"><span>    EXEC_NODE --&gt; DEC[Decrement successor in-degrees]</span></span>
+<span class="giallo-l"><span>    DEC --&gt; ENQ{In-degree == 0&lt;br&gt;AND condition satisfied?}</span></span>
+<span class="giallo-l"><span>    ENQ --&gt;|Yes| ADD[Add to ready queue]</span></span>
+<span class="giallo-l"><span>    ENQ --&gt;|No| LOOP</span></span>
+<span class="giallo-l"><span>    ADD --&gt; LOOP</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    LOOP --&gt;|Yes| DONE[Execution complete]</span></span></code></pre>
+<p>Three node types:</p>
+<ul>
+<li><strong>AgentNode</strong> -- wraps <code>base.Agent</code>, calls <code>Process(ctx, input)</code></li>
+<li><strong>ToolNode</strong> -- wraps <code>core.Tool</code>, calls <code>Execute(ctx, params)</code></li>
+<li><strong>FuncNode</strong> -- wraps <code>func(context.Context, *State) error</code></li>
+</ul>
+<p>Three pluggable schedulers:</p>
+<ul>
+<li><strong>DefaultScheduler</strong> -- FIFO</li>
+<li><strong>PriorityScheduler</strong> -- highest priority first</li>
+<li><strong>ShortJobScheduler</strong> -- shortest estimated time first</li>
+</ul>
+<p>Condition evaluation: <code>hasAnySatisfiedEdge</code> prevents ghost execution (all conditions false) and silent node loss.</p>
+<h2 id="graph-event-hub">Graph Event Hub</h2>
+<p>Every mutation publishes a <code>GraphEvent</code> through the <code>GraphEventHub</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> GraphEvent</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Change</span><span style="color: #F9E2AF;font-style: italic;">  GraphChange</span></span>
+<span class="giallo-l"><span>    Success</span><span style="color: #CBA6F7;"> bool</span></span>
+<span class="giallo-l"><span>    Error</span><span style="color: #CBA6F7;">   error</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> GraphChange</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Type</span><span style="color: #F9E2AF;font-style: italic;">      ChangeType</span><span style="color: #9399B2;font-style: italic;">  // ChangeAddNode, ChangeRemoveNode, ChangeAddEdge, ChangeRemoveEdge</span></span>
+<span class="giallo-l"><span>    NodeID</span><span style="color: #CBA6F7;">    string</span></span>
+<span class="giallo-l"><span>    FromID</span><span style="color: #CBA6F7;">    string</span></span>
+<span class="giallo-l"><span>    ToID</span><span style="color: #CBA6F7;">      string</span></span>
+<span class="giallo-l"><span>    Step</span><span style="color: #94E2D5;">      *</span><span style="color: #F9E2AF;font-style: italic;">Step</span></span>
+<span class="giallo-l"><span>    Timestamp</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<ul>
+<li><code>Subscribe()</code> returns a buffered channel (buffer size 64)</li>
+<li><code>Publish()</code> is non-blocking: drops events if subscriber buffer is full</li>
+<li><code>Unsubscribe()</code> removes and closes the channel</li>
+</ul>
+<h2 id="hitl-human-in-the-loop">HITL (Human-in-the-Loop)</h2>
+<p>The <code>DynamicExecutor</code> checks <code>step.Interrupt</code> before dispatching each step:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant DE as DynamicExecutor</span></span>
+<span class="giallo-l"><span>    participant Store as InterruptStore</span></span>
+<span class="giallo-l"><span>    participant Handler as InterruptHandler</span></span>
+<span class="giallo-l"><span>    participant Human as Human Reviewer</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    DE-&gt;&gt;DE: Check step.Interrupt</span></span>
+<span class="giallo-l"><span>    DE-&gt;&gt;Store: Save interrupt point</span></span>
+<span class="giallo-l"><span>    DE-&gt;&gt;Handler: Block on handler</span></span>
+<span class="giallo-l"><span>    Handler-&gt;&gt;Human: Request approval</span></span>
+<span class="giallo-l"><span>    Human--&gt;&gt;Handler: Decision</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    alt Approved</span></span>
+<span class="giallo-l"><span>        Handler--&gt;&gt;DE: Proceed</span></span>
+<span class="giallo-l"><span>        DE-&gt;&gt;DE: Execute step</span></span>
+<span class="giallo-l"><span>    else Rejected</span></span>
+<span class="giallo-l"><span>        Handler--&gt;&gt;DE: Skip</span></span>
+<span class="giallo-l"><span>        DE-&gt;&gt;DE: Skip step</span></span>
+<span class="giallo-l"><span>    else Error</span></span>
+<span class="giallo-l"><span>        Handler--&gt;&gt;DE: Error</span></span>
+<span class="giallo-l"><span>        DE-&gt;&gt;DE: Fail workflow</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre>
+<p><code>InterruptStore</code> persists interrupt state for crash recovery. <code>MemoryInterruptStore</code> is the in-memory implementation.</p>
+<h2 id="yaml-configuration">YAML Configuration</h2>
+<p>Example graph config:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #89B4FA;">graph</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> my-workflow</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  start_node</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> analyze</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  nodes</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> analyze</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> agent</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      description</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> Analyze input</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> decide</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> function</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      description</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> Route based on analysis</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> search</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> tool</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      description</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> Search knowledge base</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> generate</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> agent</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      description</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> Generate response</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  edges</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> from</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> analyze</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      to</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> decide</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> from</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> decide</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      to</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> search</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      condition</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;confidence &lt; 0.8&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> from</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> decide</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      to</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> generate</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> from</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> search</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      to</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> generate</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  agents</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> analyzer</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> llm</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      model</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> gpt-4</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> generator</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> llm</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      model</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> gpt-4</span></span></code></pre><h2 id="configuration-constants">Configuration Constants</h2>
+<table><thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>DefaultMaxParallel</code></td><td>10</td><td>Max parallel step executions</td></tr>
+<tr><td><code>DefaultStepTimeout</code></td><td>10s</td><td>Per-step timeout</td></tr>
+<tr><td><code>DefaultWorkflowTimeout</code></td><td>5min</td><td>Total workflow timeout</td></tr>
+<tr><td><code>DefaultMaxWorkflowSize</code></td><td>100</td><td>Max steps per workflow</td></tr>
+<tr><td><code>DefaultMaxDependencies</code></td><td>10</td><td>Max dependencies per step</td></tr>
+</tbody></table>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/0-10-agent-recovery/">
+                                <span class="button__text">GoAgent Source Deep Dive 10: Agent Crash Recovery</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>
