@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>GoAgentX Architecture Deep Dive (8): Event System — Event Sourcing for State Recovery and Audit Trails | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="Immutable event log with three store implementations (in-memory, PostgreSQL, compactable), event compaction pipeline, and step-by-step ReplaySession.">
+
+    <meta property="og:description" content="Immutable event log with three store implementations (in-memory, PostgreSQL, compactable), event compaction pipeline, and step-by-step ReplaySession.">
+    <meta property="og:title" content="GoAgentX Architecture Deep Dive (8): Event System — Event Sourcing for State Recovery and Audit Trails | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/goagent/08-event-system-deep-dive/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Immutable event log with three store implementations (in-memory, PostgreSQL, compactable), event compaction pipeline, and step-by-step ReplaySession.">
+    <meta name="twitter:title" content="GoAgentX Architecture Deep Dive (8): Event System — Event Sourcing for State Recovery and Audit Trails | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/goagent/08-event-system-deep-dive/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/08-event-system-deep-dive/">GoAgentX Architecture Deep Dive (8): Event System — Event Sourcing for State Recovery and Audit Trails</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-15
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/event-sourcing/">#Event Sourcing</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/multi-agent/">#Multi-Agent</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="goagentx-architecture-deep-dive-8-event-system-event-sourcing-for-state-recovery-and-audit-trails">GoAgentX Architecture Deep Dive (8): Event System — Event Sourcing for State Recovery and Audit Trails</h1>
+<blockquote>
+<p>Every action in a multi-agent system is an event. Agent started, task assigned, tool called, LLM responded, agent crashed, agent resurrected. GoAgentX's Event System records all of them as an immutable, replayable log — the single source of truth for state recovery, audit trails, and system observability.</p>
+</blockquote>
+<hr />
+<h2 id="1-why-record-every-single-thing">1. Why Record Every Single Thing</h2>
+<p>Early on, I managed agent state with a global struct. Everything in one big map: what the agent was doing, what data it processed, what errors it hit. Simple, but problematic:</p>
+<ol>
+<li>Agent crashes → map is gone → state is gone</li>
+<li>Want to know what the agent did 5 minutes ago? No record.</li>
+<li>Need to audit whether an agent made unauthorized tool calls? No log.</li>
+</ol>
+<p>Then I discovered Event Sourcing. The idea is the opposite of traditional state management: <strong>don't store the current state. Store every operation that changed the state. Want the current state? Replay the events.</strong></p>
+<p>Financial systems have used this for decades. Agent frameworks? Not so much. I figured: if nobody's doing it, I'll build it.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph LR</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Traditional (State Store)&quot;</span></span>
+<span class="giallo-l"><span>        S1[Current State] --&gt;|Update| S2[New State]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Event Sourcing&quot;</span></span>
+<span class="giallo-l"><span>        E1[Event 1] --&gt; E2[Event 2]</span></span>
+<span class="giallo-l"><span>        E2 --&gt; E3[Event 3]</span></span>
+<span class="giallo-l"><span>        E3 --&gt;|Replay| STATE[Derived State]</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre>
+<p>This architecture provides three critical guarantees:</p>
+<ul>
+<li><strong>Complete audit trail</strong>: Every state change is recorded with timestamp and payload</li>
+<li><strong>Temporal query</strong>: The system can answer "what was the state at time T?"</li>
+<li><strong>State reconstruction</strong>: Any Agent's state can be rebuilt from scratch by replaying its event stream</li>
+</ul>
+<p>Core files:</p>
+<table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>internal/events/types.go</code></td><td>Event model, EventStore interface</td></tr>
+<tr><td><code>internal/events/memory_store.go</code></td><td>In-memory EventStore implementation</td></tr>
+<tr><td><code>internal/events/pg_store.go</code></td><td>PostgreSQL EventStore implementation</td></tr>
+<tr><td><code>internal/events/compactor.go</code></td><td>Event compaction into summaries</td></tr>
+<tr><td><code>internal/events/trim_store.go</code></td><td>Old event deletion after compaction</td></tr>
+<tr><td><code>internal/events/compactable_store.go</code></td><td>Auto-compacting EventStore wrapper</td></tr>
+<tr><td><code>internal/events/summary.go</code></td><td>EventSummary model + CompactionConfig</td></tr>
+<tr><td><code>internal/events/summary_repository.go</code></td><td>PgSummaryRepository</td></tr>
+<tr><td><code>internal/events/memory_summary_repo.go</code></td><td>In-memory SummaryRepository</td></tr>
+<tr><td><code>internal/flight/replay.go</code></td><td>ReplaySession for step-by-step replay</td></tr>
+</tbody></table>
+<hr />
+<h2 id="2-event-model">2. Event Model</h2>
+<h3 id="2-1-event-structure">2.1 Event Structure</h3>
+<p>The foundational type is defined in <code>internal/events/types.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Event</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">        string</span><span style="color: #A6E3A1;">         `json:&quot;id&quot;`</span></span>
+<span class="giallo-l"><span>    StreamID</span><span style="color: #CBA6F7;">  string</span><span style="color: #A6E3A1;">         `json:&quot;stream_id&quot;`</span></span>
+<span class="giallo-l"><span>    Type</span><span style="color: #F9E2AF;font-style: italic;">      EventType</span><span style="color: #A6E3A1;">      `json:&quot;type&quot;`</span></span>
+<span class="giallo-l"><span>    Payload</span><span style="color: #CBA6F7;">   map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #A6E3A1;"> `json:&quot;payload&quot;`</span></span>
+<span class="giallo-l"><span>    Metadata</span><span style="color: #CBA6F7;">  map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #A6E3A1;"> `json:&quot;metadata,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Version</span><span style="color: #CBA6F7;">   int64</span><span style="color: #A6E3A1;">          `json:&quot;version&quot;`</span></span>
+<span class="giallo-l"><span>    Timestamp</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span><span style="color: #A6E3A1;">      `json:&quot;timestamp&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each event belongs to a <strong>stream</strong> (identified by <code>StreamID</code>). A stream is an append-only sequence of events for a single entity — typically an Agent. The <code>Version</code> field enables optimistic concurrency control, and <code>Type</code> classifies the event for routing and replay.</p>
+<h3 id="2-2-event-types">2.2 Event Types</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EventType</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventAgentStarted</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.started&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventAgentStopped</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.stopped&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventAgentFailed</span><span style="color: #F9E2AF;font-style: italic;">         EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.failed&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskCreated</span><span style="color: #F9E2AF;font-style: italic;">         EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.created&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskAssigned</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.assigned&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskCompleted</span><span style="color: #F9E2AF;font-style: italic;">       EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.completed&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskFailed</span><span style="color: #F9E2AF;font-style: italic;">          EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.failed&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventMessageAdded</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;message.added&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventLLMCall</span><span style="color: #F9E2AF;font-style: italic;">             EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;llm.call&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventToolCall</span><span style="color: #F9E2AF;font-style: italic;">            EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;tool.call&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventSessionCreated</span><span style="color: #F9E2AF;font-style: italic;">      EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;session.created&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventFailoverTriggered</span><span style="color: #F9E2AF;font-style: italic;">   EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;failover.triggered&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventFailoverCompleted</span><span style="color: #F9E2AF;font-style: italic;">   EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;failover.completed&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre><h3 id="2-3-eventstore-interface">2.3 EventStore Interface</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EventStore</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Append</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> events</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> expectedVersion</span><span style="color: #CBA6F7;"> int64</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Read</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> opts</span><span style="color: #F9E2AF;font-style: italic;"> ReadOptions</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ReadAll</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> opts</span><span style="color: #F9E2AF;font-style: italic;"> ReadOptions</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Subscribe</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> filter</span><span style="color: #F9E2AF;font-style: italic;"> EventFilter</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">&lt;-</span><span style="color: #CBA6F7;">chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    StreamVersion</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">int64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Key semantics:</p>
+<ul>
+<li><code>Append</code> uses <code>expectedVersion</code> for optimistic concurrency: <code>0</code> means the stream must not exist, <code>-1</code> (or any negative) bypasses the check, a positive value must match the stream's current version.</li>
+<li><code>Read</code> returns events for a single stream. <code>ReadOptions</code> supports <code>FromVersion</code>, <code>Limit</code>, and <code>Direction</code> (ascending/descending).</li>
+<li><code>Subscribe</code> returns a channel of events matching the filter; the channel closes when the context is cancelled.</li>
+<li><code>ReadAll</code> scans across all streams — used by compactor and admin tools.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>classDiagram</span></span>
+<span class="giallo-l"><span>    class EventStore {</span></span>
+<span class="giallo-l"><span>        &lt;&lt;interface&gt;&gt;</span></span>
+<span class="giallo-l"><span>        +Append(ctx, streamID, events, expectedVersion) error</span></span>
+<span class="giallo-l"><span>        +Read(ctx, streamID, opts) []Event</span></span>
+<span class="giallo-l"><span>        +ReadAll(ctx, opts) []Event</span></span>
+<span class="giallo-l"><span>        +Subscribe(ctx, filter) &lt;-chan Event</span></span>
+<span class="giallo-l"><span>        +StreamVersion(ctx, streamID) int64</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    class MemoryEventStore {</span></span>
+<span class="giallo-l"><span>        -streams map[string][]Event</span></span>
+<span class="giallo-l"><span>        -events []Event</span></span>
+<span class="giallo-l"><span>        +Append()</span></span>
+<span class="giallo-l"><span>        +Read()</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    class PostgresEventStore {</span></span>
+<span class="giallo-l"><span>        -pool *Pool</span></span>
+<span class="giallo-l"><span>        +Append()</span></span>
+<span class="giallo-l"><span>        +Read()</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    class CompactableEventStore {</span></span>
+<span class="giallo-l"><span>        +Append()</span></span>
+<span class="giallo-l"><span>        +Read()  // with summary fallback</span></span>
+<span class="giallo-l"><span>        +ForceCompact()</span></span>
+<span class="giallo-l"><span>        +GetSummariesForStream()</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    EventStore &lt;|-- MemoryEventStore</span></span>
+<span class="giallo-l"><span>    EventStore &lt;|-- PostgresEventStore</span></span>
+<span class="giallo-l"><span>    EventStore &lt;|-- CompactableEventStore</span></span>
+<span class="giallo-l"><span>    CompactableEventStore o-- Compactor</span></span>
+<span class="giallo-l"><span>    Compactor o-- SummaryRepository</span></span></code></pre>
+<hr />
+<h2 id="3-store-implementations">3. Store Implementations</h2>
+<h3 id="3-1-memoryeventstore">3.1 MemoryEventStore</h3>
+<p><code>internal/events/memory_store.go</code> provides an in-memory implementation primarily used for testing and demo mode:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEventStore</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">      sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span>    streams</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">][]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;font-style: italic;"> // streamID → events</span></span>
+<span class="giallo-l"><span>    events</span><span style="color: #9399B2;">  []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;font-style: italic;">            // Flat list for ReadAll + Subscribe</span></span>
+<span class="giallo-l"><span>    version</span><span style="color: #CBA6F7;"> int64</span><span style="color: #9399B2;font-style: italic;">               // Global monotonically increasing version</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>Append</code> method:</p>
+<ol>
+<li>Locks the mutex</li>
+<li>Validates <code>expectedVersion</code> against the stream's current version</li>
+<li>Assigns sequential versions to new events</li>
+<li>Appends to both the per-stream slice and the flat events slice</li>
+<li>Notifies subscribers via a channel</li>
+</ol>
+<p>The <code>Subscribe</code> method creates a buffered channel (capacity 100) and registers it in a subscriber map. New events are broadcast to all subscriber channels. If a subscriber's buffer is full, the event is dropped (non-blocking send).</p>
+<h3 id="3-2-postgreseventstore">3.2 PostgresEventStore</h3>
+<p><code>internal/events/pg_store.go</code> provides a PostgreSQL-backed implementation for production:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> PostgresEventStore</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    pool</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">postgres</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Pool</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>Append</code> method uses a single SQL statement for atomicity:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="sql"><span class="giallo-l"><span style="color: #CBA6F7;">INSERT INTO</span><span> events (id, stream_id, </span><span style="color: #CBA6F7;">type</span><span>, payload, metadata, </span><span style="color: #CBA6F7;">version</span><span>, created_at, </span><span style="color: #CBA6F7;">timestamp</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">VALUES</span><span> ($</span><span style="color: #FAB387;">1</span><span>, $</span><span style="color: #FAB387;">2</span><span>, $</span><span style="color: #FAB387;">3</span><span>, $</span><span style="color: #FAB387;">4</span><span>, $</span><span style="color: #FAB387;">5</span><span>, $</span><span style="color: #FAB387;">6</span><span>, $</span><span style="color: #FAB387;">7</span><span>, $</span><span style="color: #FAB387;">8</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">ON</span><span> CONFLICT (stream_id, </span><span style="color: #CBA6F7;">version</span><span>) DO NOTHING</span></span></code></pre>
+<p>The <code>ON CONFLICT DO NOTHING</code> clause provides idempotent append — if the same event is inserted twice (e.g., after a client retry), the second insert is silently ignored. This is critical for at-least-once delivery semantics.</p>
+<p>Optimistic concurrency control is handled by checking the stream's current version before insert — a separate <code>SELECT COUNT(*)</code> or <code>SELECT MAX(version)</code> query.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant Client</span></span>
+<span class="giallo-l"><span>    participant Store as CompactableEventStore</span></span>
+<span class="giallo-l"><span>    participant Raw as MemoryEventStore</span></span>
+<span class="giallo-l"><span>    participant Compactor as Compactor</span></span>
+<span class="giallo-l"><span>    participant Repo as SummaryRepo</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Client-&gt;&gt;Store: Append(events)</span></span>
+<span class="giallo-l"><span>    Store-&gt;&gt;Raw: Append(events)</span></span>
+<span class="giallo-l"><span>    Raw--&gt;&gt;Store: OK</span></span>
+<span class="giallo-l"><span>    Store-&gt;&gt;Store: go maybeCompact()</span></span>
+<span class="giallo-l"><span>    Store--&gt;&gt;Client: OK</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Note over Store,Compactor: Background goroutine</span></span>
+<span class="giallo-l"><span>    Compactor-&gt;&gt;Raw: StreamVersion()</span></span>
+<span class="giallo-l"><span>    Raw--&gt;&gt;Compactor: version=523</span></span>
+<span class="giallo-l"><span>    Compactor-&gt;&gt;Compactor: version &gt; threshold?</span></span>
+<span class="giallo-l"><span>    Compactor-&gt;&gt;Raw: Read(stream, ascending)</span></span>
+<span class="giallo-l"><span>    Raw--&gt;&gt;Compactor: 523 events</span></span>
+<span class="giallo-l"><span>    Compactor-&gt;&gt;Compactor: Build summary from first 423 events</span></span>
+<span class="giallo-l"><span>    Compactor-&gt;&gt;Repo: Save(summary)</span></span>
+<span class="giallo-l"><span>    Repo--&gt;&gt;Compactor: OK</span></span>
+<span class="giallo-l"><span>    Compactor-&gt;&gt;Raw: TrimBefore(stream, endVersion=423)</span></span>
+<span class="giallo-l"><span>    Raw--&gt;&gt;Compactor: 423 events removed</span></span></code></pre>
+<hr />
+<h2 id="4-event-compaction-pipeline">4. Event Compaction Pipeline</h2>
+<p>Without compaction, the event store grows unboundedly — every <code>agent.started</code>, <code>llm.call</code>, and <code>tool.call</code> accumulates. GoAgentX's Compactor solves this by summarizing old events into compact snapshots.</p>
+<h3 id="4-1-compactionconfig">4.1 CompactionConfig</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> CompactionConfig</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Threshold</span><span style="color: #CBA6F7;">            int</span><span style="color: #9399B2;font-style: italic;">           // Events triggering compaction (default: 500)</span></span>
+<span class="giallo-l"><span>    KeepRecent</span><span style="color: #CBA6F7;">           int</span><span style="color: #9399B2;font-style: italic;">           // Events to retain (default: 100)</span></span>
+<span class="giallo-l"><span>    MaxSummariesPerStream</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;font-style: italic;">          // Max summaries per stream</span></span>
+<span class="giallo-l"><span>    SummaryTTL</span><span style="color: #F9E2AF;font-style: italic;">           time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;"> // Summary retention (default: 30 days)</span></span>
+<span class="giallo-l"><span>    EnableTrimming</span><span style="color: #CBA6F7;">       bool</span><span style="color: #9399B2;font-style: italic;">          // Delete raw events after compaction</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Default: when a stream exceeds 500 events, compact the oldest 400 into a summary, keep the most recent 100 as raw events.</p>
+<h3 id="4-2-compactor">4.2 Compactor</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Compactor</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    store</span><span style="color: #F9E2AF;font-style: italic;">      EventStore</span></span>
+<span class="giallo-l"><span>    repo</span><span style="color: #F9E2AF;font-style: italic;">       SummaryRepository</span></span>
+<span class="giallo-l"><span>    config</span><span style="color: #F9E2AF;font-style: italic;">     CompactionConfig</span></span>
+<span class="giallo-l"><span>    summarizer</span><span style="color: #F9E2AF;font-style: italic;"> EventSummarizer</span></span>
+<span class="giallo-l"><span>    trimStore</span><span style="color: #F9E2AF;font-style: italic;">  TrimAwareStore</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The compaction pipeline:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TD</span></span>
+<span class="giallo-l"><span>    A[Stream exceeds threshold] --&gt; B[Read all events\nascending order]</span></span>
+<span class="giallo-l"><span>    B --&gt; C{Split at\nKeepRecent}</span></span>
+<span class="giallo-l"><span>    C --&gt;|Candidate events| D[Build EventSummary\nrule-based aggregation]</span></span>
+<span class="giallo-l"><span>    C --&gt;|Recent events| E[Keep in raw store]</span></span>
+<span class="giallo-l"><span>    D --&gt; F[Save summary to\nSummaryRepository]</span></span>
+<span class="giallo-l"><span>    F --&gt; G{EnableTrimming?}</span></span>
+<span class="giallo-l"><span>    G --&gt;|Yes| H[TrimBefore\nDelete old events]</span></span>
+<span class="giallo-l"><span>    G --&gt;|No| I[Keep raw events]</span></span>
+<span class="giallo-l"><span>    H --&gt; J[✓ Compacted]</span></span>
+<span class="giallo-l"><span>    I --&gt; J</span></span></code></pre><h3 id="4-3-defaultsummarizer">4.3 DefaultSummarizer</h3>
+<p>The rule-based summarizer produces concise English summaries without requiring an LLM call:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Agent agent-1 ran 3 task(s) [task-42, task-43, task-44],</span></span>
+<span class="giallo-l"><span>called 5 tool(s) [search, book, weather, calculator, email],</span></span>
+<span class="giallo-l"><span>emitted 23 events over 3m12s,</span></span>
+<span class="giallo-l"><span>bound to user request: &quot;Plan a trip to Tokyo&quot;,</span></span>
+<span class="giallo-l"><span>result: completed</span></span></code></pre><h3 id="4-4-compactableeventstore">4.4 CompactableEventStore</h3>
+<p>The <code>CompactableEventStore</code> wraps any <code>EventStore</code> and adds auto-compaction:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> CompactableEventStore</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EventStore</span><span style="color: #9399B2;font-style: italic;">                      // Embedded — delegates Read, etc.</span></span>
+<span class="giallo-l"><span>    compactor</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Compactor</span></span>
+<span class="giallo-l"><span>    trimStore</span><span style="color: #F9E2AF;font-style: italic;"> TrimAwareStore</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">        sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span></span>
+<span class="giallo-l"><span>    lastChecked</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">int64</span><span style="color: #9399B2;font-style: italic;">    // Debounce: avoids redundant checks</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>When <code>Append</code> is called, after writing events, a goroutine checks if compaction is needed. The check is debounced — it only runs when the stream has grown by at least 25% of the threshold since the last check.</p>
+<h3 id="4-5-read-with-summary-fallback">4.5 Read with Summary Fallback</h3>
+<p>If raw events have been trimmed, <code>Read</code> falls back to summaries:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">CompactableEventStore</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Read</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> opts</span><span style="color: #F9E2AF;font-style: italic;"> ReadOptions</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    events</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>EventStore</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">,</span><span> opts</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>events</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> events</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Underlying store empty — check summaries as fallback.</span></span>
+<span class="giallo-l"><span>    summaries</span><span style="color: #9399B2;">,</span><span> summaryErr</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>compactor</span><span style="color: #9399B2;">.</span><span>repo</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">FindByStreamID</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> summaryErr</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #94E2D5;"> ||</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>summaries</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> events</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    synthetic</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>summaries</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> sum</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> summaries</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        synthetic</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>synthetic</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>            ID</span><span style="color: #9399B2;">:</span><span>   sum</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            Type</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;"> EventType</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;event.summary&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>            Payload</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;summary_text&quot;</span><span style="color: #9399B2;">:</span><span>  sum</span><span style="color: #9399B2;">.</span><span>SummaryText</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;event_count&quot;</span><span style="color: #9399B2;">:</span><span>   sum</span><span style="color: #9399B2;">.</span><span>EventCount</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;outcome&quot;</span><span style="color: #9399B2;">:</span><span>       sum</span><span style="color: #9399B2;">.</span><span>Outcome</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            },</span></span>
+<span class="giallo-l"><span>            Version</span><span style="color: #9399B2;">:</span><span>   sum</span><span style="color: #9399B2;">.</span><span>EndVersion</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            Timestamp</span><span style="color: #9399B2;">:</span><span> sum</span><span style="color: #9399B2;">.</span><span>CreatedAt</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> synthetic</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="5-replaysession">5. ReplaySession</h2>
+<p><code>internal/flight/replay.go</code> provides step-by-step event replay for a task:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ReplaySession</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    taskID</span><span style="color: #CBA6F7;">     string</span></span>
+<span class="giallo-l"><span>    events</span><span style="color: #9399B2;">     []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Event</span></span>
+<span class="giallo-l"><span>    currentIdx</span><span style="color: #CBA6F7;"> int</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewReplaySession</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> eventStore</span><span style="color: #F9E2AF;font-style: italic;"> events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">EventStore</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> taskID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ReplaySession</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    evts</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> eventStore</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ReadOptions</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        Direction</span><span style="color: #9399B2;">:</span><span> events</span><span style="color: #9399B2;">.</span><span>ReadAscending</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        Limit</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">     10000</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;read events for task %s: %w&quot;</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>evts</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;no events found for task %s&quot;</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant User</span></span>
+<span class="giallo-l"><span>    participant RS as ReplaySession</span></span>
+<span class="giallo-l"><span>    participant Store as EventStore</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    User-&gt;&gt;RS: NewReplaySession(task-42)</span></span>
+<span class="giallo-l"><span>    RS-&gt;&gt;Store: Read(task-42, ascending)</span></span>
+<span class="giallo-l"><span>    Store--&gt;&gt;RS: [Event 1, Event 2, ..., Event N]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    loop Step through events</span></span>
+<span class="giallo-l"><span>        User-&gt;&gt;RS: Step()</span></span>
+<span class="giallo-l"><span>        RS-&gt;&gt;RS: currentIdx++</span></span>
+<span class="giallo-l"><span>        RS--&gt;&gt;User: ReplayStep{EventType, Payload}</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    User-&gt;&gt;RS: StepTo(5)</span></span>
+<span class="giallo-l"><span>    RS-&gt;&gt;RS: currentIdx = 5</span></span>
+<span class="giallo-l"><span>    RS--&gt;&gt;User: ReplayStep at index 5</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    User-&gt;&gt;RS: Summary()</span></span>
+<span class="giallo-l"><span>    RS--&gt;&gt;User: ReplaySummary{TotalSteps, Duration, Agents}</span></span></code></pre>
+<p>Key features:</p>
+<ul>
+<li><code>Step()</code>: advances one event, returns it</li>
+<li><code>StepTo(n)</code>: jumps to a specific step</li>
+<li><code>Summary()</code>: returns an overview (total steps, duration, agent IDs, event type distribution)</li>
+<li><code>Reset()</code>: returns to the beginning</li>
+<li><code>IsFinished()</code>: checks if all steps have been consumed</li>
+</ul>
+<hr />
+<h2 id="6-summaryrepository-implementations">6. SummaryRepository Implementations</h2>
+<h3 id="6-1-pgsummaryrepository">6.1 PgSummaryRepository</h3>
+<p>Stores summaries in the <code>event_summaries</code> table:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="sql"><span class="giallo-l"><span style="color: #CBA6F7;">CREATE TABLE</span><span style="color: #89B4FA;font-style: italic;"> IF</span><span style="color: #CBA6F7;"> NOT EXISTS</span><span> event_summaries (</span></span>
+<span class="giallo-l"><span>    id </span><span style="color: #CBA6F7;">VARCHAR</span><span>(</span><span style="color: #FAB387;">255</span><span>)</span><span style="color: #CBA6F7;"> PRIMARY KEY</span><span>,</span></span>
+<span class="giallo-l"><span>    stream_id </span><span style="color: #CBA6F7;">VARCHAR</span><span>(</span><span style="color: #FAB387;">255</span><span>)</span><span style="color: #CBA6F7;"> NOT NULL</span><span>,</span></span>
+<span class="giallo-l"><span>    agent_id </span><span style="color: #CBA6F7;">VARCHAR</span><span>(</span><span style="color: #FAB387;">255</span><span>)</span><span style="color: #CBA6F7;"> NOT NULL</span><span>,</span></span>
+<span class="giallo-l"><span>    task_id </span><span style="color: #CBA6F7;">VARCHAR</span><span>(</span><span style="color: #FAB387;">255</span><span>),</span></span>
+<span class="giallo-l"><span>    session_id </span><span style="color: #CBA6F7;">VARCHAR</span><span>(</span><span style="color: #FAB387;">255</span><span>),</span></span>
+<span class="giallo-l"><span>    user_id </span><span style="color: #CBA6F7;">VARCHAR</span><span>(</span><span style="color: #FAB387;">255</span><span>),</span></span>
+<span class="giallo-l"><span>    summary_text </span><span style="color: #CBA6F7;">TEXT NOT NULL</span><span>,</span></span>
+<span class="giallo-l"><span>    event_count </span><span style="color: #CBA6F7;">INTEGER NOT NULL DEFAULT</span><span style="color: #FAB387;"> 0</span><span>,</span></span>
+<span class="giallo-l"><span>    start_version </span><span style="color: #CBA6F7;">BIGINT NOT NULL</span><span>,</span></span>
+<span class="giallo-l"><span>    end_version </span><span style="color: #CBA6F7;">BIGINT NOT NULL</span><span>,</span></span>
+<span class="giallo-l"><span>    start_time </span><span style="color: #CBA6F7;">TIMESTAMP NOT NULL</span><span>,</span></span>
+<span class="giallo-l"><span>    end_time </span><span style="color: #CBA6F7;">TIMESTAMP NOT NULL</span><span>,</span></span>
+<span class="giallo-l"><span>    event_type_counts JSONB </span><span style="color: #CBA6F7;">DEFAULT</span><span style="color: #A6E3A1;"> &#39;{}&#39;</span><span>::jsonb,</span></span>
+<span class="giallo-l"><span>    tasks_created JSONB </span><span style="color: #CBA6F7;">DEFAULT</span><span style="color: #A6E3A1;"> &#39;[]&#39;</span><span>::jsonb,</span></span>
+<span class="giallo-l"><span>    tools_called JSONB </span><span style="color: #CBA6F7;">DEFAULT</span><span style="color: #A6E3A1;"> &#39;[]&#39;</span><span>::jsonb,</span></span>
+<span class="giallo-l"><span>    errors JSONB </span><span style="color: #CBA6F7;">DEFAULT</span><span style="color: #A6E3A1;"> &#39;[]&#39;</span><span>::jsonb,</span></span>
+<span class="giallo-l"><span>    request_summary </span><span style="color: #CBA6F7;">TEXT</span><span>,</span></span>
+<span class="giallo-l"><span>    outcome </span><span style="color: #CBA6F7;">VARCHAR</span><span>(</span><span style="color: #FAB387;">50</span><span>)</span><span style="color: #CBA6F7;"> NOT NULL DEFAULT</span><span style="color: #A6E3A1;"> &#39;active&#39;</span><span>,</span></span>
+<span class="giallo-l"><span>    metadata JSONB </span><span style="color: #CBA6F7;">DEFAULT</span><span style="color: #A6E3A1;"> &#39;{}&#39;</span><span>::jsonb,</span></span>
+<span class="giallo-l"><span>    created_at </span><span style="color: #CBA6F7;">TIMESTAMP DEFAULT NOW</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>);</span></span></code></pre>
+<p>Query interface:</p>
+<ul>
+<li><code>FindByStreamID</code>: all summaries for a stream, ordered by start_version</li>
+<li><code>FindByAgentAndTask</code>: summaries matching both agent and task</li>
+<li><code>FindByAgentID</code>: all summaries for an agent (cross-stream)</li>
+<li><code>FindLatestByStreamID</code>: most recent summary for a stream</li>
+<li><code>DeleteOlderThan</code>: cleanup by TTL</li>
+</ul>
+<h3 id="6-2-memorysummaryrepository">6.2 MemorySummaryRepository</h3>
+<p>In-memory counterpart for testing and demo mode. Uses a <code>map[string]*EventSummary</code> for storage and <code>map[string][]string</code> for stream-indexed lookups, with sorted insertion to maintain version order.</p>
+<hr />
+<h2 id="7-trimstore-implementations">7. TrimStore Implementations</h2>
+<p>After successful compaction, old raw events can be deleted:</p>
+<h3 id="7-1-pgtrimstore">7.1 PgTrimStore</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">PgTrimStore</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> TrimBefore</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> endVersion</span><span style="color: #CBA6F7;"> int64</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">int64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    result</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>pool</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Exec</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        `DELETE FROM events WHERE stream_id = $1 AND version &lt;= $2`</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        streamID</span><span style="color: #9399B2;">,</span><span> endVersion</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    )</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="7-2-memorytrimstore">7.2 MemoryTrimStore</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MemoryTrimStore</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> TrimBefore</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">_</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> endVersion</span><span style="color: #CBA6F7;"> int64</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">int64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    s</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> s</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    stream</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>streams</span><span style="color: #9399B2;">[</span><span>streamID</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>    split</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>stream</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;"> // Default: trim all</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> i</span><span style="color: #9399B2;">,</span><span> evt</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> stream</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> evt</span><span style="color: #9399B2;">.</span><span>Version</span><span style="color: #94E2D5;"> &gt;</span><span> endVersion</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            split</span><span style="color: #94E2D5;"> =</span><span> i</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            break</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> split</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        s</span><span style="color: #9399B2;">.</span><span>streams</span><span style="color: #9399B2;">[</span><span>streamID</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> stream</span><span style="color: #9399B2;">[</span><span>split</span><span style="color: #9399B2;">:]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Also filter the flat events slice</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        var</span><span> kept</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> _</span><span style="color: #9399B2;">,</span><span> evt</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> s</span><span style="color: #9399B2;">.</span><span>events</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> evt</span><span style="color: #9399B2;">.</span><span>StreamID</span><span style="color: #94E2D5;"> !=</span><span> streamID</span><span style="color: #94E2D5;"> ||</span><span> evt</span><span style="color: #9399B2;">.</span><span>Version</span><span style="color: #94E2D5;"> &gt;</span><span> endVersion</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                kept</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>kept</span><span style="color: #9399B2;">,</span><span> evt</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span>        s</span><span style="color: #9399B2;">.</span><span>events</span><span style="color: #94E2D5;"> =</span><span> kept</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return int64</span><span style="color: #9399B2;">(</span><span>split</span><span style="color: #9399B2;">),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="8-integration-with-agent-resurrection">8. Integration with Agent Resurrection</h2>
+<p>The Event System integrates deeply with the Runtime's resurrection pipeline:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant RT as Runtime</span></span>
+<span class="giallo-l"><span>    participant ES as EventStore</span></span>
+<span class="giallo-l"><span>    participant SA as StatefulAgent</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;RT: NotifyAgentDead(agent-1)</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;RT: factory() creates new instance</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;ES: Read(agent-1, ascending)</span></span>
+<span class="giallo-l"><span>    ES--&gt;&gt;RT: [Event 1, ..., Event N]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Note over RT,SA: Phase A: Build operational state</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;SA: RestoreState({session, tasks, ...})</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;SA: ReplayEvents([Event 1, ..., Event N])</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Note over RT,SA: Phase B: Build cognitive state</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;MM: GetLatestSessionForLeader()</span></span>
+<span class="giallo-l"><span>    MM--&gt;&gt;RT: session-42</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;MM: GetMessages(session-42)</span></span>
+<span class="giallo-l"><span>    MM--&gt;&gt;RT: [Message 1, ..., Message M]</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;SA: Inject cognitive state</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Note over RT,SA: Agent is now fully recovered</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;RT: StartAgent new instance</span></span></code></pre>
+<p>The two-phase recovery ensures:</p>
+<ul>
+<li><strong>Operational state</strong> (tasks, sessions, execution status) is reconstructed from the event stream</li>
+<li><strong>Cognitive state</strong> (conversation history, memories) is restored from MemoryManager</li>
+<li>Each phase is independently recoverable — partial recovery is better than no recovery</li>
+</ul>
+<hr />
+<h2 id="9-architectural-summary">9. Architectural Summary</h2>
+<h3 id="design-patterns">Design Patterns</h3>
+<table><thead><tr><th>Pattern</th><th>Location</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>Event Sourcing</td><td><code>types.go</code> (Event model)</td><td>Immutable append-only log</td></tr>
+<tr><td>Optimistic Concurrency</td><td><code>Append(expectedVersion)</code></td><td>Conflict detection on concurrent writes</td></tr>
+<tr><td>CQRS</td><td>EventStore (write) + SummaryRepository (read)</td><td>Write-optimized raw store + read-optimized summaries</td></tr>
+<tr><td>Observer</td><td><code>Subscribe(channel)</code></td><td>Real-time event streaming</td></tr>
+<tr><td>Strategy</td><td><code>Summarizer</code> function type</td><td>Pluggable summary generation (rule-based or LLM)</td></tr>
+<tr><td>Decorator</td><td><code>CompactableEventStore</code> wraps <code>EventStore</code></td><td>Transparent compaction without API change</td></tr>
+<tr><td>Debounce</td><td><code>lastChecked</code> map</td><td>Avoid redundant compaction checks</td></tr>
+</tbody></table>
+<h3 id="key-data-flow">Key Data Flow</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Write Path&quot;</span></span>
+<span class="giallo-l"><span>        C[Client] --&gt;|Append| CES[CompactableEventStore]</span></span>
+<span class="giallo-l"><span>        CES --&gt;|1. Write| ES[EventStore]</span></span>
+<span class="giallo-l"><span>        CES --&gt;|2. Background| CP[Compactor]</span></span>
+<span class="giallo-l"><span>        CP --&gt;|3. Summarize| SR[SummaryRepository]</span></span>
+<span class="giallo-l"><span>        CP --&gt;|4. Optionally trim| TS[TrimStore]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Read Path&quot;</span></span>
+<span class="giallo-l"><span>        RS[ReplaySession] --&gt;|Read| CES</span></span>
+<span class="giallo-l"><span>        CES --&gt;|Events exist?| ES</span></span>
+<span class="giallo-l"><span>        CES --&gt;|Empty? Fallback| SR</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Subscription&quot;</span></span>
+<span class="giallo-l"><span>        DV[Dashboard] --&gt;|Subscribe| CES</span></span>
+<span class="giallo-l"><span>        CES --&gt;|SSE| DV</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre><h3 id="file-index">File Index</h3>
+<table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>internal/events/types.go</code></td><td>Event model, EventType constants, EventStore interface</td></tr>
+<tr><td><code>internal/events/memory_store.go</code></td><td>In-memory EventStore with subscriber support</td></tr>
+<tr><td><code>internal/events/pg_store.go</code></td><td>PostgreSQL EventStore with idempotent insert</td></tr>
+<tr><td><code>internal/events/compactor.go</code></td><td>Compactor + DefaultSummarizer</td></tr>
+<tr><td><code>internal/events/summary.go</code></td><td>EventSummary model, SummaryRepository interface, CompactionConfig</td></tr>
+<tr><td><code>internal/events/summary_repository.go</code></td><td>PgSummaryRepository with full CRUD</td></tr>
+<tr><td><code>internal/events/memory_summary_repo.go</code></td><td>In-memory SummaryRepository</td></tr>
+<tr><td><code>internal/events/trim_store.go</code></td><td>PgTrimStore + MemoryTrimStore</td></tr>
+<tr><td><code>internal/events/compactable_store.go</code></td><td>Auto-compacting EventStore wrapper</td></tr>
+<tr><td><code>internal/flight/replay.go</code></td><td>ReplaySession for step-by-step replay</td></tr>
+</tbody></table>
+<hr />
+<h2 id="10-conclusion">10. Conclusion</h2>
+<p>Event Sourcing + CQRS + pluggable stores + auto-compaction. None of this is new in enterprise software. But in an agent framework? I think it's a pretty interesting experiment.</p>
+<p>The best moment? An agent crashed. I opened the Dashboard, replayed its entire event stream, and watched step by step where it went wrong. Felt less like debugging and more like watching a black box flight recorder.</p>
+<p><strong>That's what the event system is for. Not to make agents run faster. To tell you exactly what happened when they don't.</strong></p>
+<hr />
+<p><em>Next: Arena / Fault Injection — the most unhinged feature in GoAgentX. You can click a button on the Dashboard and assassinate a running agent. Then watch it resurrect itself.</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/09-arena-fault-injection-deep-dive/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">GoAgentX Architecture Deep Dive (9): Arena &#x2F; Fault Injection — Break It, Watch It Recover</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/07-runtime-lifecycle-deep-dive/">
+                                <span class="button__text">GoAgentX Architecture Deep Dive (7): Runtime &amp; Lifecycle — Birth, Death, and Resurrection</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

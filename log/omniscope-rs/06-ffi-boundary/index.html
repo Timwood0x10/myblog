@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>OmniScope-rs 07: FFI Boundary Detection — VTable Pattern vs. Trait Objects | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="Part 7 of the OmniScope-rs series: how Zig and Rust detect which functions cross language boundaries, using VTables and trait objects.">
+
+    <meta property="og:description" content="Part 7 of the OmniScope-rs series: how Zig and Rust detect which functions cross language boundaries, using VTables and trait objects.">
+    <meta property="og:title" content="OmniScope-rs 07: FFI Boundary Detection — VTable Pattern vs. Trait Objects | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/06-ffi-boundary/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Part 7 of the OmniScope-rs series: how Zig and Rust detect which functions cross language boundaries, using VTables and trait objects.">
+    <meta name="twitter:title" content="OmniScope-rs 07: FFI Boundary Detection — VTable Pattern vs. Trait Objects | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/06-ffi-boundary/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/06-ffi-boundary/">OmniScope-rs 07: FFI Boundary Detection — VTable Pattern vs. Trait Objects</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-16
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/language-detection/">#Language Detection</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/static-analysis/">#Static Analysis</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/zig/">#Zig</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="part-7-ffi-boundary-detection-vtable-pattern-vs-trait-objects">Part 7: FFI Boundary Detection — VTable Pattern vs. Trait Objects</h1>
+<h2 id="the-last-frontier">The Last Frontier</h2>
+<p>We've covered how OmniScope loads IR, tracks resources, models ownership, builds contract graphs, and analyzes paths. But there's one more problem that's central to OmniScope's mission:</p>
+<blockquote>
+<p>How do you know when a function crosses a language boundary?</p>
+</blockquote>
+<p>This is the heart of cross-language FFI security analysis. If we can't detect FFI boundaries, we can't find cross-language bugs.</p>
+<p>Consider this LLVM IR:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="llvm"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">; A call to Python&#39;s C API</span></span>
+<span class="giallo-l"><span>%result = </span><span style="color: #CBA6F7;">call i32</span><span style="color: #89B4FA;font-style: italic;"> @PyObject_GetItem</span><span>(ptr %obj, ptr %key)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">; A call to C&#39;s standard library</span></span>
+<span class="giallo-l"><span>%buf = </span><span style="color: #CBA6F7;">call</span><span> ptr </span><span style="color: #89B4FA;font-style: italic;">@malloc</span><span>(</span><span style="color: #CBA6F7;">i64</span><span style="color: #FAB387;"> 100</span><span>)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">; A call through cgo</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">call void</span><span style="color: #89B4FA;font-style: italic;"> @_cgo_runtime_cgocall</span><span>(ptr </span><span style="color: #89B4FA;font-style: italic;">@C.free</span><span>, ptr %args)</span></span></code></pre>
+<p>Each of these calls crosses a language boundary. But how does the analyzer know that <code>PyObject_GetItem</code> is a Python call, that <code>malloc</code> is a C call, and that <code>_cgo_runtime_cgocall</code> is a Go call?</p>
+<p>And more importantly: <strong>how does the analyzer know what each call means for resource ownership</strong>? Does <code>PyObject_GetItem</code> return a borrowed reference or a new reference? Does <code>malloc</code> allocate memory that must be freed? Does <code>_cgo_runtime_cgocall</code> transfer ownership?</p>
+<hr />
+<h2 id="think-about-it">Think About It</h2>
+<p>How would you detect FFI boundaries in LLVM IR?</p>
+<p>You have several signals to work with:</p>
+<ol>
+<li><strong>Linkage</strong>: Is a function declared (extern) or defined? If it's declared and has C linkage, it's an FFI boundary.</li>
+<li><strong>Name patterns</strong>: Does the function name follow a known convention? <code>Py*</code> for Python, <code>Java_*</code> for JNI, <code>_cgo_*</code> for Go cgo.</li>
+<li><strong>Debug info</strong>: LLVM debug metadata might tell you what language a function was compiled from (DW_AT_language).</li>
+<li><strong>Call graph</strong>: If a Rust function calls a C function, that call crosses an FFI boundary.</li>
+<li><strong>Mangling</strong>: C++ Itanium ABI mangled names (<code>_Z*</code>) are a strong signal.</li>
+<li><strong>Source path</strong>: If the LLVM metadata shows the source file is <code>foo.py</code>, functions from that file are Python.</li>
+</ol>
+<p>Once you've detected the FFI boundary, you need to understand the <strong>semantics</strong> of each FFI call. A Python C API adapter needs to know that <code>PyObject_New</code> allocates, <code>Py_DECREF</code> conditionally releases, and <code>PyObject_GetItem</code> returns a borrowed reference.</p>
+<hr />
+<h2 id="zig-s-approach-vtable-pattern-for-adapters">Zig's Approach: VTable Pattern for Adapters</h2>
+<h3 id="the-languageadapter-interface">The LanguageAdapter Interface</h3>
+<p>Zig doesn't have traits or interfaces. Instead, the language adapter system uses a <strong>VTable pattern</strong> — a struct of function pointers:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">pub const</span><span> AdapterVTable</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> struct</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> AnalyzeFn</span><span style="color: #94E2D5;"> = *</span><span style="color: #CBA6F7;">const fn</span><span>(</span></span>
+<span class="giallo-l"><span>        self</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span> LanguageAdapter</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        func</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">anyopaque</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        ctx</span><span style="color: #94E2D5;">:</span><span> ContextPtr</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        allocator</span><span style="color: #94E2D5;">:</span><span> std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span>Allocator</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    ) </span><span style="color: #CBA6F7;">anyerror</span><span style="color: #94E2D5;">!</span><span>AdapterAnalysis</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> ClassifyFn</span><span style="color: #94E2D5;"> = *</span><span style="color: #CBA6F7;">const fn</span><span>(</span></span>
+<span class="giallo-l"><span>        self</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span> LanguageAdapter</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        callee_name</span><span style="color: #94E2D5;">:</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    ) FFISemantics</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> SuppressFn</span><span style="color: #94E2D5;"> = *</span><span style="color: #CBA6F7;">const fn</span><span>(</span></span>
+<span class="giallo-l"><span>        self</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span> LanguageAdapter</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        func_name</span><span style="color: #94E2D5;">:</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    ) </span><span style="color: #CBA6F7;">bool</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> OwningPatternsFn</span><span style="color: #94E2D5;"> = *</span><span style="color: #CBA6F7;">const fn</span><span>(</span></span>
+<span class="giallo-l"><span>        self</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span> LanguageAdapter</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    ) []</span><span style="color: #CBA6F7;">const</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> BorrowingPatternsFn</span><span style="color: #94E2D5;"> = *</span><span style="color: #CBA6F7;">const fn</span><span>(</span></span>
+<span class="giallo-l"><span>        self</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span> LanguageAdapter</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    ) []</span><span style="color: #CBA6F7;">const</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    analyzeFn</span><span style="color: #94E2D5;">:</span><span> AnalyzeFn</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    classifyFn</span><span style="color: #94E2D5;">:</span><span> ClassifyFn</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    suppressFn</span><span style="color: #94E2D5;">:</span><span> SuppressFn</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    owningPatternsFn</span><span style="color: #94E2D5;">:</span><span> OwningPatternsFn</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    borrowingPatternsFn</span><span style="color: #94E2D5;">:</span><span> BorrowingPatternsFn</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p>Each adapter is a <code>LanguageAdapter</code> struct that bundles metadata with a VTable:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">pub const</span><span> LanguageAdapter</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> struct</span><span> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">:</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    language</span><span style="color: #94E2D5;">:</span><span> Language</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    memory_model</span><span style="color: #94E2D5;">:</span><span> MemoryModel</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    vtable</span><span style="color: #94E2D5;">:</span><span> AdapterVTable</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> analyzeFunction</span><span>(self</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span> LanguageAdapter</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ...</span><span>) </span><span style="color: #94E2D5;">!</span><span>AdapterAnalysis {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> self</span><span style="color: #94E2D5;">.</span><span>vtable</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">analyzeFn</span><span>(self</span><span style="color: #9399B2;">,</span><span> func</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #9399B2;">,</span><span> allocator)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> classifyCall</span><span>(self</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span> LanguageAdapter</span><span style="color: #9399B2;">,</span><span> callee_name</span><span style="color: #94E2D5;">:</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span>) FFISemantics {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> self</span><span style="color: #94E2D5;">.</span><span>vtable</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">classifyFn</span><span>(self</span><span style="color: #9399B2;">,</span><span> callee_name)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #9399B2;">;</span></span></code></pre><h3 id="default-implementations">Default Implementations</h3>
+<p>Even without trait objects, Zig provides default implementations via a <code>Defaults</code> namespace:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">pub const</span><span> Defaults</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> struct</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> defaultAnalyze</span><span>(self_ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span> LanguageAdapter</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ...</span><span>) </span><span style="color: #CBA6F7;">anyerror</span><span style="color: #94E2D5;">!</span><span>AdapterAnalysis {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Name-based classification: iterate call instructions in the function,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // classify each callee using adapter-specific knowledge</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        var</span><span> result</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> try</span><span> AdapterAnalysis</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">init</span><span>(allocator</span><span style="color: #9399B2;">,</span><span> self_ptr</span><span style="color: #94E2D5;">.</span><span>language)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // ... iterate LLVM instructions, classify by callee name ...</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> result</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> defaultClassify</span><span>(</span><span style="color: #94E2D5;">...</span><span>) FFISemantics {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #94E2D5;"> .</span><span>unknown</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">  // Conservative default</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> makeDefaultVTable</span><span>() AdapterVTable {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #94E2D5;"> .</span><span>{</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>analyzeFn</span><span style="color: #94E2D5;"> =</span><span> defaultAnalyze</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>classifyFn</span><span style="color: #94E2D5;"> =</span><span> defaultClassify</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>suppressFn</span><span style="color: #94E2D5;"> =</span><span> defaultSuppress</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>owningPatternsFn</span><span style="color: #94E2D5;"> =</span><span> defaultOwningPatterns</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>borrowingPatternsFn</span><span style="color: #94E2D5;"> =</span><span> defaultBorrowingPatterns</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        }</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #9399B2;">;</span></span></code></pre><h3 id="concrete-adapters">Concrete Adapters</h3>
+<p>Each language adapter (~200 LOC) is a simple module that provides pattern tables and overrides specific VTable methods:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// cpp_adapter.zig</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub const</span><span> C_ALLOCATORS</span><span style="color: #94E2D5;"> =</span><span> [_][]</span><span style="color: #CBA6F7;">const u8</span><span>{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;malloc&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;calloc&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;realloc&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;strdup&quot;</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ...</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub const</span><span> c_instance</span><span style="color: #94E2D5;"> =</span><span> LanguageAdapter{</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span>name</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;c_instance&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span>language</span><span style="color: #94E2D5;"> = .</span><span>c</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span>memory_model</span><span style="color: #94E2D5;"> = .</span><span>manual</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span>vtable</span><span style="color: #94E2D5;"> =</span><span> AdapterVTable{</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>analyzeFn</span><span style="color: #94E2D5;"> =</span><span> Defaults</span><span style="color: #94E2D5;">.</span><span>defaultAnalyze</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // Use the default</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>classifyFn</span><span style="color: #94E2D5;"> =</span><span> cClassify</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">               // Custom classify</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>suppressFn</span><span style="color: #94E2D5;"> =</span><span> Defaults</span><span style="color: #94E2D5;">.</span><span>defaultSuppress</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>owningPatternsFn</span><span style="color: #94E2D5;"> =</span><span> cOwningPatterns</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>borrowingPatternsFn</span><span style="color: #94E2D5;"> =</span><span> cBorrowingPatterns</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    }</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #9399B2;">;</span></span></code></pre><h3 id="the-ffimatcher">The FFIMatcher</h3>
+<p>The Zig version also has an <code>FFIMatcher</code> that matches function declarations (declares) across languages with their definitions:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">pub const</span><span> FFIMatch</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> struct</span><span> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">:</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    declare_func</span><span style="color: #94E2D5;">: ?</span><span>FunctionInfo</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // e.g., Rust declaration</span></span>
+<span class="giallo-l"><span>    define_func</span><span style="color: #94E2D5;">: ?</span><span>FunctionInfo</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // e.g., C definition</span></span>
+<span class="giallo-l"><span>    is_complete</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p>The matcher works by:</p>
+<ol>
+<li>Extracting declares from one language's IR (e.g., Rust <code>extern "C"</code> blocks)</li>
+<li>Extracting defines from another language's IR (e.g., C function definitions)</li>
+<li>Matching by function name</li>
+<li>Identifying cross-language FFI calls from the matches</li>
+</ol>
+<h3 id="language-detection">Language Detection</h3>
+<p>The language adapter system includes a <code>detectCalleeLanguage</code> helper that uses naming heuristics:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> detectCalleeLanguage</span><span>(callee_name</span><span style="color: #94E2D5;">:</span><span> []</span><span style="color: #CBA6F7;">const u8</span><span>) Language {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">startsWith</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> callee_name</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;Py&quot;</span><span>) </span><span style="color: #CBA6F7;">or</span></span>
+<span class="giallo-l"><span>        std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">startsWith</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> callee_name</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;_Py&quot;</span><span>))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #94E2D5;"> .</span><span>python</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">startsWith</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> callee_name</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;C.&quot;</span><span>) </span><span style="color: #CBA6F7;">or</span></span>
+<span class="giallo-l"><span>        std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">startsWith</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> callee_name</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;_Cgo_&quot;</span><span>))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #94E2D5;"> .</span><span>go</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">indexOf</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> callee_name</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;std::&quot;</span><span>) </span><span style="color: #94E2D5;">!=</span><span style="color: #CBA6F7;"> null or</span></span>
+<span class="giallo-l"><span>        std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">startsWith</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> callee_name</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;_Z&quot;</span><span>))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #94E2D5;"> .</span><span>cpp</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">startsWith</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> callee_name</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;Java_&quot;</span><span>) </span><span style="color: #CBA6F7;">or</span></span>
+<span class="giallo-l"><span>        std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">startsWith</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> callee_name</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;JNI_&quot;</span><span>))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #94E2D5;"> .</span><span>java</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> .</span><span>c</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;"> // Default</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<hr />
+<h2 id="rust-s-approach-trait-objects-and-pass-based-detection">Rust's Approach: Trait Objects and Pass-Based Detection</h2>
+<h3 id="the-trait-object-pattern">The Trait Object Pattern</h3>
+<p>The Rust version uses idiomatic Rust traits:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub trait</span><span style="color: #F9E2AF;font-style: italic;"> LanguageAdapter</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> analyze</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> func</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Function</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> ctx</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">AnalysisContext</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">AdapterAnalysis</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> classify_call</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> callee_name</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> FFISemantics</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> should_suppress</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> func_name</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> owning_patterns</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> borrowing_patterns</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Concrete adapters implement the trait:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> CAdapter</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> CppAdapter</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> PythonAdapter</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> GoAdapter</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> JavaAdapter</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> CSharpAdapter</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> RustAdapter</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> NodeAdapter</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> WasmAdapter</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> LanguageAdapter</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> CAdapter</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> analyze</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> func</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Function</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> ctx</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">AnalysisContext</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">AdapterAnalysis</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // C-specific analysis</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> classify_call</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> callee_name</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> FFISemantics</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        match</span><span> callee_name</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">            &quot;malloc&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;calloc&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;realloc&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> FFISemantics</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Allocates</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">            &quot;free&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> FFISemantics</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Deallocates</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> FFISemantics</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Unknown</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Adapters are used via <code>dyn LanguageAdapter</code> trait objects:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> adapter</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">dyn</span><span style="color: #F9E2AF;font-style: italic;"> LanguageAdapter</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">CAdapter</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> result</span><span style="color: #94E2D5;"> =</span><span> adapter</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">analyze</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>func</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>ctx</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span></code></pre><h3 id="the-csharpadapter-a-deeper-example">The CSharpAdapter — A Deeper Example</h3>
+<p>The Rust version's <code>CSharpAdapter</code> comes with dedicated modules for different C# interop concerns:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub mod</span><span style="color: #FAB387;"> dispose</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">    // IDisposable pattern</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub mod</span><span style="color: #FAB387;"> gc</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">         // .NET GC interaction</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub mod</span><span style="color: #FAB387;"> pinvoke</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">    // P/Invoke conventions</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> CSharpSemanticPattern</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    PInvokeCall</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MarshalAllocation</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Marshal.AllocHGlobal</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MarshalDeallocation</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // Marshal.FreeHGlobal</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    GCHandleAllocation</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // GCHandle.Alloc (pinning)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    GCHandleDeallocation</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    SafeHandleUsage</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    IDisposablePattern</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="the-ffiboundarydetector">The FFIBoundaryDetector</h3>
+<p>The Rust version has a dedicated <code>FFIBoundaryDetector</code> that consolidates FFI detection:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> FFIBoundaryDetector</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    detector</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> LanguageDetector</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> FFIBoundaryDetector</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> detect_caller_lang</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> caller</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> caller_is_defined</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> name</span><span style="color: #94E2D5;"> =</span><span> caller</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">trim_start_matches</span><span style="color: #9399B2;">(&#39;</span><span style="color: #A6E3A1;">@</span><span style="color: #9399B2;">&#39;);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> detected</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>detector</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">detect_from_function</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> caller_is_defined</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> detected</span><span style="color: #94E2D5;"> ==</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Unknown</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">C</span><span style="color: #9399B2;font-style: italic;">  // C fallback for defined functions with unknown language</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            detected</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> detect_callee_lang</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> callee</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> name</span><span style="color: #94E2D5;"> =</span><span> callee</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">trim_start_matches</span><span style="color: #9399B2;">(&#39;</span><span style="color: #A6E3A1;">@</span><span style="color: #9399B2;">&#39;);</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">        self</span><span style="color: #94E2D5;">.</span><span>detector</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">detect_from_function</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> is_cross_language</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> caller_lang</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> callee_lang</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        caller_lang</span><span style="color: #94E2D5;"> !=</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Unknown</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            &amp;&amp;</span><span> callee_lang</span><span style="color: #94E2D5;"> !=</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Unknown</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            &amp;&amp;</span><span> caller_lang</span><span style="color: #94E2D5;"> !=</span><span> callee_lang</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="the-pass-based-pipeline">The Pass-Based Pipeline</h3>
+<p>The Rust version structures FFI detection as a series of passes:</p>
+<ol>
+<li><strong><code>CallGraphPass</code></strong>: Builds the call graph, detects cross-language edges</li>
+<li><strong><code>FFIBoundaryPass</code></strong>: Identifies FFI boundary functions from cross-language edges</li>
+<li><strong><code>SurfaceClassifierPass</code></strong>: Classifies functions by surface (Boundary, StdLib, Runtime, Internal) using L1 (linkage) + L2 (source path) + L3 (call graph reachability)</li>
+</ol>
+<p>The <code>SurfaceClassifierPass</code> depends on <code>CallGraphPass</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Pass</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> SurfaceClassifierPass</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> name</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt; &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #F9E2AF;font-style: italic;"> str</span><span style="color: #9399B2;"> {</span><span style="color: #A6E3A1;"> &quot;SurfaceClassifier&quot;</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> dependencies</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #F9E2AF;font-style: italic;"> str</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;CallGraph&quot;</span><span style="color: #9399B2;">] }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> run</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> ctx</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F9E2AF;font-style: italic;"> PassContext</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">PassResult</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> classifier</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> SurfaceClassifier</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> cross_lang_edges</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">CrossLangEdge</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span> ctx</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;cross_lang_edges&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap_or_default</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Phase 1: Classify each function using L1 + L2</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let mut</span><span> surfaces</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> FunctionSurface</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> name</span><span style="color: #CBA6F7;"> in</span><span> all_names</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            let</span><span> language</span><span style="color: #94E2D5;"> =</span><span> detector</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">detect_from_function</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            let</span><span> surface</span><span style="color: #94E2D5;"> =</span><span> classifier</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">classify</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">,</span><span> language</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> None</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>            surfaces</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">insert</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(),</span><span> surface</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Phase 2: L3 — Upgrade Unknown functions reachable from FFI boundaries</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // If a function was classified as Unknown/Dependency but is reachable</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // from a known FFI boundary, upgrade it to Boundary.</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="the-languagedetector">The LanguageDetector</h3>
+<p>The <code>LanguageDetector</code> is a reusable component that can be cached in <code>ModuleIndex</code> to avoid redundant detection:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> LanguageDetector</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> LanguageDetector</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> detect_from_function</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> name</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Language</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Check name patterns, mangling, metadata</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The detector considers multiple signals:</p>
+<ul>
+<li>Itanium ABI mangling (<code>_Z*</code>) → C++</li>
+<li>Python C API prefixes (<code>Py</code>, <code>_Py</code>) → Python</li>
+<li>JNI patterns (<code>Java_</code>, <code>JNI_</code>) → Java</li>
+<li>cgo patterns (<code>_cgo_</code>, <code>C.*</code>) → Go</li>
+<li>Namespace patterns (<code>std::</code>) → C++</li>
+<li>Rust name hashing (<code>_RNv*</code>) → Rust</li>
+</ul>
+<hr />
+<h2 id="comparison-vtable-vs-trait-objects">Comparison: VTable vs. Trait Objects</h2>
+<table><thead><tr><th>Aspect</th><th>Zig</th><th>Rust</th></tr></thead><tbody>
+<tr><td><strong>Dispatch mechanism</strong></td><td>VTable (function pointer struct)</td><td>Trait objects (<code>dyn LanguageAdapter</code>)</td></tr>
+<tr><td><strong>Default implementations</strong></td><td><code>Defaults</code> namespace with <code>makeDefaultVTable()</code></td><td>Default trait methods</td></tr>
+<tr><td><strong>Adapter size</strong></td><td>~200 LOC per adapter</td><td>~200 LOC per adapter module</td></tr>
+<tr><td><strong>Adapter structure</strong></td><td>Flat module with exported instances</td><td>Module with <code>impl Trait for Adapter</code></td></tr>
+<tr><td><strong>Detection passes</strong></td><td><code>FFIMatcher</code> + <code>LanguageAdapterRegistry</code></td><td><code>CallGraphPass</code> → <code>FFIBoundaryPass</code> → <code>SurfaceClassifierPass</code></td></tr>
+<tr><td><strong>Language detector</strong></td><td>Inline <code>detectCalleeLanguage()</code> helper</td><td><code>LanguageDetector</code> struct (cachable in <code>ModuleIndex</code>)</td></tr>
+<tr><td><strong>Multi-crate</strong></td><td>Single crate</td><td><code>omniscope-semantics</code> crate with sub-modules</td></tr>
+<tr><td><strong>C# support</strong></td><td>Basic adapter</td><td>Full module: <code>dispose</code>, <code>gc</code>, <code>pinvoke</code> sub-modules</td></tr>
+<tr><td><strong>Node.js support</strong></td><td>Not mentioned</td><td>Explicit <code>NodeAdapter</code></td></tr>
+<tr><td><strong>WASM support</strong></td><td>Not mentioned</td><td>Explicit <code>WasmAdapter</code></td></tr>
+</tbody></table>
+<h3 id="the-zig-trade-off-explicit-and-direct">The Zig Trade-off: Explicit and Direct</h3>
+<p>Zig's VTable pattern is <strong>explicit</strong>. You can see exactly what methods an adapter needs to implement. The <code>Defaults.makeDefaultVTable()</code> factory makes it easy to start with sensible defaults and override specific methods. The pattern tables (<code>C_ALLOCATORS</code>, <code>C_DEALLOCATORS</code>) are simple arrays of strings — easy to extend, easy to audit.</p>
+<p>The downside: <strong>more boilerplate</strong>. Every method call goes through <code>self.vtable.fn(self, ...)</code>. There's no method resolution, no <code>super</code> calls, no inheritance. Everything is manual.</p>
+<h3 id="the-rust-trade-off-idiomatic-and-extensible">The Rust Trade-off: Idiomatic and Extensible</h3>
+<p>Rust's trait objects are <strong>idiomatic</strong>. If you know Rust, you know how <code>LanguageAdapter</code> works — it's just a trait. The module structure (<code>csharp_adapter/mod.rs</code> with sub-modules for <code>dispose</code>, <code>gc</code>, <code>pinvoke</code>) is the standard Rust way to organize functionality.</p>
+<p>The pass-based pipeline (<code>CallGraphPass</code> → <code>FFIBoundaryPass</code> → <code>SurfaceClassifierPass</code>) provides <strong>automatic dependency resolution</strong> and <strong>clear data flow</strong>. Each pass reads inputs from <code>PassContext</code> and writes outputs to <code>PassContext</code>.</p>
+<p>The downside: <strong>more infrastructure</strong>. You need the pass manager, the <code>PassContext</code> type, the <code>Pass</code> trait, and the dependency system. Setting this up is more work than Zig's simpler approach.</p>
+<h3 id="what-we-can-learn">What We Can Learn</h3>
+<p>The FFI boundary detection system shows how the two languages handle <strong>pluggable architecture</strong>:</p>
+<p><strong>Zig's VTable pattern says</strong>: "Interfaces are a code organization tool, not a language feature." The VTable is explicit, you can see exactly how it works, and you can build your own dispatch logic if you need something custom (e.g., runtime adapter selection based on module analysis). There's no magic — just structs and function pointers.</p>
+<p><strong>Rust's trait objects say</strong>: "Interfaces are a language feature, and the compiler should enforce them." The <code>LanguageAdapter</code> trait defines a contract, and every implementor must fulfill it. The compiler checks that all methods are implemented with the right signatures. The <code>dyn</code> dispatch is handled by the runtime.</p>
+<p>Both approaches achieve the same goal: <strong>polymorphic dispatch over language-specific adapters</strong>. But they feel different in practice:</p>
+<ul>
+<li>
+<p>In Zig, you write the dispatch infrastructure once (the VTable pattern) and it never changes. <code>AdapterVTable</code> is a plain struct. <code>LanguageAdapter</code> is a plain struct with a vtable field. There's no magic, but there's also no compiler-enforced interface contract.</p>
+</li>
+<li>
+<p>In Rust, the compiler enforces the contract. If you add a new method to <code>LanguageAdapter</code>, every implementor generates a compile error until it's added. The trait serves as documentation, contract, and type-checking mechanism all in one.</p>
+</li>
+</ul>
+<hr />
+<h2 id="series-wrap-up-what-we-ve-learned">Series Wrap-Up: What We've Learned</h2>
+<p>Over these seven posts, we've walked through every major subsystem of OmniScope:</p>
+<ol>
+<li><strong>Same Problem, Two Philosophies</strong>: How language philosophy shapes architecture — monolithic vs. modular, control vs. correctness.</li>
+<li><strong>Loading LLVM IR</strong>: How <code>@cImport</code> in Zig compares to <code>llvm-sys</code> with RAII guards in Rust.</li>
+<li><strong>Resource Tracking</strong>: Heuristic name matching vs. formal <code>ResourceFamily</code> with compatibility tables.</li>
+<li><strong>Ownership Model</strong>: Rich 8-state <code>PointerContract</code> with detailed diagnostics vs. lean event-driven state machine.</li>
+<li><strong>Contract Graph</strong>: Integrated ad-hoc graph vs. formalized pass-based architecture with explicit dependencies.</li>
+<li><strong>Path-Sensitive Analysis</strong>: Floating-point confidence scoring vs. discrete <code>PathConfidence</code> levels with enrichment.</li>
+<li><strong>FFI Boundary Detection</strong>: VTable pattern vs. trait objects for language adapter dispatch.</li>
+</ol>
+<h3 id="the-meta-lesson">The Meta-Lesson</h3>
+<p>The most important thing we've learned isn't about Zig or Rust specifically. It's about how <strong>language design influences software architecture</strong>.</p>
+<p>When a language gives you <code>@cImport</code>, you build your FFI layer differently than when you use <code>llvm-sys</code>. When a language gives you traits, you organize your adapters differently than when you use VTables. When a language has RAII, you manage resources differently than when you pass allocators explicitly.</p>
+<p>Neither approach is "right" or "wrong." Each is <strong>idiomatic</strong> for its language — it takes advantage of what the language provides and works with the grain of the language.</p>
+<p>But by looking at the same problem solved in two languages, we can see past the language-specific details to the underlying design principles:</p>
+<ul>
+<li><strong>Separation of concerns</strong> matters regardless of language. Both versions separate IR loading from analysis, analysis from reporting.</li>
+<li><strong>Explicit data flow</strong> is valuable. Whether you use <code>PassContext</code> (Rust) or pass allocators explicitly (Zig), knowing where data comes from and goes to is essential for maintainability.</li>
+<li><strong>Type safety catches bugs</strong>. Rust's type system catches more at compile time (wrong adapter structure, mismatched family compatibility). Zig's explicit style catches different bugs (inconsistent allocator usage, forgotten cleanup).</li>
+<li><strong>Documentation lives in code</strong>. Zig's <code>isValid()</code> transition table documents the entire state machine in one switch expression. Rust's <code>matches!</code> macros and enum variants document valid states in the type system.</li>
+</ul>
+<h3 id="the-practical-takeaway">The Practical Takeaway</h3>
+<p>If you're building a cross-language static analyzer (or any complex multi-language tool), here's what this series suggests:</p>
+<ul>
+<li><strong>Start with the architecture that matches your language's idioms</strong>. Don't fight the language — you'll waste energy and produce unidiomatic code.</li>
+<li><strong>Think about data flow early</strong>. How will analysis results move between passes? What's the shared context? Both OmniScope versions solved this, but with very different mechanisms.</li>
+<li><strong>Invest in your domain model</strong>. <code>ResourceFamily</code>, <code>PointerContract</code>, <code>OwnershipState</code> — these types are the foundation everything else builds on. Get them right in either language, and the rest follows.</li>
+<li><strong>Test with real code</strong>. Both versions have extensive test corpora (OpenSSL, SQLite, ripgrep, zlib, etc.). There's no substitute for running your analyzer against real-world cross-language FFI patterns.</li>
+</ul>
+<h3 id="final-reflection">Final Reflection</h3>
+<p>OmniScope is the same tool in spirit, regardless of implementation language. It loads LLVM IR, classifies resources, tracks ownership, analyzes paths, and detects FFI boundaries. It finds real cross-language memory safety bugs that other tools miss.</p>
+<p>The Zig version is a testament to what you can build with <strong>explicitness and control</strong>. Every allocation is visible. Every function call is direct. The state machine is right there in the code.</p>
+<p>The Rust version is a testament to what you can build with <strong>type safety and modularity</strong>. The crate structure enforces boundaries. The trait system enables extensibility. The pass manager orchestrates complexity.</p>
+<p>Both are correct. Both are beautiful. And both will continue to find bugs that keep our cross-language software safe.</p>
+<hr />
+<p><em>This concludes the series. Thank you for reading.</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-path-sensitive-analysis/">
+                                <span class="button__text">OmniScope-rs 06: Path-Sensitive Analysis — Heuristic vs. Structured</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

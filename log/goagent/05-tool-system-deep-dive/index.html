@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>GoAgentX Architecture Deep Dive (5): Tool System — Capability Matrix and Safe Execution | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="22 built-in tools, thread-safe registry, multi-layer security for code execution, and a capability detection engine for semantic tool discovery.">
+
+    <meta property="og:description" content="22 built-in tools, thread-safe registry, multi-layer security for code execution, and a capability detection engine for semantic tool discovery.">
+    <meta property="og:title" content="GoAgentX Architecture Deep Dive (5): Tool System — Capability Matrix and Safe Execution | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/goagent/05-tool-system-deep-dive/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="22 built-in tools, thread-safe registry, multi-layer security for code execution, and a capability detection engine for semantic tool discovery.">
+    <meta name="twitter:title" content="GoAgentX Architecture Deep Dive (5): Tool System — Capability Matrix and Safe Execution | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/goagent/05-tool-system-deep-dive/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/05-tool-system-deep-dive/">GoAgentX Architecture Deep Dive (5): Tool System — Capability Matrix and Safe Execution</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-15
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/multi-agent/">#Multi-Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/tool-system/">#Tool System</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="goagentx-architecture-deep-dive-5-tool-system-capability-matrix-and-safe-execution">GoAgentX Architecture Deep Dive (5): Tool System -- Capability Matrix and Safe Execution</h1>
+<blockquote>
+<p>An agent that can't use tools is useless. You know the type: "Let me look that up for you..." — then nothing happens.
+I figured: <strong>an agent's capability is defined by the tools it can call</strong>. So I made the tool system the thickest layer in the entire framework.
+22 built-in tools, from a calculator to a code runner, from web scraping to knowledge base CRUD. Not for show — each one earned its place through real usage.</p>
+</blockquote>
+<h2 id="why-the-tool-layer-is-so-thick">Why the Tool Layer Is So Thick</h2>
+<p>The most awkward moment when demoing an agent? It says "Let me search for that" — and does nothing, because it has no search tool. Or "Let me calculate that" — and outputs a text formula instead of a number, because it has no calculator.</p>
+<p>My first Python prototype registered tools in a giant dict of functions. It worked — until it didn't. No parameter validation, no error handling, no security isolation. One tool crashes, the whole agent goes down with it.</p>
+<p>When I designed GoAgentX's tool system, I set a few hard rules:</p>
+<ol>
+<li><strong>Every tool is a first-class citizen</strong> — its own name, description, parameter schema, capability tags</li>
+<li><strong>One registry to rule them all</strong> — tools don't scatter across the codebase</li>
+<li><strong>Security isn't an afterthought</strong> — code execution, file operations, network requests had multi-layer protection from day one</li>
+<li><strong>Tools must be discoverable</strong> — the agent needs to know what it can call, no hardcoding</li>
+</ol>
+<h2 id="2-architecture-overview">2. Architecture Overview</h2>
+<p>The tool system follows a clean layered architecture:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Application/Agent Layer</span></span>
+<span class="giallo-l"><span>        |</span></span>
+<span class="giallo-l"><span>   Registry Layer (GlobalRegistry, ToolGroup, ToolFilter)</span></span>
+<span class="giallo-l"><span>        |</span></span>
+<span class="giallo-l"><span>   Core Interface Layer (Tool, Result, Capability)</span></span>
+<span class="giallo-l"><span>        |</span></span>
+<span class="giallo-l"><span>   Base Implementation Layer (BaseTool, ToolFunc)</span></span>
+<span class="giallo-l"><span>        |</span></span>
+<span class="giallo-l"><span>   Built-in Tool Layer (math, network, text, knowledge, memory, execution, file, system, planning)</span></span></code></pre>
+<p>At the top, agents and workflows discover and invoke tools through a <strong>thread-safe Registry</strong>. Tools implement a minimal <strong>Tool interface</strong> with metadata, parameter schema, and an <code>Execute</code> method. A <strong>BaseTool</strong> struct provides default implementations for lifecycle hooks, and a <strong>ToolFunc</strong> adapter allows creating tools from simple functions without defining a full struct. The <strong>CapabilityEngine</strong> adds semantic discovery, matching natural language queries to appropriate tools based on keyword analysis.</p>
+<h2 id="3-core-interface-layer">3. Core Interface Layer</h2>
+<h3 id="3-1-the-tool-interface">3.1 The Tool Interface</h3>
+<p>The foundational abstraction is the <code>Tool</code> interface, defined in <code>internal/tools/resources/core/tool.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Tool</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Name</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Description</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Category</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> ToolCategory</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Capabilities</span><span style="color: #9399B2;">() []</span><span style="color: #F9E2AF;font-style: italic;">Capability</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}) (</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Parameters</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ParameterSchema</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This interface is intentionally minimal -- just seven methods. The <code>Category()</code> method classifies tools into one of seven categories:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ToolCategory</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CategorySystem</span><span style="color: #F9E2AF;font-style: italic;">     ToolCategory</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;system&quot;</span><span style="color: #9399B2;font-style: italic;">     // file ops, ID generation</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CategoryCore</span><span style="color: #F9E2AF;font-style: italic;">       ToolCategory</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;core&quot;</span><span style="color: #9399B2;font-style: italic;">       // HTTP, calculator, datetime</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CategoryData</span><span style="color: #F9E2AF;font-style: italic;">       ToolCategory</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;data&quot;</span><span style="color: #9399B2;font-style: italic;">       // JSON, validation</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CategoryKnowledge</span><span style="color: #F9E2AF;font-style: italic;">  ToolCategory</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;knowledge&quot;</span><span style="color: #9399B2;font-style: italic;">  // knowledge base CRUD</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CategoryMemory</span><span style="color: #F9E2AF;font-style: italic;">     ToolCategory</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;memory&quot;</span><span style="color: #9399B2;font-style: italic;">     // memory search, user profile</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CategoryDomain</span><span style="color: #F9E2AF;font-style: italic;">     ToolCategory</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;domain&quot;</span><span style="color: #9399B2;font-style: italic;">     // domain-specific (weather, search)</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CategoryExternal</span><span style="color: #F9E2AF;font-style: italic;">   ToolCategory</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;external&quot;</span><span style="color: #9399B2;font-style: italic;">   // MCP protocol tools</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p>This categorization serves two purposes: it helps the registry filter tools by domain (e.g., only expose knowledge tools to certain workflows), and it aids capability detection.</p>
+<h3 id="3-2-parameter-schema">3.2 Parameter Schema</h3>
+<p>Each tool declares its parameters using a <code>ParameterSchema</code> struct:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ParameterSchema</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Type</span><span style="color: #CBA6F7;">       string</span><span style="color: #A6E3A1;">                `json:&quot;type&quot;`</span></span>
+<span class="giallo-l"><span>    Properties</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Parameter</span><span style="color: #A6E3A1;"> `json:&quot;properties&quot;`</span></span>
+<span class="giallo-l"><span>    Required</span><span style="color: #9399B2;">   []</span><span style="color: #CBA6F7;">string</span><span style="color: #A6E3A1;">              `json:&quot;required&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Parameter</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Type</span><span style="color: #CBA6F7;">        string</span><span style="color: #A6E3A1;">        `json:&quot;type&quot;`</span></span>
+<span class="giallo-l"><span>    Description</span><span style="color: #CBA6F7;"> string</span><span style="color: #A6E3A1;">        `json:&quot;description&quot;`</span></span>
+<span class="giallo-l"><span>    Default</span><span style="color: #CBA6F7;">     interface</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">   `json:&quot;default,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Enum</span><span style="color: #9399B2;">        []</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;"> `json:&quot;enum,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Min</span><span style="color: #94E2D5;">         *</span><span style="color: #CBA6F7;">float64</span><span style="color: #A6E3A1;">      `json:&quot;min,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Max</span><span style="color: #94E2D5;">         *</span><span style="color: #CBA6F7;">float64</span><span style="color: #A6E3A1;">      `json:&quot;max,omitempty&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This schema is JSON-serializable, making it directly usable for LLM function-calling APIs, REST endpoints, and documentation generation. The <code>Enum</code>, <code>Min</code>, and <code>Max</code> fields enable automatic input validation.</p>
+<h3 id="3-3-result-type">3.3 Result Type</h3>
+<p>Every tool returns a <code>Result</code> struct, defined in <code>internal/tools/resources/core/result.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Success</span><span style="color: #CBA6F7;">  bool</span><span style="color: #A6E3A1;">                   `json:&quot;success&quot;`</span></span>
+<span class="giallo-l"><span>    Data</span><span style="color: #CBA6F7;">     interface</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">            `json:&quot;data,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Error</span><span style="color: #CBA6F7;">    string</span><span style="color: #A6E3A1;">                 `json:&quot;error,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Metadata</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;"> `json:&quot;metadata,omitempty&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>ResultWithTiming</code> utility function wraps a result with execution metadata:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> ResultWithTiming</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">result</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> duration</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;">)</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> result</span><span style="color: #9399B2;">.</span><span>Metadata</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        result</span><span style="color: #9399B2;">.</span><span>Metadata</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{})</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    result</span><span style="color: #9399B2;">.</span><span>Metadata</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;duration_ms&quot;</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> duration</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Milliseconds</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>    result</span><span style="color: #9399B2;">.</span><span>Metadata</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;timestamp&quot;</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Now</span><span style="color: #9399B2;">().</span><span style="color: #89B4FA;font-style: italic;">Unix</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> result</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This timing metadata is critical for observability -- it allows the agent to track which tools are slow, detect performance regressions, and feed execution metrics back into the planning loop.</p>
+<p>The <code>ResultList</code> type aggregates multiple tool results, counting successes and failures:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ResultList</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Results</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #A6E3A1;"> `json:&quot;results&quot;`</span></span>
+<span class="giallo-l"><span>    Total</span><span style="color: #CBA6F7;">   int</span><span style="color: #A6E3A1;">      `json:&quot;total&quot;`</span></span>
+<span class="giallo-l"><span>    Success</span><span style="color: #CBA6F7;"> int</span><span style="color: #A6E3A1;">      `json:&quot;success&quot;`</span></span>
+<span class="giallo-l"><span>    Failed</span><span style="color: #CBA6F7;">  int</span><span style="color: #A6E3A1;">      `json:&quot;failed&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="4-registry-pattern">4. Registry Pattern</h2>
+<h3 id="4-1-thread-safe-registry">4.1 Thread-Safe Registry</h3>
+<p>The <code>Registry</code> struct, in <code>internal/tools/resources/core/registry.go</code>, is the central tool management hub:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Registry</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    tools</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">Tool</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">    sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewRegistry</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Registry</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">Registry</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        tools</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">Tool</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The use of <code>sync.RWMutex</code> is a deliberate design choice: read operations (<code>Get</code>, <code>List</code>, <code>Count</code>, <code>GetSchemas</code>) acquire only a read lock, allowing concurrent reads without contention. Write operations (<code>Register</code>, <code>Unregister</code>, <code>Clear</code>) acquire an exclusive write lock. This matters because in a multi-agent scenario, many agents may query the tool registry simultaneously, but registration typically happens once during startup.</p>
+<h3 id="4-2-globalregistry-singleton">4.2 GlobalRegistry Singleton</h3>
+<p>GoAgentX provides a singleton <code>GlobalRegistry</code> with package-level convenience functions:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> GlobalRegistry</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> NewRegistry</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Register</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">tool</span><span style="color: #F9E2AF;font-style: italic;"> Tool</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> GlobalRegistry</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Register</span><span style="color: #9399B2;">(</span><span>tool</span><span style="color: #9399B2;">) }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Get</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">Tool</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;">) {</span><span style="color: #CBA6F7;"> return</span><span> GlobalRegistry</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Get</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">) }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> List</span><span style="color: #9399B2;">() []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> GlobalRegistry</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">List</span><span style="color: #9399B2;">() }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> name</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}) (</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> GlobalRegistry</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Execute</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> name</span><span style="color: #9399B2;">,</span><span> params</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This singleton pattern simplifies tool registration for the common case: most applications never need multiple registries. However, the <code>Registry</code> type is fully exported, so users can create isolated registries for different tenants, workflows, or testing contexts.</p>
+<h3 id="4-3-tool-filtering">4.3 Tool Filtering</h3>
+<p>The <code>ToolFilter</code> mechanism allows selective tool exposure:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ToolFilter</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Enabled</span><span style="color: #9399B2;">    []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;">       // if non-empty, only these tools</span></span>
+<span class="giallo-l"><span>    Disabled</span><span style="color: #9399B2;">   []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;">       // these tools are excluded</span></span>
+<span class="giallo-l"><span>    Categories</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">ToolCategory</span><span style="color: #9399B2;font-style: italic;"> // only these categories</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">r </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Registry</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Filter</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">filter</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ToolFilter</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Registry</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Returns a new Registry with matching tools</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is useful for role-based access control -- you can create a filtered registry for a read-only agent that excludes execution tools, or a filtered registry for a data-science agent that only exposes data transformation tools.</p>
+<h3 id="4-4-toolgroup-composition">4.4 ToolGroup Composition</h3>
+<p>The <code>ToolGroup</code> type groups related tools under a named namespace:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ToolGroup</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #CBA6F7;">        string</span></span>
+<span class="giallo-l"><span>    description</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span>    registry</span><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">Registry</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This enables logical organization -- for example, all knowledge base tools (search, add, update, delete, correct) can be grouped together as "knowledge_base", making it easier to reason about tool dependencies and capabilities.</p>
+<h2 id="5-base-implementation-layer">5. Base Implementation Layer</h2>
+<h3 id="5-1-basetool">5.1 BaseTool</h3>
+<p>The <code>BaseTool</code> struct, in <code>internal/tools/resources/base/base_tool.go</code>, provides default implementations of all <code>Tool</code> interface methods plus lifecycle hooks:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> BaseTool</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #CBA6F7;">         string</span></span>
+<span class="giallo-l"><span>    description</span><span style="color: #CBA6F7;">  string</span></span>
+<span class="giallo-l"><span>    category</span><span style="color: #F9E2AF;font-style: italic;">     core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ToolCategory</span></span>
+<span class="giallo-l"><span>    capabilities</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Capability</span></span>
+<span class="giallo-l"><span>    parameters</span><span style="color: #94E2D5;">   *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ParameterSchema</span></span>
+<span class="giallo-l"><span>    metadata</span><span style="color: #94E2D5;">     *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ToolMetadata</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">t </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">BaseTool</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Init</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> }</span><span style="color: #9399B2;font-style: italic;">  // lifecycle hook</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">t </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">BaseTool</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Stop</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> }</span><span style="color: #9399B2;font-style: italic;">  // lifecycle hook</span></span></code></pre>
+<p>Concrete tools embed <code>*base.BaseTool</code> and override <code>Execute()</code>. The <code>Init</code> and <code>Stop</code> hooks are optional -- most tools don't need them, but resource-intensive tools (like database connections or network listeners) can use them for proper lifecycle management.</p>
+<p>Three constructors handle common patterns:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewBaseTool</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> description</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ParameterSchema</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">BaseTool</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewBaseToolWithCategory</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> description</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> category</span><span style="color: #F9E2AF;font-style: italic;"> core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ToolCategory</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ParameterSchema</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">BaseTool</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewBaseToolWithCapabilities</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> description</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> category</span><span style="color: #F9E2AF;font-style: italic;"> core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ToolCategory</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> capabilities</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Capability</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ParameterSchema</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">BaseTool</span></span></code></pre><h3 id="5-2-toolfunc-adapter">5.2 ToolFunc Adapter</h3>
+<p>For simple tools that don't need their own struct, <code>ToolFunc</code> wraps a Go function as a <code>Tool</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ToolFunc</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    BaseTool</span></span>
+<span class="giallo-l"><span>    fn</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}) (</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewToolFunc</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> description</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ParameterSchema</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    fn</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}) (</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ToolFunc</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">ToolFunc</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        BaseTool</span><span style="color: #9399B2;">:</span><span style="color: #94E2D5;"> *</span><span style="color: #89B4FA;font-style: italic;">NewBaseTool</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">,</span><span> description</span><span style="color: #9399B2;">,</span><span> params</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        fn</span><span style="color: #9399B2;">:</span><span>       fn</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">t </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ToolFunc</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}) (</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> t</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">fn</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> params</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is a classic functional adapter pattern -- it converts any function with the right signature into a full <code>Tool</code> implementation without requiring a dedicated struct.</p>
+<h2 id="6-built-in-tool-categories">6. Built-in Tool Categories</h2>
+<p>The <code>RegisterGeneralTools()</code> function in <code>internal/tools/resources/builtin/builtin.go</code> registers all built-in tools:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> RegisterGeneralTools</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    tools</span><span style="color: #94E2D5;"> :=</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Tool</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Math capability</span></span>
+<span class="giallo-l"><span>        builtin_math</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewCalculator</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        builtin_math</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewDateTime</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        builtin_math</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewTextProcessor</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Network capability</span></span>
+<span class="giallo-l"><span>        builtin_network</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewHTTPRequest</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        builtin_network</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewWebScraper</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // File capability</span></span>
+<span class="giallo-l"><span>        builtin_file</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewFileTools</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Text capability</span></span>
+<span class="giallo-l"><span>        builtin_text</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewJSONTools</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        builtin_text</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewDataValidation</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        builtin_text</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewDataTransform</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        builtin_text</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewRegexTool</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>        builtin_text</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewLogAnalyzer</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Knowledge capability</span></span>
+<span class="giallo-l"><span>        builtin_knowledge</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewKnowledgeSearch</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        builtin_knowledge</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewKnowledgeAdd</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        builtin_knowledge</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewKnowledgeUpdate</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        builtin_knowledge</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewKnowledgeDelete</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        builtin_knowledge</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewCorrectKnowledge</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Memory capability</span></span>
+<span class="giallo-l"><span>        builtin_memory</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewMemorySearch</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        builtin_memory</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewUserProfile</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        builtin_memory</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewDistilledMemorySearch</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // System capability</span></span>
+<span class="giallo-l"><span>        builtin_system</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewIDGenerator</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Execution capability</span></span>
+<span class="giallo-l"><span>        builtin_execution</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewCodeRunner</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Planning capability</span></span>
+<span class="giallo-l"><span>        builtin_planning</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewTaskPlanner</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... registration loop</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This gives us approximately 20 built-in tools across 8 capability domains. Let's examine the most architecturally interesting ones.</p>
+<h3 id="6-1-calculator-recursive-descent-parsing">6.1 Calculator -- Recursive Descent Parsing</h3>
+<p>The Calculator tool, in <code>internal/tools/resources/builtin/math/calculator.go</code>, implements a recursive descent parser with four mutually recursive functions:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> parseAddSub</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">expr</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">float64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">      // + and -</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> parseMulDiv</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">expr</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">float64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">  // * and /</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> parseFactor</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">expr</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">float64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">  // parentheses</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> parseNumber</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">expr</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">float64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">  // numeric literals</span></span></code></pre>
+<p>The parsing chain is: <code>parseAddSub</code> calls <code>parseMulDiv</code>, which calls <code>parseFactor</code>, which can call back to <code>parseExpression</code> for parenthesized sub-expressions. This gives us correct operator precedence without external dependencies.</p>
+<p>Division by zero is explicitly handled:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">case</span><span style="color: #A6E3A1;"> &#39;/&#39;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span>    right</span><span style="color: #9399B2;">,</span><span> newRemaining</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> parseFactor</span><span style="color: #9399B2;">(</span><span>remaining</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">:])</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> right</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;division by zero&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    left</span><span style="color: #94E2D5;"> /=</span><span> right</span></span></code></pre><h3 id="6-2-httprequest-full-http-client">6.2 HTTPRequest -- Full HTTP Client</h3>
+<p>The HTTP Request tool (<code>internal/tools/resources/builtin/network/http_request.go</code>) supports GET, POST, PUT, DELETE, and PATCH methods. It includes:</p>
+<ul>
+<li>Configurable timeout (default 30s, settable per-request)</li>
+<li>Automatic JSON body parsing</li>
+<li>Response header collection</li>
+<li>Duration tracking via <code>time.Since(startTime)</code></li>
+<li>A <code>SetClient</code> method for dependency injection of custom HTTP clients</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>req</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> http</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewRequestWithContext</span><span style="color: #9399B2;">(</span><span>reqCtx</span><span style="color: #9399B2;">,</span><span> method</span><span style="color: #9399B2;">,</span><span> url</span><span style="color: #9399B2;">,</span><span> bodyReader</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// ...</span></span>
+<span class="giallo-l"><span>startTime</span><span style="color: #94E2D5;"> :=</span><span> time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Now</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>resp</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> t</span><span style="color: #9399B2;">.</span><span>client</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Do</span><span style="color: #9399B2;">(</span><span>req</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>duration</span><span style="color: #94E2D5;"> :=</span><span> time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Since</span><span style="color: #9399B2;">(</span><span>startTime</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Try to parse as JSON</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> jsonBody</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;">{}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> json</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unmarshal</span><span style="color: #9399B2;">(</span><span>respBody</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>jsonBody</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    jsonBody</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">(</span><span>respBody</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The JSON parsing attempt means the response is always usable: if the server returns JSON, it's parsed; otherwise it's returned as a string.</p>
+<h3 id="6-3-webscraper-html-parsing-with-dependency-injection">6.3 WebScraper -- HTML Parsing with Dependency Injection</h3>
+<p>The WebScraper tool (<code>internal/tools/resources/builtin/network/web_scraper.go</code>) uses dependency injection for its HTTP client:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> WebScraper</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">BaseTool</span></span>
+<span class="giallo-l"><span>    getter</span><span style="color: #F9E2AF;font-style: italic;"> HTTPGetter</span><span style="color: #9399B2;font-style: italic;">  // interface for HTTP fetching</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> HTTPGetter</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Get</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> url</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This design makes the scraper testable: tests can inject a mock <code>HTTPGetter</code> that returns canned HTML without making real network calls. The HTML parsing uses regex-based extraction:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> extractBody</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">html</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> removeNav</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Remove script and style tags</span></span>
+<span class="giallo-l"><span>    html</span><span style="color: #94E2D5;"> =</span><span> regexp</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">MustCompile</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">`&lt;script[^&gt;]*&gt;.*?&lt;/script&gt;`</span><span style="color: #9399B2;">).</span><span style="color: #89B4FA;font-style: italic;">ReplaceAllString</span><span style="color: #9399B2;">(</span><span>html</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot; &quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    html</span><span style="color: #94E2D5;"> =</span><span> regexp</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">MustCompile</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">`&lt;style[^&gt;]*&gt;.*?&lt;/style&gt;`</span><span style="color: #9399B2;">).</span><span style="color: #89B4FA;font-style: italic;">ReplaceAllString</span><span style="color: #9399B2;">(</span><span>html</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot; &quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Remove navigation elements if requested</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> removeNav</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        html</span><span style="color: #94E2D5;"> =</span><span> regexp</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">MustCompile</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">`&lt;nav[^&gt;]*&gt;.*?&lt;/nav&gt;`</span><span style="color: #9399B2;">).</span><span style="color: #89B4FA;font-style: italic;">ReplaceAllString</span><span style="color: #9399B2;">(</span><span>html</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot; &quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        html</span><span style="color: #94E2D5;"> =</span><span> regexp</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">MustCompile</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">`&lt;header[^&gt;]*&gt;.*?&lt;/header&gt;`</span><span style="color: #9399B2;">).</span><span style="color: #89B4FA;font-style: italic;">ReplaceAllString</span><span style="color: #9399B2;">(</span><span>html</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot; &quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        html</span><span style="color: #94E2D5;"> =</span><span> regexp</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">MustCompile</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">`&lt;footer[^&gt;]*&gt;.*?&lt;/footer&gt;`</span><span style="color: #9399B2;">).</span><span style="color: #89B4FA;font-style: italic;">ReplaceAllString</span><span style="color: #9399B2;">(</span><span>html</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot; &quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... extract body content and strip HTML tags</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="6-4-jsontools-deep-merge-and-path-extraction">6.4 JSONTools -- Deep Merge and Path Extraction</h3>
+<p>The JSONTools tool (<code>internal/tools/resources/builtin/text/json_tools.go</code>) implements four operations: parse, extract, merge, and pretty-print.</p>
+<p>The <code>extract</code> operation implements a simple path navigation supporting dot notation and array indices:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Supports dot notation (e.g., &quot;user.name&quot;) and array indices (e.g., &quot;items[0]&quot;)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">t </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">JSONTools</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> extract</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> data</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> path</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    parts</span><span style="color: #94E2D5;"> :=</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Split</span><span style="color: #9399B2;">(</span><span>path</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;.&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    current</span><span style="color: #94E2D5;"> :=</span><span> js</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> part</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> parts</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Contains</span><span style="color: #9399B2;">(</span><span>part</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;[&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Contains</span><span style="color: #9399B2;">(</span><span>part</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;]&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">            // Handle array index</span></span>
+<span class="giallo-l"><span>            base</span><span style="color: #94E2D5;"> :=</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Split</span><span style="color: #9399B2;">(</span><span>part</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;[&quot;</span><span style="color: #9399B2;">)[</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>            indexStr</span><span style="color: #94E2D5;"> :=</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Split</span><span style="color: #9399B2;">(</span><span>strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Split</span><span style="color: #9399B2;">(</span><span>part</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;[&quot;</span><span style="color: #9399B2;">)[</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">],</span><span style="color: #A6E3A1;"> &quot;]&quot;</span><span style="color: #9399B2;">)[</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">            // ... navigate to array[index]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">            // Handle object field</span></span>
+<span class="giallo-l"><span>            obj</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> current</span><span style="color: #9399B2;">.(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{})</span></span>
+<span class="giallo-l"><span>            current</span><span style="color: #9399B2;">,</span><span> exists</span><span style="color: #94E2D5;"> =</span><span> obj</span><span style="color: #9399B2;">[</span><span>part</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>deepMerge</code> function performs recursive object merging, which is essential for combining configuration objects:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">t </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">JSONTools</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> deepMerge</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">base</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> override</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{})</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{} {</span></span>
+<span class="giallo-l"><span>    result</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{})</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> k</span><span style="color: #9399B2;">,</span><span> v</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> base</span><span style="color: #9399B2;"> {</span><span> result</span><span style="color: #9399B2;">[</span><span>k</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> v</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> k</span><span style="color: #9399B2;">,</span><span> v</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> override</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> baseVal</span><span style="color: #9399B2;">,</span><span> exists</span><span style="color: #94E2D5;"> :=</span><span> result</span><span style="color: #9399B2;">[</span><span>k</span><span style="color: #9399B2;">];</span><span> exists</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            baseObj</span><span style="color: #9399B2;">,</span><span> ok1</span><span style="color: #94E2D5;"> :=</span><span> baseVal</span><span style="color: #9399B2;">.(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{})</span></span>
+<span class="giallo-l"><span>            overrideObj</span><span style="color: #9399B2;">,</span><span> ok2</span><span style="color: #94E2D5;"> :=</span><span> v</span><span style="color: #9399B2;">.(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{})</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> ok1</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> ok2</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                result</span><span style="color: #9399B2;">[</span><span>k</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> t</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">deepMerge</span><span style="color: #9399B2;">(</span><span>baseObj</span><span style="color: #9399B2;">,</span><span> overrideObj</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                result</span><span style="color: #9399B2;">[</span><span>k</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> v</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            result</span><span style="color: #9399B2;">[</span><span>k</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> v</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> result</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="6-5-loganalyzer-multi-format-log-parsing">6.5 LogAnalyzer -- Multi-Format Log Parsing</h3>
+<p>The LogAnalyzer (<code>internal/tools/resources/builtin/text/log_analyzer.go</code>) supports auto-detect of log formats and can parse JSON logs, Common Log Format, Combined Log Format, and simple text logs:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">t </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">LogAnalyzer</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> parseLog</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> logContent</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> logFormat</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Auto-detect format</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> format</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;auto&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Contains</span><span style="color: #9399B2;">(</span><span>logContent</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;</span><span style="color: #F5C2E7;">\&quot;</span><span style="color: #A6E3A1;">timestamp</span><span style="color: #F5C2E7;">\&quot;</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Contains</span><span style="color: #9399B2;">(</span><span>logContent</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;{</span><span style="color: #F5C2E7;">\&quot;</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>            format</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;json&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span><span style="color: #CBA6F7;"> else if</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Contains</span><span style="color: #9399B2;">(</span><span>logContent</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot; - - &quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>            format</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;common&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            format</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;simple&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... parse lines according to detected format</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>It also includes error detection with configurable patterns and metric extraction with statistical summaries (min, max, avg, sum).</p>
+<h3 id="6-6-knowledge-crud-multi-tenant-isolation">6.6 Knowledge CRUD -- Multi-Tenant Isolation</h3>
+<p>The knowledge base tools (search, add, update, delete) all require a <code>tenant_id</code> parameter, enforcing multi-tenant isolation at the tool level. These tools accept a <code>KnowledgeSearcher</code> or <code>KnowledgeService</code> interface, enabling different backend implementations:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> KnowledgeSearcher</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Search</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tenantID</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> query</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">RetrievalResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> KnowledgeService</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetKnowledge</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tenantID</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> itemID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeItem</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    UpdateKnowledge</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tenantID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> item</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeItem</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeItem</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    AddKnowledge</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> item</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeItem</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeItem</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    DeleteKnowledge</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tenantID</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> itemID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="6-7-taskplanner-llm-driven-planning">6.7 TaskPlanner -- LLM-Driven Planning</h3>
+<p>The TaskPlanner tool (<code>internal/tools/resources/builtin/planning/task_planner.go</code>) is unique because it itself calls an LLM to generate plans, decompose tasks, and estimate time. It uses structured prompts with JSON response parsing:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">t </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">TaskPlanner</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> buildPlanningPrompt</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">goal</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> context</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> availableTools</span><span style="color: #9399B2;"> []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    prompt</span><span style="color: #94E2D5;"> :=</span><span style="color: #A6E3A1;"> `You are a task planning assistant...</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">Goal: `</span><span style="color: #94E2D5;"> +</span><span> goal</span><span style="color: #94E2D5;"> +</span><span style="color: #A6E3A1;"> `</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">// ... includes available tools, context, and JSON format specification</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">Please provide a detailed task plan in the following JSON format:</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;summary&quot;: &quot;...&quot;,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;steps&quot;: [...],</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;estimated_time&quot;: &quot;X hours&quot;,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;required_tools&quot;: [...],</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;risks&quot;: [...]</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">}`</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> prompt</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>extractJSON</code> function uses bracket counting with string-awareness to handle nested JSON in LLM responses:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> extractJSON</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">text</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    start</span><span style="color: #94E2D5;"> :=</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Index</span><span style="color: #9399B2;">(</span><span>text</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;{&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    braceCount</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span></span>
+<span class="giallo-l"><span>    inString</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span>    escapeNext</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> i</span><span style="color: #94E2D5;"> :=</span><span> start</span><span style="color: #9399B2;">;</span><span> i</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>text</span><span style="color: #9399B2;">);</span><span> i</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        char</span><span style="color: #94E2D5;"> :=</span><span> text</span><span style="color: #9399B2;">[</span><span>i</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> escapeNext</span><span style="color: #9399B2;"> {</span><span> escapeNext</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> false</span><span style="color: #9399B2;">;</span><span style="color: #CBA6F7;"> continue</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> char</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &#39;\\&#39;</span><span style="color: #9399B2;"> {</span><span> escapeNext</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span><span style="color: #9399B2;">;</span><span style="color: #CBA6F7;"> continue</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> char</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &#39;&quot;&#39;</span><span style="color: #9399B2;"> {</span><span> inString</span><span style="color: #94E2D5;"> = !</span><span>inString</span><span style="color: #9399B2;">;</span><span style="color: #CBA6F7;"> continue</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span>inString</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            switch</span><span> char</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            case</span><span style="color: #A6E3A1;"> &#39;{&#39;</span><span style="color: #9399B2;">:</span><span> braceCount</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            case</span><span style="color: #A6E3A1;"> &#39;}&#39;</span><span style="color: #9399B2;">:</span><span> braceCount</span><span style="color: #94E2D5;">--</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                if</span><span> braceCount</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> text</span><span style="color: #9399B2;">[</span><span>start</span><span style="color: #9399B2;"> :</span><span> i</span><span style="color: #94E2D5;">+</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">] }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #A6E3A1;"> &quot;&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="7-security-model">7. Security Model</h2>
+<h3 id="7-1-coderunner-sandboxed-execution">7.1 CodeRunner -- Sandboxed Execution</h3>
+<p>The CodeRunner tool (<code>internal/tools/resources/builtin/execution/code_runner.go</code>) is the most security-critical tool. It implements a multi-layered defense:</p>
+<p><strong>Layer 1 -- Dangerous Pattern Detection:</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>dangerousPatterns</span><span style="color: #9399B2;">: []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;import os&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;import subprocess&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;import shutil&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;import sys&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;import socket&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;import pickle&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;import marshal&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;import ctypes&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;import multiprocessing&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;eval(&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;exec(&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;open(&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;system(&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;popen&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;fork(&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;__import__&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;__builtins__&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">},</span></span></code></pre>
+<p><strong>Layer 2 -- Obfuscation Detection:</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>obfuscationPatterns</span><span style="color: #9399B2;">: []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;chr(&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;ord(&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;</span><span style="color: #F5C2E7;">\\</span><span style="color: #A6E3A1;">x&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;base64.&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;getattr&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;setattr&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;compile(&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">},</span></span></code></pre>
+<p><strong>Layer 3 -- Execution Guards:</strong></p>
+<ul>
+<li>Code length limit: 10,000 characters</li>
+<li>Timeout: 30 seconds default, 60 seconds maximum</li>
+<li>Output limit: 10KB default (configurable)</li>
+<li>Process group isolation via <code>Setpgid: true</code></li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">t </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">CodeRunner</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}) (</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>code</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 10000</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> core</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewErrorResult</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;code exceeds maximum length of 10000 characters&quot;</span><span style="color: #9399B2;">),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    timeoutSeconds</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> getInt</span><span style="color: #9399B2;">(</span><span>params</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;timeout_seconds&quot;</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 30</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> timeoutSeconds</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 60</span><span style="color: #9399B2;"> {</span><span> timeoutSeconds</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 60</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    cmd</span><span style="color: #94E2D5;"> :=</span><span> exec</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">CommandContext</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;python3&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;-c&quot;</span><span style="color: #9399B2;">,</span><span> code</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    cmd</span><span style="color: #9399B2;">.</span><span>SysProcAttr</span><span style="color: #94E2D5;"> = &amp;</span><span style="color: #F9E2AF;font-style: italic;">syscall</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">SysProcAttr</span><span style="color: #9399B2;">{</span><span>Setpgid</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;"> true</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span>    cmd</span><span style="color: #9399B2;">.</span><span>Env</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">&quot;PATH=&quot;</span><span style="color: #94E2D5;"> +</span><span> os</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Getenv</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;PATH&quot;</span><span style="color: #9399B2;">)}</span></span>
+<span class="giallo-l"><span>    workDir</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> os</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">MkdirTemp</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;code-runner-*&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... execution in isolated temp directory</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>Setpgid: true</code> flag creates a new process group, ensuring that if the parent process is killed, child processes are also terminated. The temporary directory is cleaned up via <code>os.RemoveAll</code> in a deferred call.</p>
+<h3 id="7-2-filetools-path-validation">7.2 FileTools -- Path Validation</h3>
+<p>FileTools (<code>internal/tools/resources/builtin/file/file_tools.go</code>) implements path-based security with the <code>allowedDir</code> constraint:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> FileTools</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">BaseTool</span></span>
+<span class="giallo-l"><span>    allowedDir</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;font-style: italic;">  // if set, restricts file access to this directory</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Before any read or write operation, the tool validates that the resolved absolute path is within the allowed directory:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> t</span><span style="color: #9399B2;">.</span><span>allowedDir</span><span style="color: #94E2D5;"> !=</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    absPath</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> filepath</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Abs</span><span style="color: #9399B2;">(</span><span>filePath</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    absDir</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> filepath</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Abs</span><span style="color: #9399B2;">(</span><span>t</span><span style="color: #9399B2;">.</span><span>allowedDir</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">HasPrefix</span><span style="color: #9399B2;">(</span><span>absPath</span><span style="color: #9399B2;">,</span><span> absDir</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> core</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewErrorResult</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;access denied: path is outside allowed directory&quot;</span><span style="color: #9399B2;">),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This prevents directory traversal attacks. The <code>Skippedir</code> sentinel is used in recursive listing to skip hidden directories:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">if</span><span style="color: #94E2D5;"> !</span><span>includeHidden</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    base</span><span style="color: #94E2D5;"> :=</span><span> filepath</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Base</span><span style="color: #9399B2;">(</span><span>path</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">HasPrefix</span><span style="color: #9399B2;">(</span><span>base</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;.&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> info</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">IsDir</span><span style="color: #9399B2;">() {</span><span style="color: #CBA6F7;"> return</span><span> filepath</span><span style="color: #9399B2;">.</span><span>SkipDir</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="8-capability-detection-engine">8. Capability Detection Engine</h2>
+<p>The capability engine (<code>internal/tools/resources/core/capability.go</code>) provides semantic tool discovery. It maps natural language keywords to capabilities:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> capabilityKeywords</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Capability</span><span style="color: #9399B2;">][]</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>    CapabilityMath</span><span style="color: #9399B2;">:     {</span><span style="color: #A6E3A1;">&quot;calculate&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;compute&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;sum&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;add&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;subtract&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;math&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;formula&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;count&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;statistics&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;quantify&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    CapabilityKnowledge</span><span style="color: #9399B2;">: {</span><span style="color: #A6E3A1;">&quot;knowledge&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;learn&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;information&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;document&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;article&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;wiki&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;参考资料&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;知识&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    CapabilityMemory</span><span style="color: #9399B2;">:   {</span><span style="color: #A6E3A1;">&quot;memory&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;remember&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;recall&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;history&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;previous&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;past&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;forget&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;记忆&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;之前&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    CapabilityText</span><span style="color: #9399B2;">:     {</span><span style="color: #A6E3A1;">&quot;format&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;parse&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;transform&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;convert&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;json&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;csv&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;validate&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;regex&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;extract&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;字符串&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    CapabilityNetwork</span><span style="color: #9399B2;">:  {</span><span style="color: #A6E3A1;">&quot;http&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;api&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;request&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;fetch&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;web&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;url&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;scrape&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;网络&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;请求&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    CapabilityTime</span><span style="color: #9399B2;">:     {</span><span style="color: #A6E3A1;">&quot;time&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;date&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;datetime&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;schedule&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;timestamp&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;时区&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;日期&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    CapabilityFile</span><span style="color: #9399B2;">:     {</span><span style="color: #A6E3A1;">&quot;file&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;read&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;write&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;save&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;load&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;文件&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;目录&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    CapabilityExternal</span><span style="color: #9399B2;">: {</span><span style="color: #A6E3A1;">&quot;execute&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;run&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;shell&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;command&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;code&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;python&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;script&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;执行&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>Detect</code> method performs case-insensitive matching:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">e </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">CapabilityEngine</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Detect</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">query</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) []</span><span style="color: #F9E2AF;font-style: italic;">Capability</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    queryLower</span><span style="color: #94E2D5;"> :=</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ToLower</span><span style="color: #9399B2;">(</span><span>query</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    detected</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #F9E2AF;font-style: italic;">Capability</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>capabilityKeywords</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span>    detectedSet</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Capability</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">bool</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> cap</span><span style="color: #9399B2;">,</span><span> keywords</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> capabilityKeywords</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> _</span><span style="color: #9399B2;">,</span><span> keyword</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> keywords</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Contains</span><span style="color: #9399B2;">(</span><span>queryLower</span><span style="color: #9399B2;">,</span><span> keyword</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                if</span><span style="color: #94E2D5;"> !</span><span>detectedSet</span><span style="color: #9399B2;">[</span><span>cap</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span>                    detected</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>detected</span><span style="color: #9399B2;">,</span><span> cap</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>                    detectedSet</span><span style="color: #9399B2;">[</span><span>cap</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                break</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> detected</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>Match</code> method combines detection with tool lookup, returning a complete set of tools that match the query's implied capabilities:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">e </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">CapabilityEngine</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Match</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">query</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) []</span><span style="color: #F9E2AF;font-style: italic;">Tool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    caps</span><span style="color: #94E2D5;"> :=</span><span> e</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Detect</span><span style="color: #9399B2;">(</span><span>query</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> e</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Filter</span><span style="color: #9399B2;">(</span><span>caps</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="9-dependency-injection-patterns">9. Dependency Injection Patterns</h2>
+<p>Several tools accept interfaces in their constructors, enabling loose coupling and testability:</p>
+<table><thead><tr><th>Tool</th><th>Injected Interface</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>WebScraper</td><td><code>HTTPGetter</code></td><td>Fetch web pages</td></tr>
+<tr><td>Knowledge*</td><td><code>KnowledgeSearcher</code> / <code>KnowledgeService</code></td><td>Knowledge backend</td></tr>
+<tr><td>MemorySearch</td><td><code>MemoryManager</code></td><td>Memory retrieval</td></tr>
+<tr><td>UserProfile</td><td><code>MemoryManager</code> + <code>DistilledMemoryRepositoryInterface</code></td><td>User data access</td></tr>
+<tr><td>TaskPlanner</td><td><code>*llm.Client</code></td><td>LLM-based planning</td></tr>
+<tr><td>CorrectKnowledge</td><td>(repository layer)</td><td>Direct DB correction</td></tr>
+</tbody></table>
+<p>This is a clean example of the Dependency Inversion Principle -- high-level tools depend on abstractions, not concrete implementations.</p>
+<h2 id="10-extensibility-mechanisms">10. Extensibility Mechanisms</h2>
+<h3 id="10-1-adding-a-new-built-in-tool">10.1 Adding a New Built-in Tool</h3>
+<p>To add a new tool, a developer needs to:</p>
+<ol>
+<li>Create a struct embedding <code>*base.BaseTool</code> (or use <code>base.ToolFunc</code> for simple cases)</li>
+<li>Implement <code>Execute(ctx, params) (Result, error)</code></li>
+<li>Register it in <code>RegisterGeneralTools()</code></li>
+</ol>
+<p>For example, adding a simple echo tool:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">package</span><span style="color: #F9E2AF;font-style: italic;"> mytool</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EchoTool</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">BaseTool</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewEchoTool</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">EchoTool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">EchoTool</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        BaseTool</span><span style="color: #9399B2;">:</span><span> base</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewBaseTool</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;echo&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;Echo back the input text&quot;</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ParameterSchema</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>            Type</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;object&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            Properties</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Parameter</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;text&quot;</span><span style="color: #9399B2;">: {</span><span>Type</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;string&quot;</span><span style="color: #9399B2;">,</span><span> Description</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Text to echo&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            },</span></span>
+<span class="giallo-l"><span>            Required</span><span style="color: #9399B2;">: []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">&quot;text&quot;</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">t </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">EchoTool</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}) (</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    text</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> params</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;text&quot;</span><span style="color: #9399B2;">].(</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> core</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewResult</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">true</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}{</span><span style="color: #A6E3A1;">&quot;echo&quot;</span><span style="color: #9399B2;">:</span><span> text</span><span style="color: #9399B2;">}),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="10-2-external-tools-via-mcp">10.2 External Tools via MCP</h3>
+<p>Tools with <code>CategoryExternal</code> are reserved for tools connected through the Model Context Protocol (MCP), allowing third-party tools to be integrated dynamically without modifying the GoAgentX core. This is how the system supports plugins, custom APIs, and external service integrations.</p>
+<h3 id="10-3-custom-filtering-and-groups">10.3 Custom Filtering and Groups</h3>
+<p>The <code>ToolFilter</code> and <code>ToolGroup</code> mechanisms allow runtime tool composition. A workflow for a junior developer might expose only <code>file_tools</code>, <code>code_runner</code>, and <code>knowledge_search</code>, while a data analysis workflow might expose <code>json_tools</code>, <code>data_transform</code>, and <code>calculator</code>.</p>
+<h2 id="11-performance-considerations">11. Performance Considerations</h2>
+<p>The tool system is designed for low-latency operation:</p>
+<ul>
+<li><strong>Lock-free reads</strong>: The <code>sync.RWMutex</code> in <code>Registry</code> allows concurrent reads without blocking.</li>
+<li><strong>Lazy construction</strong>: Most tools are singletons created once during startup.</li>
+<li><strong>Direct invocation</strong>: <code>Registry.Execute</code> looks up the tool by name in O(1) average time and calls its <code>Execute</code> method directly -- no reflection, no serialization overhead for internal calls.</li>
+<li><strong>Capability caching</strong>: The <code>CapabilityEngine</code> builds its capability map once and rebuilds only when tools are registered or unregistered.</li>
+</ul>
+<h2 id="12-what-i-learned-building-22-tools">12. What I Learned Building 22 Tools</h2>
+<p>Twenty-two tools. Calculator, code runner, web scraper, file tools, knowledge CRUD, HTTP client, and more. Not an impressive number by itself — what matters is each one earned its place through real production need. No filler.</p>
+<p>What I'm most proud of isn't the count — it's the security design. Registry pattern for centralized management. Capability tags for fine-grained control. Multi-layer protection (static analysis → process isolation → timeout → scope restriction). This setup lets me sleep at night.</p>
+<p>There are rough edges. LogAnalyzer is missing capability tags — just forgot to add them. CodeRunner's static analysis could be smarter. They live in my TODO, waiting for users to complain before I prioritize. That's open source: you never know how people will use your tools until they file issues. 😄</p>
+<hr />
+<p><em>Next: Event System &amp; Observability — how every agent action becomes an immutable record, enabling state recovery, audit trails, and the "black box flight recorder" for multi-agent debugging.</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/06-security-observability-deep-dive/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">GoAgentX Architecture Deep Dive (6): Security &amp; Observability — Defense in Depth and Transparent Tracing</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/04-workflow-engine-deep-dive/">
+                                <span class="button__text">GoAgentX Architecture Deep Dive (4): Workflow Engine — From DAG to Dynamic Orchestration</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

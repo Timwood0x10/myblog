@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>GoAgentX Architecture Deep Dive (7): Runtime &amp; Lifecycle — Birth, Death, and Resurrection | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="Complete agent lifecycle management: birth/startup, death detection, two-phase state recovery, leader failover, and graceful shutdown.">
+
+    <meta property="og:description" content="Complete agent lifecycle management: birth/startup, death detection, two-phase state recovery, leader failover, and graceful shutdown.">
+    <meta property="og:title" content="GoAgentX Architecture Deep Dive (7): Runtime & Lifecycle — Birth, Death, and Resurrection | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/goagent/07-runtime-lifecycle-deep-dive/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Complete agent lifecycle management: birth/startup, death detection, two-phase state recovery, leader failover, and graceful shutdown.">
+    <meta name="twitter:title" content="GoAgentX Architecture Deep Dive (7): Runtime & Lifecycle — Birth, Death, and Resurrection | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/goagent/07-runtime-lifecycle-deep-dive/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/goagent/07-runtime-lifecycle-deep-dive/">GoAgentX Architecture Deep Dive (7): Runtime &amp; Lifecycle — Birth, Death, and Resurrection</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-15
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/multi-agent/">#Multi-Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/runtime/">#Runtime</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="goagentx-architecture-deep-dive-7-runtime-lifecycle-birth-death-and-resurrection">GoAgentX Architecture Deep Dive (7): Runtime &amp; Lifecycle — Birth, Death, and Resurrection</h1>
+<blockquote>
+<p>In multi-agent systems, Agents are not immortal entities. They may die from LLM timeout, network partition, memory exhaustion, panic, or even host process restart. How to handle an Agent's <strong>birth</strong> (startup and registration), <strong>death</strong> (abnormal exit and detection), and <strong>resurrection</strong> (state recovery and rebirth) is the core challenge of building a production-grade Agent system.</p>
+</blockquote>
+<hr />
+<h2 id="1-agents-are-not-immortal">1. Agents Are Not Immortal</h2>
+<p>Before GoAgentX, I wrote agents in Python. When an agent died, it died — process exited, all state lost, user had to re-explain everything from scratch. The worst case was an agent that ran for two hours analyzing data, then panicked on the last step. Two hours of work, gone.</p>
+<p>I remember thinking: <strong>An agent shouldn't just die. It should be able to come back, and remember what it was doing before it died.</strong></p>
+<p>That's where the Runtime subsystem was born. Its philosophy is in one line in <code>internal/runtime/runtime.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Agents are disposable executors; the Runtime owns their birth, death, and resurrection.</span></span></code></pre>
+<p>Translation: agents are throwaway executors — but their lifecycle belongs to the Runtime.</p>
+<p>This article provides a source-code-level deep dive into four major Runtime modules: <strong>Runtime Core Management</strong>, <strong>Agent Interface Contract</strong>, <strong>Leader Agent Orchestration &amp; State Recovery</strong>, <strong>Sub Agent Execution Model</strong>, and <strong>Graceful Shutdown</strong>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Runtime System&quot;</span></span>
+<span class="giallo-l"><span>        RM[Runtime Manager]</span></span>
+<span class="giallo-l"><span>        HC[Health Check\n10s interval]</span></span>
+<span class="giallo-l"><span>        RG[Resurrection\nGuard]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Agents&quot;</span></span>
+<span class="giallo-l"><span>        LA[Leader Agent]</span></span>
+<span class="giallo-l"><span>        SA1[Sub Agent 1]</span></span>
+<span class="giallo-l"><span>        SA2[Sub Agent 2]</span></span>
+<span class="giallo-l"><span>        SAN[Sub Agent N]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Infrastructure&quot;</span></span>
+<span class="giallo-l"><span>        ES[EventStore]</span></span>
+<span class="giallo-l"><span>        MM[MemoryManager]</span></span>
+<span class="giallo-l"><span>        CK[Checkpoint]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RM --&gt;|manages| LA</span></span>
+<span class="giallo-l"><span>    RM --&gt;|manages| SA1</span></span>
+<span class="giallo-l"><span>    RM --&gt;|manages| SA2</span></span>
+<span class="giallo-l"><span>    RM --&gt;|manages| SAN</span></span>
+<span class="giallo-l"><span>    HC --&gt;|checks| LA</span></span>
+<span class="giallo-l"><span>    HC --&gt;|checks| SA1</span></span>
+<span class="giallo-l"><span>    RM --&gt;|reads| ES</span></span>
+<span class="giallo-l"><span>    RM --&gt;|reads| MM</span></span>
+<span class="giallo-l"><span>    LA --&gt;|writes| CK</span></span>
+<span class="giallo-l"><span>    LA --&gt;|reads| ES</span></span></code></pre>
+<hr />
+<h2 id="2-runtime-core-interface-and-manager">2. Runtime Core Interface and Manager</h2>
+<h3 id="2-1-runtime-interface">2.1 Runtime Interface</h3>
+<p><code>internal/runtime/runtime.go</code> defines Runtime's core contract:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Runtime</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    StartAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> agent</span><span style="color: #F9E2AF;font-style: italic;"> base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Agent</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    StopAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    RestartAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    RestoreAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> factory</span><span style="color: #F9E2AF;font-style: italic;"> AgentFactory</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    NotifyAgentDead</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> reason</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    RegisterAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agent</span><span style="color: #F9E2AF;font-style: italic;"> base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Agent</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> factory</span><span style="color: #F9E2AF;font-style: italic;"> AgentFactory</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Start</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Stop</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Stats</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> RuntimeStats</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Key semantics:</p>
+<ul>
+<li><code>RegisterAgent</code> registers an Agent and its factory; the factory creates new instances on resurrection.</li>
+<li><code>StartAgent</code> starts an Agent inside an errgroup-managed goroutine with panic recovery.</li>
+<li><code>NotifyAgentDead</code> is called by the Agent or health check to trigger async resurrection.</li>
+<li><code>RestoreAgent</code> performs two-phase state recovery: operational state (EventStore replay) + cognitive state (MemoryManager history).</li>
+</ul>
+<p>Default configuration constants reflect the system's fault tolerance boundaries:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> DefaultConfig</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        HealthCheckInterval</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;"> 10</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Second</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        MaxRestartsPerAgent</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        MaxReplayEvents</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">     10000</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        AgentStopTimeout</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">    10</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Second</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        OverallStopTimeout</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">  30</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Second</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        RestoreTimeout</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">      60</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Second</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="2-2-manager-data-structure">2.2 Manager Data Structure</h3>
+<p><code>internal/runtime/manager.go</code> contains the <code>Manager</code>, the default Runtime implementation:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Manager</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">            sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span>    agents</span><span style="color: #CBA6F7;">        map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">managedAgent</span></span>
+<span class="giallo-l"><span>    factories</span><span style="color: #CBA6F7;">     map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">AgentFactory</span></span>
+<span class="giallo-l"><span>    eventStore</span><span style="color: #F9E2AF;font-style: italic;">    events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">EventStore</span></span>
+<span class="giallo-l"><span>    memManager</span><span style="color: #F9E2AF;font-style: italic;">    memory</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">MemoryManager</span></span>
+<span class="giallo-l"><span>    g</span><span style="color: #94E2D5;">             *</span><span style="color: #F9E2AF;font-style: italic;">errgroup</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Group</span></span>
+<span class="giallo-l"><span>    gctx</span><span style="color: #F9E2AF;font-style: italic;">          context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span></span>
+<span class="giallo-l"><span>    cancel</span><span style="color: #F9E2AF;font-style: italic;">        context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">CancelFunc</span></span>
+<span class="giallo-l"><span>    config</span><span style="color: #94E2D5;">        *</span><span style="color: #F9E2AF;font-style: italic;">Config</span></span>
+<span class="giallo-l"><span>    totalRestarts</span><span style="color: #CBA6F7;"> int</span></span>
+<span class="giallo-l"><span>    startTime</span><span style="color: #F9E2AF;font-style: italic;">     time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span></span>
+<span class="giallo-l"><span>    isStarted</span><span style="color: #CBA6F7;">     bool</span></span>
+<span class="giallo-l"><span>    isStopped</span><span style="color: #CBA6F7;">     bool</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Key design point: <code>g</code> is <code>*errgroup.Group</code>, but the constructor initializes with <code>errgroup.WithContext(context.Background())</code> to avoid panic when <code>m.g.Go()</code> is called before <code>Start()</code>. When <code>Start()</code> is invoked, <code>g</code> is replaced with a new errgroup using the caller's context.</p>
+<h3 id="2-3-managedagent-metadata">2.3 managedAgent Metadata</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> managedAgent</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    agent</span><span style="color: #F9E2AF;font-style: italic;">        base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Agent</span></span>
+<span class="giallo-l"><span>    factory</span><span style="color: #F9E2AF;font-style: italic;">      AgentFactory</span></span>
+<span class="giallo-l"><span>    cancel</span><span style="color: #F9E2AF;font-style: italic;">       context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">CancelFunc</span></span>
+<span class="giallo-l"><span>    restarts</span><span style="color: #CBA6F7;">     int</span></span>
+<span class="giallo-l"><span>    stopped</span><span style="color: #CBA6F7;">      bool</span><span style="color: #9399B2;font-style: italic;">      // Voluntary stop flag</span></span>
+<span class="giallo-l"><span>    resurrecting</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;font-style: italic;">      // Resurrection-in-progress flag</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>stopped</code> and <code>resurrecting</code> are two critical guard flags, discussed in detail in the "Resurrection Guard" section below.</p>
+<hr />
+<h2 id="3-agent-interface-hierarchy">3. Agent Interface Hierarchy</h2>
+<p><code>internal/agents/base/agent.go</code> defines the multi-layer Agent interface:</p>
+<h3 id="3-1-core-agent-interface">3.1 Core Agent Interface</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Agent</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ID</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Type</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AgentType</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Status</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AgentStatus</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Start</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Stop</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Process</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> input</span><span style="color: #F9E2AF;font-style: italic;"> any</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ProcessStream</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> input</span><span style="color: #F9E2AF;font-style: italic;"> any</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">&lt;-</span><span style="color: #CBA6F7;">chan</span><span style="color: #F9E2AF;font-style: italic;"> AgentEvent</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="3-2-stateful-agent-interface">3.2 Stateful Agent Interface</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> StatefulAgent</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    RestoreState</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">state</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ReplayEvents</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">events</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Snapshot</span><span style="color: #9399B2;">() (</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Agents implementing this interface can have their state reconstructed during resurrection. Both <code>leaderAgent</code> and <code>subAgent</code> verify compliance at compile time via <code>var _ base.StatefulAgent = (*leaderAgent)(nil)</code>.</p>
+<h3 id="3-3-optional-interfaces">3.3 Optional Interfaces</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Heartbeater</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Heartbeat</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    IsAlive</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> bool</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Messenger</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    SendMessage</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> msg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ahp</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AHPMessage</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ReceiveMessage</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ahp</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AHPMessage</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="4-complete-agent-lifecycle">4. Complete Agent Lifecycle</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>stateDiagram-v2</span></span>
+<span class="giallo-l"><span>    [*] --&gt; Registered: RegisterAgent</span></span>
+<span class="giallo-l"><span>    Registered --&gt; Running: StartAgent</span></span>
+<span class="giallo-l"><span>    Running --&gt; Completed: Normal exit</span></span>
+<span class="giallo-l"><span>    Running --&gt; Failed: Panic / Error</span></span>
+<span class="giallo-l"><span>    Running --&gt; Stopped: StopAgent (voluntary)</span></span>
+<span class="giallo-l"><span>    Failed --&gt; Restoring: NotifyAgentDead</span></span>
+<span class="giallo-l"><span>    Restoring --&gt; Running: RestoreAgent succeeded</span></span>
+<span class="giallo-l"><span>    Restoring --&gt; Dead: Max restarts exceeded</span></span>
+<span class="giallo-l"><span>    Stopped --&gt; [*]</span></span>
+<span class="giallo-l"><span>    Dead --&gt; [*]</span></span>
+<span class="giallo-l"><span>    Completed --&gt; [*]</span></span></code></pre>
+<p>The lifecycle flow:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Runtime.Start(ctx)</span></span>
+<span class="giallo-l"><span>    ├── Health check loop (10s)</span></span>
+<span class="giallo-l"><span>    │   └── Heartbeat / Status detection</span></span>
+<span class="giallo-l"><span>    └── Launch all registered agents</span></span>
+<span class="giallo-l"><span>        └── launchAgentGoroutine</span></span>
+<span class="giallo-l"><span>            ├── agent.Start(ctx)</span></span>
+<span class="giallo-l"><span>            ├── goroutine exit (normal/panic)</span></span>
+<span class="giallo-l"><span>            ├── NotifyAgentDead</span></span>
+<span class="giallo-l"><span>            └── RestoreAgent</span></span>
+<span class="giallo-l"><span>                ├── stopOldRestoredAgent</span></span>
+<span class="giallo-l"><span>                ├── factory() creates new instance</span></span>
+<span class="giallo-l"><span>                └── recoverAgentState:</span></span>
+<span class="giallo-l"><span>                    a) Event replay (EventStore)</span></span>
+<span class="giallo-l"><span>                    b) Cognitive recovery (MemoryManager)</span></span>
+<span class="giallo-l"><span>                    c) launchAgentGoroutine (new instance)</span></span></code></pre>
+<hr />
+<h2 id="5-death-and-resurrection-deep-dive">5. Death and Resurrection Deep Dive</h2>
+<h3 id="5-1-resurrection-guard">5.1 Resurrection Guard</h3>
+<p>This is the most important concurrency safety pattern in the entire system. Its core is in the interaction between <code>StopAgent</code> and <code>NotifyAgentDead</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Manager</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> StopAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>    ma</span><span style="color: #9399B2;">,</span><span> exists</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span>agents</span><span style="color: #9399B2;">[</span><span>agentID</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Step 1: Mark as &quot;voluntary stop&quot; FIRST</span></span>
+<span class="giallo-l"><span>    ma</span><span style="color: #9399B2;">.</span><span>stopped</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span>    cancel</span><span style="color: #94E2D5;"> :=</span><span> ma</span><span style="color: #9399B2;">.</span><span>cancel</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Step 2: Cancel context SECOND</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> cancel</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        cancel</span><span style="color: #9399B2;">()</span><span style="color: #9399B2;font-style: italic;">  // This triggers goroutine exit</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... graceful agent stop ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Why must <code>ma.stopped = true</code> come before <code>ma.cancel()</code>? Consider this race:</p>
+<ol>
+<li>Thread A (StopAgent) calls <code>ma.cancel()</code>.</li>
+<li>Agent goroutine detects context cancellation, calls <code>NotifyAgentDead</code>.</li>
+<li>Thread B (NotifyAgentDead) reads <code>ma.stopped</code> — if <code>stopped</code> hasn't been set to true yet, it would incorrectly trigger resurrection.</li>
+</ol>
+<p>By setting <code>stopped = true</code> before cancelling the context, even if the goroutine immediately calls <code>NotifyAgentDead</code> after cancellation, it sees <code>ma.stopped == true</code> and skips resurrection.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant Admin as StopAgent</span></span>
+<span class="giallo-l"><span>    participant Agent as Agent Goroutine</span></span>
+<span class="giallo-l"><span>    participant RM as Resurrection Manager</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Admin-&gt;&gt;Admin: ma.stopped = true</span></span>
+<span class="giallo-l"><span>    Admin-&gt;&gt;Agent: ma.cancel()</span></span>
+<span class="giallo-l"><span>    Agent-&gt;&gt;Agent: Detects ctx.Done()</span></span>
+<span class="giallo-l"><span>    Agent-&gt;&gt;RM: NotifyAgentDead(&quot;cancelled&quot;)</span></span>
+<span class="giallo-l"><span>    RM-&gt;&gt;RM: Checks ma.stopped == true</span></span>
+<span class="giallo-l"><span>    RM--&gt;&gt;Agent: Skip resurrection ✓</span></span></code></pre><h3 id="5-2-notifyagentdead-full-guard-logic">5.2 NotifyAgentDead Full Guard Logic</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Manager</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> NotifyAgentDead</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> reason</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Four guard conditions; any match skips resurrection:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> m</span><span style="color: #9399B2;">.</span><span>isStopped</span><span style="color: #94E2D5;"> ||</span><span style="color: #9399B2;font-style: italic;">               // Runtime already stopped</span></span>
+<span class="giallo-l"><span>       ma</span><span style="color: #9399B2;">.</span><span>stopped</span><span style="color: #94E2D5;"> ||</span><span style="color: #9399B2;font-style: italic;">                // Agent voluntarily stopped</span></span>
+<span class="giallo-l"><span>       ma</span><span style="color: #9399B2;">.</span><span>resurrecting</span><span style="color: #94E2D5;"> ||</span><span style="color: #9399B2;font-style: italic;">           // Resurrection already in progress</span></span>
+<span class="giallo-l"><span>       ma</span><span style="color: #9399B2;">.</span><span>restarts</span><span style="color: #94E2D5;"> &gt;=</span><span> MaxRestarts</span><span style="color: #9399B2;font-style: italic;">   // Max restarts exceeded</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    {</span></span>
+<span class="giallo-l"><span>        m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    ma</span><span style="color: #9399B2;">.</span><span>restarts</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span>    ma</span><span style="color: #9399B2;">.</span><span>resurrecting</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>totalRestarts</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Async resurrection — doesn&#39;t block caller</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        defer func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>            ma</span><span style="color: #9399B2;">.</span><span>resurrecting</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }()</span></span>
+<span class="giallo-l"><span>        restoreCtx</span><span style="color: #9399B2;">,</span><span> cancel</span><span style="color: #94E2D5;"> :=</span><span> context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithTimeout</span><span style="color: #9399B2;">(</span><span>m</span><span style="color: #9399B2;">.</span><span>gctx</span><span style="color: #9399B2;">,</span><span> m</span><span style="color: #9399B2;">.</span><span>config</span><span style="color: #9399B2;">.</span><span>RestoreTimeout</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        defer</span><span style="color: #89B4FA;font-style: italic;"> cancel</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RestoreAgent</span><span style="color: #9399B2;">(</span><span>restoreCtx</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">,</span><span> factory</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="5-3-two-phase-state-recovery">5.3 Two-Phase State Recovery</h3>
+<p><code>RestoreAgent</code>'s core logic lives in <code>recoverAgentState</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Manager</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> recoverAgentState</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> factory</span><span style="color: #F9E2AF;font-style: italic;"> AgentFactory</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Agent</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    newAgent</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> factory</span><span style="color: #9399B2;">()</span><span style="color: #9399B2;font-style: italic;">  // Factory creates fresh instance</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    evts</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">replayEvents</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">  // Phase A: operational recovery</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> sa</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> newAgent</span><span style="color: #9399B2;">.(</span><span style="color: #F9E2AF;font-style: italic;">base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">StatefulAgent</span><span style="color: #9399B2;">);</span><span> ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        state</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> buildStateFromEvents</span><span style="color: #9399B2;">(</span><span>evts</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Phase B: cognitive recovery</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> m</span><span style="color: #9399B2;">.</span><span>memManager</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            cognitiveState</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">buildCognitiveState</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">,</span><span> state</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            for</span><span> k</span><span style="color: #9399B2;">,</span><span> v</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> cognitiveState</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                state</span><span style="color: #9399B2;">[</span><span>k</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> v</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>        sa</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RestoreState</span><span style="color: #9399B2;">(</span><span>state</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        sa</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ReplayEvents</span><span style="color: #9399B2;">(</span><span>evts</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> newAgent</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Fault tolerance strategy</strong>: The entire recovery chain is error-tolerant. EventStore read failure → skip event replay; MemoryManager read failure → skip cognitive recovery. The Agent still starts successfully. This design ensures "partial recovery is better than no recovery at all."</p>
+<h3 id="5-4-health-check-loop">5.4 Health Check Loop</h3>
+<p>The <code>healthCheck</code> method runs in a dedicated goroutine started by <code>Start()</code>, executing every 10 seconds:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Manager</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> healthCheck</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> c</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> checks</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> h</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>agent</span><span style="color: #9399B2;">.(</span><span style="color: #F9E2AF;font-style: italic;">base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Heartbeater</span><span style="color: #9399B2;">);</span><span> ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span style="color: #94E2D5;"> !</span><span>h</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">IsAlive</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>                m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NotifyAgentDead</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>id</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;health check: heartbeat failed&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            continue</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span>        status</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>agent</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Status</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> status</span><span style="color: #94E2D5;"> ==</span><span> models</span><span style="color: #9399B2;">.</span><span>AgentStatusOffline</span><span style="color: #94E2D5;"> ||</span><span> status</span><span style="color: #94E2D5;"> ==</span><span> models</span><span style="color: #9399B2;">.</span><span>AgentStatusStopping</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NotifyAgentDead</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>id</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;health check: status=&quot;</span><span style="color: #94E2D5;">+</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">(</span><span>status</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="6-leader-agent-lifecycle-management">6. Leader Agent Lifecycle Management</h2>
+<h3 id="6-1-orchestration-pipeline">6.1 Orchestration Pipeline</h3>
+<p>In <code>internal/agents/leader/agent.go</code>, the Leader's <code>Process</code> method implements a four-stage orchestration pipeline:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph LR</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Leader Pipeline&quot;</span></span>
+<span class="giallo-l"><span>        A[Parse Input] --&gt; B[Init Memory\nContext]</span></span>
+<span class="giallo-l"><span>        B --&gt; C[Plan Sub-tasks]</span></span>
+<span class="giallo-l"><span>        C --&gt; D[Dispatch\nParallel]</span></span>
+<span class="giallo-l"><span>        D --&gt; E[Aggregate\nResults]</span></span>
+<span class="giallo-l"><span>        E --&gt; F[Finalize\nMemory]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Concurrency Control&quot;</span></span>
+<span class="giallo-l"><span>        SM[Semaphore\nMax N concurrent]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    D --&gt; SM</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>strInput → parseInput → string</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>initMemoryContext (session recovery/create → record message → build context → search similar tasks → create task record)</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>parser.Parse          Step 1: Parse user profile</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>planner.Plan          Step 2: Plan sub-tasks</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>dispatcher.Dispatch   Step 3: Parallel dispatch (semaphore concurrency control)</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>aggregator.Aggregate  Step 4: Aggregate sub-task results</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>finalizeMemory (update task output → record assistant reply → background distillation)</span></span></code></pre>
+<p>Each step includes a <code>stopCh</code> check:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">case</span><span style="color: #94E2D5;"> &lt;-</span><span>a</span><span style="color: #9399B2;">.</span><span>stopCh</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> coreerrors</span><span style="color: #9399B2;">.</span><span>ErrAgentNotRunning</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">default</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This enables fast response to stop requests without waiting for the entire pipeline to complete.</p>
+<h3 id="6-2-safe-distillation-pattern-context-detachment">6.2 Safe Distillation Pattern (Context Detachment)</h3>
+<p>The distillation logic in <code>finalizeMemory</code> demonstrates an important concurrency safety pattern:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">a </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">leaderAgent</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> finalizeMemory</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> taskID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> result</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RecommendResult</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    a</span><span style="color: #9399B2;">.</span><span>distillMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #94E2D5;"> &lt;-</span><span>a</span><span style="color: #9399B2;">.</span><span>stopCh</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span>        a</span><span style="color: #9399B2;">.</span><span>distillMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #9399B2;font-style: italic;">  // Agent is stopping, skip distillation</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    default</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    a</span><span style="color: #9399B2;">.</span><span>distillWg</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    a</span><span style="color: #9399B2;">.</span><span>distillMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    a</span><span style="color: #9399B2;">.</span><span>distillEg</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        defer</span><span> a</span><span style="color: #9399B2;">.</span><span>distillWg</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Done</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Use context.Background() to detach from parent context</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Distillation continues even if client disconnects</span></span>
+<span class="giallo-l"><span>        distillCtx</span><span style="color: #9399B2;">,</span><span> cancel</span><span style="color: #94E2D5;"> :=</span><span> context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithTimeout</span><span style="color: #9399B2;">(</span><span>context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Background</span><span style="color: #9399B2;">(),</span><span style="color: #FAB387;"> 2</span><span style="color: #94E2D5;">*</span><span>time</span><span style="color: #9399B2;">.</span><span>Minute</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        defer</span><span style="color: #89B4FA;font-style: italic;"> cancel</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>        distilled</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> a</span><span style="color: #9399B2;">.</span><span>memoryManager</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">DistillTask</span><span style="color: #9399B2;">(</span><span>gCtx</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> a</span><span style="color: #9399B2;">.</span><span>memoryManager</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">StoreDistilledTask</span><span style="color: #9399B2;">(</span><span>gCtx</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">,</span><span> distilled</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Key design points:</p>
+<ul>
+<li><strong>Context detachment</strong>: Uses <code>context.Background()</code> rather than the passed-in <code>ctx</code>, so distillation continues even after client disconnection or request timeout.</li>
+<li><strong>distillMu lock</strong>: The <code>stopCh</code> check and <code>WaitGroup.Add(1)</code> must happen atomically under the same lock. Otherwise, <code>Add</code> could be called after <code>Wait</code>, causing <code>panic: Add after Wait</code>.</li>
+<li><strong>Stop order</strong>: <code>close(stopCh)</code> → <code>distillWg.Wait()</code> → <code>distillEg.Wait()</code> → <code>streamEg.Wait()</code>, ensuring all background tasks complete before resource release.</li>
+</ul>
+<h3 id="6-3-sub-agent-execution-model">6.3 Sub Agent Execution Model</h3>
+<p>Sub Agents in <code>internal/agents/sub/</code> use a simplified lifecycle:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> subAgent</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    stopCh</span><span style="color: #CBA6F7;">   chan struct</span><span style="color: #9399B2;">{}</span><span style="color: #9399B2;font-style: italic;">   // Notifies all goroutines to stop</span></span>
+<span class="giallo-l"><span>    streamWg</span><span style="color: #F9E2AF;font-style: italic;"> sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">WaitGroup</span><span style="color: #9399B2;font-style: italic;">  // Tracks active ProcessStream goroutines</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <strong>taskExecutor</strong> (<code>executor.go</code>) implements LLM execution with retry and degradation:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>LLM Execution Path:</span></span>
+<span class="giallo-l"><span>  executeWithLLM(ctx, task, profile)</span></span>
+<span class="giallo-l"><span>    → retry loop (maxRetries=3)</span></span>
+<span class="giallo-l"><span>       → executeWithLLMSingle → template rendering → LLM call</span></span>
+<span class="giallo-l"><span>       → validator.ValidateRecommendResult</span></span>
+<span class="giallo-l"><span>       → validation failure + retryOnFail=true → retry</span></span>
+<span class="giallo-l"><span>       → strictMode=true → return error, otherwise use unvalidated result</span></span>
+<span class="giallo-l"><span>  ⇒ All LLM calls fail → executeByType degradation (fallback)</span></span></code></pre>
+<p><strong>heartbeatSender</strong> (<code>heartbeat.go</code>) uses <code>sync.Once</code> for defensive shutdown:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">heartbeatSender</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Stop</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>    s</span><span style="color: #9399B2;">.</span><span>stopOnce</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Do</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        close</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">.</span><span>stopCh</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>toolBinder</strong> (<code>tools.go</code>) implements a local tool Registry bridge:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">toolBinder</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> BridgeFromRegistry</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">registry</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Registry</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> name</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> registry</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">List</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> _</span><span style="color: #9399B2;">,</span><span> exists</span><span style="color: #94E2D5;"> :=</span><span> b</span><span style="color: #9399B2;">.</span><span>tools</span><span style="color: #9399B2;">[</span><span>name</span><span style="color: #9399B2;">];</span><span> exists</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            continue</span><span style="color: #9399B2;font-style: italic;">  // Locally registered tools are not overwritten</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span>        b</span><span style="color: #9399B2;">.</span><span>tools</span><span style="color: #9399B2;">[</span><span>name</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> args</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span> t</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Execute</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> args</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="7-leader-supervisor-failover">7. Leader Supervisor Failover</h2>
+<p><code>internal/agents/leader/supervisor.go</code> contains the <code>LeaderSupervisor</code>, which monitors Leader heartbeats and triggers failover on timeout:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant HC as HeartbeatMonitor</span></span>
+<span class="giallo-l"><span>    participant S as Supervisor</span></span>
+<span class="giallo-l"><span>    participant L as Leader Agent</span></span>
+<span class="giallo-l"><span>    participant CK as Checkpoint</span></span>
+<span class="giallo-l"><span>    participant ER as EventRecovery</span></span>
+<span class="giallo-l"><span>    participant NM as New Leader</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    HC-&gt;&gt;S: Timeout detected for leader-1</span></span>
+<span class="giallo-l"><span>    S-&gt;&gt;S: Emit EventFailoverTriggered</span></span>
+<span class="giallo-l"><span>    S-&gt;&gt;L: Stop(detachedCtx)</span></span>
+<span class="giallo-l"><span>    S-&gt;&gt;CK: GetLatest()</span></span>
+<span class="giallo-l"><span>    CK--&gt;&gt;S: checkpoint data</span></span>
+<span class="giallo-l"><span>    S-&gt;&gt;ER: RecoverFromEvents()</span></span>
+<span class="giallo-l"><span>    ER--&gt;&gt;S: RecoveryState</span></span>
+<span class="giallo-l"><span>    loop Retry (max 3)</span></span>
+<span class="giallo-l"><span>        S-&gt;&gt;NM: factory(ctx, config) create</span></span>
+<span class="giallo-l"><span>        S-&gt;&gt;NM: Inject CheckpointRepository</span></span>
+<span class="giallo-l"><span>        S-&gt;&gt;NM: Start(ctx)</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"><span>    S-&gt;&gt;S: RecoverStaleTasks()</span></span>
+<span class="giallo-l"><span>    S-&gt;&gt;S: Register new Leader</span></span>
+<span class="giallo-l"><span>    S-&gt;&gt;S: Emit EventFailoverCompleted</span></span></code></pre>
+<p>The <code>EventRecovery</code> (<code>event_recovery.go</code>) implements incremental state reconstruction from the event stream:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> RecoveryState</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    SessionID</span><span style="color: #CBA6F7;">     string</span></span>
+<span class="giallo-l"><span>    PendingTasks</span><span style="color: #9399B2;">  []</span><span style="color: #CBA6F7;">string</span></span>
+<span class="giallo-l"><span>    LastVersion</span><span style="color: #CBA6F7;">   int64</span></span>
+<span class="giallo-l"><span>    LastFailover</span><span style="color: #F9E2AF;font-style: italic;">  time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="8-graceful-shutdown-system">8. Graceful Shutdown System</h2>
+<p><code>internal/shutdown/manager.go</code> implements the four-phase shutdown pipeline:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>stateDiagram-v2</span></span>
+<span class="giallo-l"><span>    [*] --&gt; PreShutdown: Signal received</span></span>
+<span class="giallo-l"><span>    PreShutdown --&gt; Graceful: Resources released</span></span>
+<span class="giallo-l"><span>    Graceful --&gt; Force: Timeout</span></span>
+<span class="giallo-l"><span>    Graceful --&gt; Done: All callbacks done</span></span>
+<span class="giallo-l"><span>    Force --&gt; Done: Force complete</span></span>
+<span class="giallo-l"><span>    Done --&gt; [*]</span></span></code></pre><h3 id="8-1-phaseexecutor">8.1 PhaseExecutor</h3>
+<p><code>PhaseExecutor</code> (<code>phase.go</code>) supports retry, exponential backoff, and rollback:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">e </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">PhaseExecutor</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> fn</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> attempt</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span><span> attempt</span><span style="color: #94E2D5;"> &lt;=</span><span> e</span><span style="color: #9399B2;">.</span><span>maxRetries</span><span style="color: #9399B2;">;</span><span> attempt</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> fn</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            backoff</span><span style="color: #94E2D5;"> :=</span><span> time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Duration</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #94E2D5;">&lt;&lt;</span><span style="color: #CBA6F7;">uint</span><span style="color: #9399B2;">(</span><span>attempt</span><span style="color: #9399B2;">))</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Second</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> e</span><span style="color: #9399B2;">.</span><span>onFailure</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                e</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">onFailure</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            continue</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        break</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> e</span><span style="color: #9399B2;">.</span><span>onComplete</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> e</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">onComplete</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="8-2-callbackregistry">8.2 CallbackRegistry</h3>
+<p><code>CallbackRegistry</code> (<code>callbacks.go</code>) supports priority-sorted callback registration:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> RegisteredCallback</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">       string</span></span>
+<span class="giallo-l"><span>    Priority</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;font-style: italic;">       // Higher priority executes first</span></span>
+<span class="giallo-l"><span>    Fn</span><span style="color: #F9E2AF;font-style: italic;">       Callback</span></span>
+<span class="giallo-l"><span>    Timeout</span><span style="color: #F9E2AF;font-style: italic;">  time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span></span>
+<span class="giallo-l"><span>    OnError</span><span style="color: #CBA6F7;">  func</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="8-3-signalhandler">8.3 SignalHandler</h3>
+<p><code>SignalHandler</code> (<code>signal.go</code>) converts OS signals into the shutdown flow:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> SignalHandler</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    signals</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">os</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Signal</span><span style="color: #9399B2;font-style: italic;">  // Default: SIGINT, SIGTERM</span></span>
+<span class="giallo-l"><span>    manager</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Manager</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">h </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">SignalHandler</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> handleSignal</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">sig</span><span style="color: #F9E2AF;font-style: italic;"> os</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Signal</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> sig</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> os</span><span style="color: #9399B2;">.</span><span>Interrupt</span><span style="color: #9399B2;">,</span><span> syscall</span><span style="color: #9399B2;">.</span><span>SIGINT</span><span style="color: #9399B2;">,</span><span> syscall</span><span style="color: #9399B2;">.</span><span>SIGTERM</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span>        shutdownCtx</span><span style="color: #9399B2;">,</span><span> cancel</span><span style="color: #94E2D5;"> :=</span><span> context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithTimeout</span><span style="color: #9399B2;">(</span><span>context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Background</span><span style="color: #9399B2;">(),</span><span> h</span><span style="color: #9399B2;">.</span><span>manager</span><span style="color: #9399B2;">.</span><span>timeout</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        defer</span><span style="color: #89B4FA;font-style: italic;"> cancel</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>        h</span><span style="color: #9399B2;">.</span><span>manager</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">StartShutdown</span><span style="color: #9399B2;">(</span><span>shutdownCtx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="9-callbacks-lifecycle-hooks">9. Callbacks Lifecycle Hooks</h2>
+<p><code>internal/callbacks/callbacks.go</code> provides a lightweight event hook system:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventLLMStart</span><span style="color: #F9E2AF;font-style: italic;">   Event</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;llm.start&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventLLMEnd</span><span style="color: #F9E2AF;font-style: italic;">     Event</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;llm.end&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventLLMError</span><span style="color: #F9E2AF;font-style: italic;">   Event</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;llm.error&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventLLMToken</span><span style="color: #F9E2AF;font-style: italic;">   Event</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;llm.token&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventAgentStart</span><span style="color: #F9E2AF;font-style: italic;"> Event</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.start&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventAgentEnd</span><span style="color: #F9E2AF;font-style: italic;">   Event</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.end&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventToolStart</span><span style="color: #F9E2AF;font-style: italic;">  Event</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;tool.start&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventToolEnd</span><span style="color: #F9E2AF;font-style: italic;">    Event</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;tool.end&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventToolError</span><span style="color: #F9E2AF;font-style: italic;">  Event</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;tool.error&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Handler</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">r </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Registry</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Emit</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    handlers</span><span style="color: #94E2D5;"> :=</span><span> r</span><span style="color: #9399B2;">.</span><span>handlers</span><span style="color: #9399B2;">[</span><span>ctx</span><span style="color: #9399B2;">.</span><span>Event</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> h</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> handlers</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            defer func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                if</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> recover</span><span style="color: #9399B2;">();</span><span> r</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #9399B2;font-style: italic;"> /* isolate handler panic */</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }()</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            h</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each handler has independent panic recovery — one handler's panic doesn't affect subsequent handlers.</p>
+<hr />
+<h2 id="10-architectural-summary">10. Architectural Summary</h2>
+<h3 id="design-patterns">Design Patterns</h3>
+<table><thead><tr><th>Pattern</th><th>Location</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>Resurrection Guard</td><td><code>manager.go</code></td><td><code>stopped</code> set before <code>cancel()</code>, prevents race</td></tr>
+<tr><td>Context Detachment</td><td><code>leader/agent.go</code></td><td>Distillation uses <code>context.Background()</code> independent of request</td></tr>
+<tr><td>Semaphore Concurrency</td><td><code>leader/dispatcher.go</code></td><td><code>chan struct{}</code> limits parallel tasks</td></tr>
+<tr><td>Error-Tolerant Recovery</td><td><code>manager.go</code></td><td>EventStore and MemoryManager independently recoverable</td></tr>
+<tr><td>Dual-State Recovery</td><td><code>manager.go</code></td><td>Operational (events) + Cognitive (messages) independent paths</td></tr>
+<tr><td>Factory Pattern</td><td><code>runtime.go</code></td><td><code>AgentFactory</code> creates new instances</td></tr>
+<tr><td>sync.Once + Mutex</td><td><code>leader/agent.go</code></td><td>Prevents WaitGroup Add after Wait</td></tr>
+<tr><td>Priority Callbacks</td><td><code>shutdown/callbacks.go</code></td><td>Priority-sorted shutdown handlers</td></tr>
+<tr><td>Multi-Phase Shutdown</td><td><code>shutdown/manager.go</code></td><td>PreShutdown → Graceful → Force → Done</td></tr>
+</tbody></table>
+<h3 id="key-file-index">Key File Index</h3>
+<table><thead><tr><th>File</th><th>Core Contribution</th></tr></thead><tbody>
+<tr><td><code>internal/runtime/runtime.go</code></td><td>Runtime interface + config definition</td></tr>
+<tr><td><code>internal/runtime/manager.go</code></td><td>Core lifecycle: register, start, stop, resurrect, health check</td></tr>
+<tr><td><code>internal/agents/base/agent.go</code></td><td>Agent interface hierarchy</td></tr>
+<tr><td><code>internal/agents/leader/agent.go</code></td><td>Leader orchestration pipeline + state recovery</td></tr>
+<tr><td><code>internal/agents/leader/dispatcher.go</code></td><td>Semaphore concurrent task dispatch</td></tr>
+<tr><td><code>internal/agents/leader/supervisor.go</code></td><td>Failover monitoring + cold restart strategy</td></tr>
+<tr><td><code>internal/agents/leader/event_recovery.go</code></td><td>Event log state reconstruction</td></tr>
+<tr><td><code>internal/agents/leader/checkpoint.go</code></td><td>PostgreSQL checkpoint persistence</td></tr>
+<tr><td><code>internal/agents/leader/recovery.go</code></td><td>Orphan task cleanup</td></tr>
+<tr><td><code>internal/agents/sub/agent.go</code></td><td>Sub Agent lifecycle + streaming</td></tr>
+<tr><td><code>internal/agents/sub/executor.go</code></td><td>LLM execution engine (retry + degradation)</td></tr>
+<tr><td><code>internal/agents/sub/heartbeat.go</code></td><td>ID-level heartbeat sender</td></tr>
+<tr><td><code>internal/agents/sub/tools.go</code></td><td>Tool binding + Registry bridge</td></tr>
+<tr><td><code>internal/shutdown/manager.go</code></td><td>Multi-phase shutdown manager</td></tr>
+<tr><td><code>internal/shutdown/phase.go</code></td><td>Retry-able phase executor with backoff</td></tr>
+<tr><td><code>internal/shutdown/callbacks.go</code></td><td>Priority-sorted callback registry</td></tr>
+<tr><td><code>internal/shutdown/signal.go</code></td><td>OS signal forwarding</td></tr>
+<tr><td><code>internal/callbacks/callbacks.go</code></td><td>LLM/Agent/Tool lifecycle hooks</td></tr>
+</tbody></table>
+<hr />
+<h2 id="11-conclusion">11. Conclusion</h2>
+<p>The Runtime subsystem is the part of GoAgentX I spent the most time on and revised the most times. Not because the technology was hard — because the question "how should an agent come back from the dead?" took a long time to answer.</p>
+<p>The answer turned out simple: <strong>Agents are disposable, but their state is not.</strong></p>
+<p>The Resurrection Guard pattern prevents race conditions. The error-tolerant recovery chain ensures "partial recovery is better than none." The multi-phase graceful shutdown lets the process exit cleanly under any scenario.</p>
+<p>The most satisfying test I ever ran: I started 10 agents on analysis tasks, then <code>kill -9</code>'d the process. When it restarted, every agent auto-resurrected and continued where it left off. That's when I knew: <strong>this actually works.</strong></p>
+<hr />
+<p><em>Next: Event System — every agent action recorded as an immutable event. Resurrection depends on it. Auditing depends on it. Debugging depends on it.</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/08-event-system-deep-dive/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">GoAgentX Architecture Deep Dive (8): Event System — Event Sourcing for State Recovery and Audit Trails</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/goagent/06-security-observability-deep-dive/">
+                                <span class="button__text">GoAgentX Architecture Deep Dive (6): Security &amp; Observability — Defense in Depth and Transparent Tracing</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

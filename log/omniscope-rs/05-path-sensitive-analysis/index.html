@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>OmniScope-rs 06: Path-Sensitive Analysis — Heuristic vs. Structured | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="Part 6 of the OmniScope-rs series: how Zig and Rust distinguish definite leaks from conditional leaks and cleanup-protected paths.">
+
+    <meta property="og:description" content="Part 6 of the OmniScope-rs series: how Zig and Rust distinguish definite leaks from conditional leaks and cleanup-protected paths.">
+    <meta property="og:title" content="OmniScope-rs 06: Path-Sensitive Analysis — Heuristic vs. Structured | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-path-sensitive-analysis/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Part 6 of the OmniScope-rs series: how Zig and Rust distinguish definite leaks from conditional leaks and cleanup-protected paths.">
+    <meta name="twitter:title" content="OmniScope-rs 06: Path-Sensitive Analysis — Heuristic vs. Structured | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-path-sensitive-analysis/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-path-sensitive-analysis/">OmniScope-rs 06: Path-Sensitive Analysis — Heuristic vs. Structured</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-16
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/path-analysis/">#Path Analysis</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/static-analysis/">#Static Analysis</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/zig/">#Zig</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="part-6-path-sensitive-analysis-heuristic-vs-structured">Part 6: Path-Sensitive Analysis — Heuristic vs. Structured</h1>
+<h2 id="the-hardest-problem-in-static-analysis">The Hardest Problem in Static Analysis</h2>
+<p>So far, we've built a contract graph. We know which resources were allocated, which operations were performed, and which ownership states each resource went through.</p>
+<p>But here's the thing: <strong>not all code paths are the same</strong>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="c"><span class="giallo-l"><span style="color: #CBA6F7;">void</span><span style="color: #89B4FA;font-style: italic;"> example</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">int</span><span style="color: #EBA0AC;font-style: italic;"> error_code</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    char</span><span style="color: #94E2D5;"> *</span><span>buf </span><span style="color: #94E2D5;">=</span><span style="color: #89B4FA;font-style: italic;"> malloc</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1024</span><span style="color: #9399B2;">);</span><span style="color: #9399B2;font-style: italic;">           // Allocate</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #9399B2;"> (</span><span>error_code </span><span style="color: #94E2D5;">!=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        log_error</span><span style="color: #9399B2;">(</span><span>error_code</span><span style="color: #9399B2;">);</span><span style="color: #9399B2;font-style: italic;">          // Just log, don&#39;t free</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">                         // LEAK on this path!</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    process</span><span style="color: #9399B2;">(</span><span>buf</span><span style="color: #9399B2;">);</span><span style="color: #9399B2;font-style: italic;">                       // Use the buffer</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    free</span><span style="color: #9399B2;">(</span><span>buf</span><span style="color: #9399B2;">);</span><span style="color: #9399B2;font-style: italic;">                          // Free on success path</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Is this a leak? <strong>Yes, it is</strong> — when <code>error_code != 0</code>, <code>buf</code> is never freed. But is this a <em>real</em> leak, or did the programmer intentionally skip the free because the process is about to terminate? Or maybe <code>log_error()</code> takes ownership of <code>buf</code>? Or maybe <code>process()</code> stores <code>buf</code> in a global on success?</p>
+<p>This is the <strong>path-sensitivity problem</strong>: determining, for each execution path through a function, whether a resource is properly released, transferred, or escaped. And then making a judgment call about whether the resource leak is real.</p>
+<hr />
+<h2 id="think-about-it">Think About It</h2>
+<p>How would you determine if a "leak" is real?</p>
+<p>Consider a function with multiple exit paths. Some paths free the resource. Some don't. What conclusions can you draw?</p>
+<ul>
+<li><strong>All paths free</strong> → definitely not a leak (probably).</li>
+<li><strong>No paths free</strong> → definitely a leak (probably).</li>
+<li><strong>Some paths free, some don't</strong> → maybe a leak? Depends on whether the non-freeing paths are error/abort paths.</li>
+</ul>
+<p>And then there are cleanup patterns:</p>
+<ul>
+<li><code>goto cleanup</code> in C — a common pattern where a single cleanup block handles all resources on error paths.</li>
+<li><code>defer</code> / <code>errdefer</code> in Zig — the compiler guarantees cleanup runs even on error paths.</li>
+<li>RAII destructors in C++ / <code>Drop</code> in Rust — the compiler handles cleanup automatically.</li>
+<li>Destructors, finalizers, GC — various language mechanisms that make "leak" a more nuanced concept.</li>
+</ul>
+<p>A good static analyzer needs to distinguish between:</p>
+<ol>
+<li><strong>Definite leaks</strong>: Resources that are never freed on any path, with no cleanup mechanism.</li>
+<li><strong>Conditional leaks</strong>: Resources freed on some paths but not others — may be intentional (error paths) or may be bugs.</li>
+<li><strong>Cleanup-protected</strong>: Resources that appear leaked but are handled by a cleanup mechanism (goto cleanup, errdefer, destructor).</li>
+<li><strong>Safe</strong>: Resources freed, transferred, or escaped on all paths.</li>
+</ol>
+<hr />
+<h2 id="zig-s-approach-heuristic-with-floating-point-confidence">Zig's Approach: Heuristic with Floating-Point Confidence</h2>
+<h3 id="the-pathanalyzer">The PathAnalyzer</h3>
+<p>The Zig version uses a <code>PathAnalyzer</code> that examines the contract graph edges and classifies paths based on edge types:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">pub const</span><span> PathClassification</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> enum</span><span>(</span><span style="color: #CBA6F7;">u8</span><span>) {</span></span>
+<span class="giallo-l"><span>    released_path</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    escaped_path</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    leak_path</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    unknown_path</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    cleanup_path</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #9399B2;">;</span></span></code></pre><h3 id="confidence-thresholds">Confidence Thresholds</h3>
+<p>The analyzer uses three floating-point confidence constants:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span> CONF_ALL_LEAKING</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> f32</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.90</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span> CONF_SOME_LEAKING</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> f32</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.65</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span> CONF_NONE_LEAKING</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> f32</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.0</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p>These thresholds determine how the analyzer reports findings:</p>
+<ul>
+<li><strong>0.90 confidence</strong>: All edges are leaking — this is a definite leak.</li>
+<li><strong>0.65 confidence</strong>: Some edges are leaking — this is a conditional/possible leak.</li>
+<li><strong>0.0 confidence</strong>: None are leaking — not a leak.</li>
+</ul>
+<h3 id="cleanup-pattern-detection">Cleanup Pattern Detection</h3>
+<p>The <code>isCleanupEdge</code> function checks if an edge matches any cleanup pattern:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span> CLEANUP_PATTERNS</span><span style="color: #94E2D5;"> =</span><span> [_][]</span><span style="color: #CBA6F7;">const u8</span><span>{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;_cleanup&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;_fail&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;errdefer&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;defer_&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;__cxa_begin_catch&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;goto &quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;__attribute__((cleanup&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;RAII&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;destructor&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;~&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;Drop(&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;drop(&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>}</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> isCleanupEdge</span><span>(edge</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span> ContractEdge) </span><span style="color: #94E2D5;">-&gt;</span><span style="color: #CBA6F7;"> bool</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> callee</span><span style="color: #94E2D5;"> =</span><span> edge</span><span style="color: #94E2D5;">.</span><span>callee_name</span><span style="color: #CBA6F7;"> orelse return false</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> (CLEANUP_PATTERNS) </span><span style="color: #94E2D5;">|</span><span>pat</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> (std</span><span style="color: #94E2D5;">.</span><span>mem</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">indexOf</span><span>(</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">,</span><span> callee</span><span style="color: #9399B2;">,</span><span> pat) </span><span style="color: #94E2D5;">!=</span><span style="color: #CBA6F7;"> null</span><span>) </span><span style="color: #CBA6F7;">return true</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return false</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>If a cleanup edge is detected, the <code>has_cleanup_alternative</code> flag is set on the <code>LeakCandidate</code>, which can downgrade the severity or suppress the false positive.</p>
+<h3 id="how-classification-works">How Classification Works</h3>
+<p>The <code>analyzeInstance</code> method counts edges:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> analyzeInstance</span><span>(self</span><span style="color: #94E2D5;">: *</span><span>PathAnalyzer</span><span style="color: #9399B2;">,</span><span> inst</span><span style="color: #94E2D5;">: *</span><span>ResourceInstance) </span><span style="color: #94E2D5;">?</span><span>LeakCandidate {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> total_paths</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> release_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> escape_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> has_cleanup</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> bool</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> false</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> (edges) </span><span style="color: #94E2D5;">|</span><span>edge</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span>        total_paths</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        switch</span><span> (edge</span><span style="color: #94E2D5;">.</span><span>effect) {</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>releases</span><span style="color: #94E2D5;"> =&gt;</span><span> release_count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>conditional_release</span><span style="color: #94E2D5;"> =&gt;</span><span> release_count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>returns_owned</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> .</span><span>transfers</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> .</span><span>consumes_arg</span><span style="color: #94E2D5;"> =&gt;</span><span> escape_count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>stores_arg_to_owner</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> .</span><span>stores_arg_to_global</span><span style="color: #94E2D5;"> =&gt;</span><span> escape_count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>initializes_out_param</span><span style="color: #94E2D5;"> =&gt;</span><span> escape_count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span>escapes_to_callback</span><span style="color: #94E2D5;"> =&gt;</span><span> escape_count</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            else</span><span style="color: #94E2D5;"> =&gt;</span><span> {}</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> (</span><span style="color: #89B4FA;font-style: italic;">isCleanupEdge</span><span>(</span><span style="color: #94E2D5;">&amp;</span><span>edge)) has_cleanup</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> true</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> classification</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> if</span><span> (release_count</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span>) </span><span style="color: #94E2D5;">.</span><span>released_path</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        else if</span><span> (escape_count</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span>) </span><span style="color: #94E2D5;">.</span><span>escaped_path</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        else if</span><span> (has_cleanup) </span><span style="color: #94E2D5;">.</span><span>cleanup_path</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        else if</span><span> (total_paths</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span>) </span><span style="color: #94E2D5;">.</span><span>leak_path</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        else</span><span style="color: #94E2D5;"> .</span><span>unknown_path</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> leaky_paths</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> switch</span><span> (classification) {</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>released_path</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> .</span><span>escaped_path</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> .</span><span>cleanup_path</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        .</span><span>leak_path</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> .</span><span>unknown_path</span><span style="color: #94E2D5;"> =&gt;</span><span> total_paths</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    }</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> confidence</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> if</span><span> (classification</span><span style="color: #94E2D5;"> == .</span><span>leak_path</span><span style="color: #CBA6F7;"> and</span><span> leaky_paths</span><span style="color: #94E2D5;"> ==</span><span> total_paths)</span></span>
+<span class="giallo-l"><span>        CONF_ALL_LEAKING</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    else if</span><span> (classification</span><span style="color: #94E2D5;"> == .</span><span>leak_path)</span></span>
+<span class="giallo-l"><span>        CONF_SOME_LEAKING</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    else</span></span>
+<span class="giallo-l"><span>        CONF_NONE_LEAKING</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> LeakCandidate{ </span><span style="color: #94E2D5;">...</span><span> }</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>The key insight: <strong>the Zig classifier doesn't truly track individual paths</strong>. It counts edges and makes a judgment based on the counts. If there are release edges, it's a "released path." If there are no release or escape edges, it's a "leak path." The confidence is then calculated from the ratio.</p>
+<p>This is heuristic path analysis — it approximates path sensitivity without doing full symbolic execution.</p>
+<h3 id="configurable-threshold">Configurable Threshold</h3>
+<p>The default threshold of 0.65 is configurable:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">pub const</span><span> DEFAULT_THRESHOLD</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> f32</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.65</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// In the pipeline:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> (candidate</span><span style="color: #94E2D5;">.</span><span>confidence</span><span style="color: #94E2D5;"> &gt;=</span><span> config</span><span style="color: #94E2D5;">.</span><span>threshold) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Report this as a finding</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>This lets users tune the analyzer's sensitivity. Set it to 0.0 to catch everything (at the cost of false positives). Set it to 0.9 to only report definite leaks (at the cost of false negatives).</p>
+<hr />
+<h2 id="rust-s-approach-structured-path-states-with-discrete-confidence">Rust's Approach: Structured Path States with Discrete Confidence</h2>
+<h3 id="pathexitstate-and-resourcepathstate">PathExitState and ResourcePathState</h3>
+<p>The Rust version defines a richer set of exit states:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> ResourcePathState</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Owned</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">                  // Still owned — potential leak</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Released</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">               // Properly freed</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EscapedToCaller</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // Returned to caller</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EscapedOutParam</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // Stored in out-parameter</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StoredToOwner</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">          // Stored in owner struct</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StoredToRuntime</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // Stored in GC heap / global</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    RuntimeManaged</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">         // Arena/zone/GC managed</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StaticLifetime</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">         // Process-lifetime</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    AbortOrUnreachable</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Path terminates abnormally</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Null</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">                   // Resource is NULL</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Unknown</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">                // Can&#39;t determine</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="collecting-exit-states">Collecting Exit States</h3>
+<p>The <code>collect_exit_states</code> function collects resource states at each function exit point, enriched with semantic resolution tree (SRT) data, function summaries, and termination information:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> collect_exit_states</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    pointer_states</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">PointerStateMap</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    alloc</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">RawResourceFact</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    srt_resolutions</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">SemanticKind</span><span style="color: #89DCEB;">&gt;&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    summary_store</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">SummaryStore</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    func_termination</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> FunctionTermination</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">PathExitState</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> exit_states</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span style="color: #9399B2;"> (</span><span>slot</span><span style="color: #9399B2;">,</span><span> state</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> in</span><span> pointer_states</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> resource_state</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> match</span><span> state</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PointerValueState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Unknown</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> ResourcePathState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Unknown</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PointerValueState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Null</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> ResourcePathState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Null</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PointerValueState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Owned</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">                // Enrich: check if function only aborts</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">FunctionTermination</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">OnlyAborts</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span></span>
+<span class="giallo-l"><span>                    func_termination</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>alloc</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">caller_name</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                    ResourcePathState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">AbortOrUnreachable</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">                // Enrich: check SRT for runtime-managed / static-lifetime</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                else if</span><span style="color: #89B4FA;font-style: italic;"> is_runtime_managed</span><span style="color: #9399B2;">(</span><span>srt_resolutions</span><span style="color: #9399B2;">,</span><span> alloc</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">                    classify_runtime_state</span><span style="color: #9399B2;">(</span><span>srt_resolutions</span><span style="color: #9399B2;">,</span><span> alloc</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                    ResourcePathState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Owned</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PointerValueState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Released</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> ResourcePathState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Released</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PointerValueState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Escaped</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">                // Enrich: check if caller returns owned resource</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                if</span><span style="color: #89B4FA;font-style: italic;"> caller_returns_owned_resource</span><span style="color: #9399B2;">(</span><span>summary_store</span><span style="color: #9399B2;">,</span><span> alloc</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                    ResourcePathState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">EscapedToCaller</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                    ResourcePathState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">EscapedToCaller</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        };</span></span>
+<span class="giallo-l"><span>        exit_states</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">PathExitState</span><span style="color: #9399B2;"> {</span><span> resource_state</span><span style="color: #9399B2;">,</span><span> _evidence</span><span style="color: #94E2D5;">:</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[] });</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... release path pattern detection ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Key enrichments:</p>
+<ul>
+<li><strong>AbortOrUnreachable</strong>: If a function only has abort paths, "leaked" resources are actually harmless.</li>
+<li><strong>StoredToOwner vs RuntimeManaged vs StaticLifetime</strong>: SRT data distinguishes between storing in a struct field (safe) vs. managed by a runtime (safe) vs. static lifetime (safe).</li>
+<li><strong>EscapedToCaller vs EscapedOutParam</strong>: Differentiates returning a value vs. writing to an out-parameter.</li>
+</ul>
+<h3 id="pathconfidence-discrete-levels">PathConfidence — Discrete Levels</h3>
+<p>The Rust version uses discrete confidence levels:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> PathConfidence</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Low</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // &lt; 65% agreement</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Medium</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // &gt;= 65% agreement</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    High</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // &gt;= 90% agreement</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>These are computed by <code>path_confidence_score</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> path_confidence_score</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">total</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> owned</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> safe</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> PathConfidence</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> total</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F9E2AF;font-style: italic;"> PathConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Low</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> majority_ratio</span><span style="color: #94E2D5;"> =</span><span> owned</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">max</span><span style="color: #9399B2;">(</span><span>safe</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> as f32</span><span style="color: #94E2D5;"> /</span><span> total</span><span style="color: #CBA6F7;"> as f32</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> majority_ratio</span><span style="color: #94E2D5;"> &gt;=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">90</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        PathConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">High</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span><span style="color: #CBA6F7;"> else if</span><span> majority_ratio</span><span style="color: #94E2D5;"> &gt;=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">65</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        PathConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Medium</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        PathConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Low</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The confidence converts to a score for reporting:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> PathConfidence</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> to_score</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> f32</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        match</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PathConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">High</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">9</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PathConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Medium</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">6</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            PathConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Low</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">3</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="combining-path-states">Combining Path States</h3>
+<p>The <code>combine_path_states</code> function aggregates multiple exit states:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> combine_path_states</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">exit_states</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">PathExitState</span><span style="color: #9399B2;">])</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> PathCombinationResult</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> total_paths</span><span style="color: #94E2D5;"> =</span><span> exit_states</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">len</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> owned_paths</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #CBA6F7;">usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> safe_paths</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #CBA6F7;">usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> unknown_paths</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #CBA6F7;">usize</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> state</span><span style="color: #CBA6F7;"> in</span><span> exit_states</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #89B4FA;font-style: italic;"> is_safe_exit</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>state</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">resource_state</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>            safe_paths</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span><span style="color: #CBA6F7;"> else if</span><span> state</span><span style="color: #94E2D5;">.</span><span>resource_state </span><span style="color: #94E2D5;">==</span><span style="color: #F9E2AF;font-style: italic;"> ResourcePathState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Owned</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            owned_paths</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            unknown_paths</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> confidence</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> path_confidence_score</span><span style="color: #9399B2;">(</span><span>total_paths</span><span style="color: #9399B2;">,</span><span> owned_paths</span><span style="color: #9399B2;">,</span><span> safe_paths</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    PathCombinationResult</span><span style="color: #9399B2;"> {</span><span> total_paths</span><span style="color: #9399B2;">,</span><span> owned_paths</span><span style="color: #9399B2;">,</span><span> safe_paths</span><span style="color: #9399B2;">,</span><span> unknown_paths</span><span style="color: #9399B2;">,</span><span> confidence</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="release-path-pattern-detection">Release Path Pattern Detection</h3>
+<p>The Rust version also detects whether releases are mutually exclusive or sequential, which is critical for double-free analysis:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> ReleasePathPattern</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MutuallyExclusive</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // if/else branches each free once</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    SequentialRelease</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // Same path frees twice</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MixedRelease</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">         // Combination</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Indeterminate</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> detect_release_path_pattern</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    total_released_instances</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    unique_instances</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> ReleasePathPattern</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> total_released_instances</span><span style="color: #94E2D5;"> &gt;</span><span> unique_instances</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        ReleasePathPattern</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MutuallyExclusive</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span><span style="color: #CBA6F7;"> else if</span><span> total_released_instances</span><span style="color: #94E2D5;"> ==</span><span> unique_instances</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        ReleasePathPattern</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">SequentialRelease</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        ReleasePathPattern</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Indeterminate</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is important for correctness: if a resource is released on two different paths (if/else), that's not a double-free — only one path executes. But if it's released twice on the same path, that's a real double-free.</p>
+<h3 id="leaktype-determination">LeakType Determination</h3>
+<p>The <code>determine_leak_type</code> function makes the final call:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> determine_leak_type</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    exit_states</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">PathExitState</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    alloc_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    release_count</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> LeakType</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>exit_states</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">is_empty</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> all_owned</span><span style="color: #94E2D5;"> =</span><span> exit_states</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">all</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>s</span><span style="color: #94E2D5;">|</span><span> s</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">resource_state </span><span style="color: #94E2D5;">==</span><span style="color: #F9E2AF;"> ResourcePathState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Owned</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> some_owned</span><span style="color: #94E2D5;"> =</span><span> exit_states</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">any</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>s</span><span style="color: #94E2D5;">|</span><span> s</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">resource_state </span><span style="color: #94E2D5;">==</span><span style="color: #F9E2AF;"> ResourcePathState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Owned</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> all_safe</span><span style="color: #94E2D5;"> =</span><span> exit_states</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">all</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>s</span><span style="color: #94E2D5;">|</span><span style="color: #89B4FA;font-style: italic;"> is_safe_exit</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>s</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">resource_state</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> all_safe</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> LeakType</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Safe</span><span style="color: #9399B2;">; }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        else if</span><span> all_owned</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> LeakType</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Definite</span><span style="color: #9399B2;">; }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        else if</span><span> some_owned</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> LeakType</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Conditional</span><span style="color: #9399B2;">; }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Fallback to counting</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> alloc_count</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> release_count</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;font-style: italic;"> LeakType</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Definite</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    else if</span><span> alloc_count</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> release_count</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> release_count</span><span style="color: #94E2D5;"> &lt;</span><span> alloc_count</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        LeakType</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Conditional</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;font-style: italic;"> LeakType</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Safe</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="comparison-floating-point-vs-discrete">Comparison: Floating-Point vs. Discrete</h2>
+<table><thead><tr><th>Aspect</th><th>Zig</th><th>Rust</th></tr></thead><tbody>
+<tr><td><strong>Confidence model</strong></td><td>Floating-point <code>f32</code> (0.0–1.0)</td><td>Discrete enum <code>PathConfidence</code> (Low/Medium/High)</td></tr>
+<tr><td><strong>Thresholds</strong></td><td>0.65 default, configurable</td><td>65% and 90% hardcoded</td></tr>
+<tr><td><strong>Path tracking</strong></td><td>Edge counting per instance</td><td><code>PathExitState</code> enumeration with enrichment</td></tr>
+<tr><td><strong>Enrichment sources</strong></td><td>Cleanup pattern matching</td><td>SRT, function summaries, termination analysis</td></tr>
+<tr><td><strong>Release pattern</strong></td><td>Implicit (count-based)</td><td>Explicit <code>ReleasePathPattern</code> detection</td></tr>
+<tr><td><strong>Abort handling</strong></td><td>Not explicit</td><td><code>FunctionTermination::OnlyAborts</code></td></tr>
+<tr><td><strong>Runtime-managed detection</strong></td><td>Not explicit</td><td>SRT-based <code>is_runtime_managed()</code></td></tr>
+<tr><td><strong>Default report threshold</strong></td><td>0.65</td><td>Definite + Conditional</td></tr>
+</tbody></table>
+<h3 id="the-zig-trade-off-more-granular-more-arbitrary">The Zig Trade-off: More Granular, More Arbitrary</h3>
+<p>Zig's floating-point confidence scoring is <strong>more granular</strong>. You get values like 0.85, 0.55, 0.30 — precise numbers that can be used for ranking and prioritization. The configurable threshold lets users dial in their preferred sensitivity.</p>
+<p>But it's also <strong>more arbitrary</strong>. What does "0.73 confidence" really mean? Is it meaningfully different from 0.74? The floating-point precision suggests a scientific rigor that doesn't really exist — these are heuristic scores, not probabilities derived from data.</p>
+<h3 id="the-rust-trade-off-less-granular-more-deterministic">The Rust Trade-off: Less Granular, More Deterministic</h3>
+<p>Rust's discrete confidence levels are <strong>less granular</strong> but <strong>more deterministic</strong>. There are clear rules: ≥90% agreement is High, ≥65% is Medium, below is Low. This is easier to explain, easier to test, and harder to accidentally break.</p>
+<p>But the discrete levels can feel <strong>imprecise</strong>. A scenario with 64% agreement gets "Low" confidence, and one with 66% gets "Medium". That 2% difference changes the output, even though the scenarios are practically identical.</p>
+<h3 id="what-we-can-learn">What We Can Learn</h3>
+<p>Path-sensitive analysis is the most subjective part of OmniScope. There's no "right answer" — every threshold, every confidence level, every enrichment heuristic is a judgment call.</p>
+<ul>
+<li><strong>Zig's floating-point approach says</strong>: "Let's give analysts a continuous score they can use to prioritize findings. The exact number matters less than the ranking."</li>
+<li><strong>Rust's discrete approach says</strong>: "Let's give analysts clear categories they can build rules around. Definite leaks get reported, conditional leaks get flagged for review, low-confidence leaks get suppressed."</li>
+</ul>
+<p>Both approaches are used in production static analyzers. Clang Static Analyzer uses something closer to Zig's approach (bug categories with priority levels). Coverity uses something closer to Rust's approach (definite vs. probable vs. possible).</p>
+<p>The right choice depends on your users: do they want a ranked list of "most likely bugs first" (Zig), or do they want clear "this is a bug / this might be a bug / this is not a bug" categories (Rust)?</p>
+<hr />
+<p>Next up: <strong>Part 7 — FFI Boundary Detection: VTable Pattern vs. Trait Objects</strong>. The final piece of the puzzle: detecting which functions cross FFI boundaries and what language they belong to. This is where OmniScope's cross-language mission becomes concrete, and where the Zig and Rust implementations diverge most in their use of language-specific idioms.</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/06-ffi-boundary/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">OmniScope-rs 07: FFI Boundary Detection — VTable Pattern vs. Trait Objects</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/04-contract-graph/">
+                                <span class="button__text">OmniScope-rs 05: Contract Graph — Building the Resource Flow Picture</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>
