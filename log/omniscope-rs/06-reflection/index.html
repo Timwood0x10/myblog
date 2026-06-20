@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>OmniScope Architecture Deep Dive (Part 6): Reflection — The Architectural Trade-offs You Never Saw | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="The final reflection on the Rust rewrite: single-module vs. cross-module analysis, why 68% precision is still not enough, why hand-written rules beat ML for a security tool, and the roads not taken.">
+
+    <meta property="og:description" content="The final reflection on the Rust rewrite: single-module vs. cross-module analysis, why 68% precision is still not enough, why hand-written rules beat ML for a security tool, and the roads not taken.">
+    <meta property="og:title" content="OmniScope Architecture Deep Dive (Part 6): Reflection — The Architectural Trade-offs You Never Saw | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/06-reflection/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="The final reflection on the Rust rewrite: single-module vs. cross-module analysis, why 68% precision is still not enough, why hand-written rules beat ML for a security tool, and the roads not taken.">
+    <meta name="twitter:title" content="OmniScope Architecture Deep Dive (Part 6): Reflection — The Architectural Trade-offs You Never Saw | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/06-reflection/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/06-reflection/">OmniScope Architecture Deep Dive (Part 6): Reflection — The Architectural Trade-offs You Never Saw</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-30
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/architecture/">#Architecture</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/engineering-reflection/">#Engineering Reflection</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="omniscope-architecture-deep-dive-part-6-reflection-the-architectural-trade-offs-you-never-saw">OmniScope Architecture Deep Dive (Part 6): Reflection — The Architectural Trade-offs You Never Saw</h1>
+<blockquote>
+<p>The first five articles covered "what we did right." This one covers "what we gave up."</p>
+<p>Every architectural decision has a pile of rejected alternatives. Writing down the roads not taken is more valuable than only describing the chosen path.</p>
+</blockquote>
+<hr />
+<h2 id="panoramic-review-the-complete-ir-to-issue-chain">Panoramic Review: The Complete IR-to-Issue Chain</h2>
+<p>Before diving into individual trade-offs, let's look at the full system data flow from input to output:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    subgraph Input[&quot;Input Layer&quot;]</span></span>
+<span class="giallo-l"><span>        LL[&quot;LLVM IR (.ll/.bc)&quot;] --&gt; IR[&quot;IRModuleModel&lt;br/&gt;ir_model.rs&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph Pipeline[&quot;22-Pass Analysis Pipeline&quot;]</span></span>
+<span class="giallo-l"><span>        IR --&gt; P1[&quot;Phase 1: Foundation&lt;br/&gt;CallGraph / FFIBoundary&lt;br/&gt;SurfaceClassifier / DangerSurface&quot;]</span></span>
+<span class="giallo-l"><span>        P1 --&gt; P2[&quot;Phase 2: Resource Contract&lt;br/&gt;RawFactCollector → IRBehaviorSummary&lt;br/&gt;→ ContractGraph → OwnershipSolver&quot;]</span></span>
+<span class="giallo-l"><span>        P2 --&gt; P3[&quot;Phase 3: Semantic Analysis&lt;br/&gt;RaiiDrop / InteriorMutability&lt;br/&gt;HeapProvenance / BorrowEscape&quot;]</span></span>
+<span class="giallo-l"><span>        P3 --&gt; P4[&quot;Phase 4: Aggregation &amp; Output&lt;br/&gt;IssueCandidateBuilder&lt;br/&gt;→ IssueVerifier (9-layer NR)&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph Output[&quot;Output Layer&quot;]</span></span>
+<span class="giallo-l"><span>        P4 --&gt; Issue[&quot;Final Issue&lt;br/&gt;28 Types&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph EvidenceChain[&quot;Evidence Chain Traceability&quot;]</span></span>
+<span class="giallo-l"><span>        Effect[&quot;Effect&lt;br/&gt;Acquire/Release/Retain/...&quot;] --&gt; State[&quot;State&lt;br/&gt;+FamilyId +Confidence&quot;]</span></span>
+<span class="giallo-l"><span>        State --&gt; MemoryGraph[&quot;MemoryGraph&lt;br/&gt;AllocSite→ReleaseSite Tracking&quot;]</span></span>
+<span class="giallo-l"><span>        MemoryGraph --&gt; SemanticTree[&quot;SemanticTree&lt;br/&gt;BehaviorPattern→SemanticKind&lt;br/&gt;ir_pattern.rs + kind.rs&quot;]</span></span>
+<span class="giallo-l"><span>        SemanticTree --&gt; Evidence[&quot;Evidence&lt;br/&gt;30+ EvidenceKind&lt;br/&gt;evidence.rs&quot;]</span></span>
+<span class="giallo-l"><span>        Evidence --&gt; Issue</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Pipeline -.-&gt; EvidenceChain</span></span></code></pre>
+<p>Every link in this chain represents an architectural decision. Let's examine each one.</p>
+<hr />
+<h2 id="decision-1-why-llvm-ir-instead-of-source-ast">Decision 1: Why LLVM IR Instead of Source AST?</h2>
+<p>This is OmniScope's most foundational choice.</p>
+<p><strong>Rejected Approach:</strong> Tree-sitter or Clang AST for source-level analysis.</p>
+<p><strong>Rationale:</strong></p>
+<ol>
+<li><strong>Cross-language analysis requires a unified intermediate representation.</strong> ASTs are language-specific — C's AST and Rust's AST are completely incompatible. Writing separate analyzers for each language multiplies effort by the number of languages.</li>
+<li><strong>LLVM IR has already completed macro expansion, template instantiation, and generic specialization.</strong> <code>Arc&lt;T&gt;</code> in source becomes concrete types in IR — no need to understand Rust's trait system.</li>
+<li><strong><code>.ll</code> text format is natively parseable.</strong> Basic analysis doesn't require linking LLVM libraries.</li>
+</ol>
+<p>But LLVM IR has <strong>information loss</strong>. The instruction parser only supports about 60 instruction types:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// File: crates/omniscope-ir/src/instruction_parser.rs</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> classify_instruction</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">opcode</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> operands</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">])</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span> opcode</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;call&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Call</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;load&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Load</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;store&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Store</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;alloca&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Alloca</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;getelementptr&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #FAB387;">GEP</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;phi&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Phi</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;icmp&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;fcmp&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Compare</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;br&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;switch&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;indirectbr&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Branch</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;ret&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Return</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;bitcast&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;ptrtoint&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;inttoptr&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cast</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;malloc&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;free&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;calloc&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;realloc&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MemoryOp</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Other</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>_ =&gt; InstructionKind::Other</code> is the "catch-all." New LLVM instructions like <code>callbr</code>, <code>freeze</code>, and <code>poison</code>-related operations all land here. TextParser coverage is a chronic challenge.</p>
+<h3 id="rejected-option-tree-sitter-ast-analysis">Rejected Option: Tree-sitter AST Analysis</h3>
+<p>Tree-sitter is an excellent incremental parser. Why not use it?</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: Not in codebase — this was a prototype decision</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Why Tree-sitter was rejected:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// enum Language { C, Rust, Cpp, Python, Go, Java }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// impl Language {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//     fn ast_parser(&amp;self) -&gt; Box&lt;dyn Parser&gt; {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//         match self {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//             Language::C =&gt; c::parser(),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//             Language::Rust =&gt; rust::parser(),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//             Language::Cpp =&gt; cpp::parser(),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//             Language::Python =&gt; python::parser(),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//         }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//     }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Problem: Each language maps to a different AST structure.</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// ResultType of `let x = foo()` → Rust AST is `LetStmt`,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// C is `BinaryExpr`, Python is `Assign` — no unified representation.</span></span></code></pre>
+<p>For OmniScope's span of 6 language families, Tree-sitter would mean maintaining 6 syntax analyzers with no shared IR. The initial choice of LLVM IR means supporting new languages only requires building a <code>.ll</code> extraction pipeline for that language's compiler.</p>
+<hr />
+<h2 id="decision-2-why-22-small-passes-instead-of-one-big-pass">Decision 2: Why 22 Small Passes Instead of One Big Pass?</h2>
+<p>This is OmniScope's pipeline design philosophy.</p>
+<p><strong>Rejected Approach:</strong> A monolithic <code>AnalyzeEverythingPass</code> that generates all issues in a single IR traversal.</p>
+<p><strong>Rationale:</strong></p>
+<p>A 3000-line monolithic Pass is impossible to debug: when something goes wrong, you don't know which phase caused it. Breaking into 22 passes makes each pass's input and output explicit:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// File: crates/omniscope-pipeline/src/pipeline.rs</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> register_default_passes</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Foundation (zero dependencies)</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span>pass_manager</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">register</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">CallGraphPass</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Analysis (depends on CallGraph)</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span>pass_manager</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">register</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">FFIBoundaryPass</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Detection (depends on analysis)</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span>pass_manager</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">register</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">SurfaceClassifierPass</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Relationship inference (depends on SurfaceClassifier)</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span>pass_manager</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">register</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">DangerSurfacePass</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Resource contract extraction</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span>pass_manager</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">register</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">RawFactCollectorPass</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Cross-function lifetime analysis</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span>pass_manager</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">register</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">CrossFunctionLifetimePass</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... continues with additional passes ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // CrossLanguagePass, ReconcilePass, etc.</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each pass has explicit dependencies: <code>PassKind::Analysis</code> passes compute new data, <code>PassKind::Transform</code> passes modify the context. Individual passes can be enabled/disabled, and tests can validate single passes in isolation.</p>
+<p>Architecture of <code>pass_manager.rs</code> (<code>/Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-pass/src/manager.rs</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// File: /Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-pass/src/manager.rs</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> PassManager</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    passes</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Box</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">dyn</span><span style="color: #F9E2AF;font-style: italic;"> Pass</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    context</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PassContext</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    topological_order</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> PassManager</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> register</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">P</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Pass</span><span style="color: #94E2D5;"> +</span><span style="color: #9399B2;"> &#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> pass</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> P</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> name</span><span style="color: #94E2D5;"> =</span><span> pass</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">name</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">        self</span><span style="color: #94E2D5;">.</span><span>passes</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">Box</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span>pass</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">        self</span><span style="color: #94E2D5;">.</span><span>topological_order</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> run</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">()</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> pass</span><span style="color: #CBA6F7;"> in</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>passes </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            let</span><span> start</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Instant</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">now</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            let</span><span> result</span><span style="color: #94E2D5;"> =</span><span> pass</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">run</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">context</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">            log</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">info!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Pass </span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;"> completed in </span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">:?</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> pass</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">name</span><span style="color: #9399B2;">(),</span><span> start</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">elapsed</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">            self</span><span style="color: #94E2D5;">.</span><span>context</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">store</span><span style="color: #9399B2;">(</span><span>pass</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">name</span><span style="color: #9399B2;">(),</span><span> result</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="the-hidden-cost-pass-communication-overhead">The Hidden Cost: Pass Communication Overhead</h3>
+<p>The 22-pass architecture isn't free. Each pass communicates with the next through <code>PassContext</code> — a heterogeneous key-value store:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: /Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-pass/src/manager.rs</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> PassContext</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">crate</span><span style="color: #9399B2;">)</span><span> module_index</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">ModuleIndex</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">crate</span><span style="color: #9399B2;">)</span><span> call_graph</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">CallGraph</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... many more fields ...</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">crate</span><span style="color: #9399B2;">)</span><span> results</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> PassResult</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Fallback / Auxiliary storage for dynamic key-value data</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">crate</span><span style="color: #9399B2;">)</span><span> store</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">dyn</span><span style="color: #F9E2AF;font-style: italic;"> Any</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The problem: <code>HashMap&lt;String, Box&lt;dyn Any&gt;&gt;</code> means <strong>runtime type erasure</strong>. Using <code>store.get("cross_function_lifetime_data")</code> returns <code>Option&lt;&amp;Box&lt;dyn Any&gt;&gt;</code> — a downcast is needed:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> data</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">CrossFunctionLifetimeData</span><span style="color: #94E2D5;"> =</span><span> ctx</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span>store</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">get</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;cross_function_lifetime_data&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">and_then</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>any</span><span style="color: #94E2D5;">|</span><span> any</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">downcast_ref</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">CrossFunctionLifetimeData</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">())</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">expect</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;CrossFunctionLifetimeData missing from context&quot;</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>This is fragile: if a pass name changes, downstream pass retrieval breaks silently. Compare with a compile-time pipeline where one pass returns <code>CrossFunctionLifetimeData</code> directly — runtime retrieval is a design compromise.</p>
+<h3 id="is-22-passes-appropriate">Is 22 passes appropriate?</h3>
+<p>My assessment: for the current problem domain (ownership analysis across 6 languages), 22 passes is about right. Each pass has a clear scope. But if the analysis target expands to include concurrency safety, type-state verification, or memory layout analysis, 30-35 passes might be more appropriate — not an explosion.</p>
+<p>Architecture of the <code>Pass</code> trait:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: /Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-pass/src/pass.rs</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub trait</span><span style="color: #F9E2AF;font-style: italic;"> Pass</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Send</span><span style="color: #94E2D5;"> +</span><span style="color: #F9E2AF;font-style: italic;"> Sync</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> name</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt; &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #F9E2AF;font-style: italic;"> str</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> kind</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> PassKind</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> dependencies</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #F9E2AF;font-style: italic;"> str</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> run</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> ctx</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F9E2AF;font-style: italic;"> PassContext</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">PassResult</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> PassKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Read-only analysis, computes new data from existing context</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Analysis</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Transforms context, may modify in-place</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Transform</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Validation: no side effects, produces report</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Validation</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="decision-3-semantic-tree-or-formal-verification">Decision 3: Semantic Tree or Formal Verification?</h2>
+<p><strong>Rejected Approach:</strong> Abstract Interpretation / Symbolic Execution for path-sensitive verification.</p>
+<p><strong>Rationale:</strong></p>
+<p>Symbolic execution is the academic "correct answer" for resource leak detection. For a given function entry, symbolically execute all paths, tracking each resource's state — guarantees completeness. But:</p>
+<ol>
+<li><strong>Path explosion in FFI context</strong>: When a function has 20 conditional branches and each branch calls 3 FFI functions, the symbolic path count grows exponentially.</li>
+<li><strong>FFI semantics uninstrumentable</strong>: Abstract interpretation requires a model of <code>free()</code>'s effect — but <code>java_free()</code> in a JNI context has no LLVM IR body.</li>
+<li><strong>Scalability concerns</strong>: For a 10K-function module, symbolic execution might take hours.</li>
+</ol>
+<p>The Semantic Tree approach trades completeness for scalability:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Semantic Tree Architecture&quot;</span></span>
+<span class="giallo-l"><span>        IP[IRPattern&lt;br/&gt;cr_load / cr_retain / cr_release] --&gt; BP[BehaviorPattern&lt;br/&gt;Acquire / Release / Retain]</span></span>
+<span class="giallo-l"><span>        BP --&gt; SK[SemanticKind&lt;br/&gt;CPythonRetain / RaiiDropRelease]</span></span>
+<span class="giallo-l"><span>        SK --&gt; SF[SemanticFact&lt;br/&gt;confidence: 0.95&lt;br/&gt;source: cr_release]</span></span>
+<span class="giallo-l"><span>        SF --&gt; EB[EvidenceBundle&lt;br/&gt;with confidence check]</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: /Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-semantics/src/resource/semantic_tree/mod.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> SemanticTree</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> root</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> BehaviorPattern</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> patterns</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">IRPattern</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> behaviors</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">SemanticKind</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> facts</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">SemanticFact</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Three patterns → one semantic kind → one fact → one evidence. The chain is lossy by design: IRPattern drops to SemanticKind means losing concrete analysis context.</p>
+<h3 id="concrete-example-borrow-semantics">Concrete Example: Borrow Semantics</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: /Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-semantics/src/resource/semantic_tree/borrow.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> BorrowSemantics</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">crate</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> fn</span><span style="color: #89B4FA;font-style: italic;"> analyze</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">ctx</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">SemanticContext</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> BorrowState</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let mut</span><span> counter_map</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> BorrowCounter</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span style="color: #9399B2;"> (</span><span>inst_idx</span><span style="color: #9399B2;">,</span><span> inst</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> in</span><span> ctx</span><span style="color: #94E2D5;">.</span><span>instructions</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">enumerate</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            match</span><span style="color: #89B4FA;font-style: italic;"> classify_instruction</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>inst</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">opcode</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>inst</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">operands</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Call</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                    let</span><span> callee</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> extract_callee</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>inst</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">operands</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                    if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> callee</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">                        // Analyze Python retain/release patterns</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                        if</span><span> name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Py_IncRef&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Py_XINCREF&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                            let</span><span> resource</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> extract_argument</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>inst</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">operands</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>                            counter_map</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">entry</span><span style="color: #9399B2;">(</span><span>resource</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                                .</span><span style="color: #89B4FA;font-style: italic;">or_default</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                                .</span><span style="color: #89B4FA;font-style: italic;">increment</span><span style="color: #9399B2;">(</span><span>inst_idx</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                        }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                        if</span><span> name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Py_DecRef&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Py_XDECREF&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                            let</span><span> resource</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> extract_argument</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>inst</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">operands</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>                            counter_map</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">entry</span><span style="color: #9399B2;">(</span><span>resource</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                                .</span><span style="color: #89B4FA;font-style: italic;">or_default</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                                .</span><span style="color: #89B4FA;font-style: italic;">decrement</span><span style="color: #9399B2;">(</span><span>inst_idx</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span>                _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        BorrowState</span><span style="color: #9399B2;"> {</span><span> counters</span><span style="color: #94E2D5;">:</span><span> counter_map</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This approach works well for patterns like CPython's retain/release. But it cannot reason about complex paths like "if A then retain, if not A then retain via fallback, then release." Path sensitivity is limited.</p>
+<hr />
+<h2 id="decision-4-why-b-treemap-instead-of-petgraph">Decision 4: Why B-TreeMap Instead of petgraph?</h2>
+<p>Graph analysis in OmniScope uses an index-based graph structure rather than petgraph.</p>
+<p><strong>File:</strong> <code>/Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-dataflow/src/graph.rs</code></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: /Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-dataflow/src/graph.rs</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">collections</span><span style="color: #94E2D5;">::</span><span style="color: #9399B2;">{</span><span style="color: #F9E2AF;font-style: italic;">BTreeMap</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> BTreeSet</span><span style="color: #9399B2;">};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> MemoryGraph</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> nodes</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> BTreeMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">NodeIndex</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> MemoryNode</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> edges</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> BTreeMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">EdgeIndex</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEdge</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> adjacency</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> BTreeMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">NodeIndex</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> BTreeSet</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">EdgeIndex</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> NodeIndex</span><span style="color: #9399B2;">)</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> node_counter</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> edge_counter</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Comparing petgraph vs BTreeMap:</strong></p>
+<table><thead><tr><th>Dimension</th><th>petgraph</th><th>BTreeMap</th></tr></thead><tbody>
+<tr><td>Query flexibility</td><td>Rich (DFS, BFS, topo sort)</td><td>Manual reconstruction needed</td></tr>
+<tr><td>Ownership</td><td>By value, graph consumed</td><td>Borrow-friendly</td></tr>
+<tr><td>Merge complexity</td><td>Clone + union</td><td>Manual <code>adjacency</code> update</td></tr>
+<tr><td>Testing / Partial</td><td>Full graph only</td><td>Subgraph extraction easy</td></tr>
+<tr><td>Pattern match traces</td><td>Predecessor iteration</td><td>pred() via reverse index</td></tr>
+</tbody></table>
+<p>Why not petgraph? Two reasons:</p>
+<ol>
+<li><strong>Frequent merging and splitting</strong>: In cross-language ownership analysis, MemoryGraph must merge multiple sub-results and split by resource family. BTreeMap's <code>entry()</code> API makes this natural:</li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// BTreeMap entry API for split/merge</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span>adjacency</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">entry</span><span style="color: #9399B2;">(</span><span>parent</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">or_default</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">insert</span><span style="color: #9399B2;">((</span><span>edge</span><span style="color: #9399B2;">,</span><span> child</span><span style="color: #9399B2;">));</span></span></code></pre>
+<p>petgraph's <code>NodeIndex</code> is stable across deletions — making it impossible to detect "node was removed."</p>
+<ol start="2">
+<li><strong>Need for "nodes exist but edges not yet connected" semantics</strong>: In multi-phase analysis, nodes are created first, edges added later. BTreeMap's <code>entry()</code> allows this natively.</li>
+</ol>
+<p>Cost: every graph traversal requires reconstructing DFS/BFS manually.</p>
+<hr />
+<h2 id="decision-5-why-semantickind-fp-suppression-instead-of-score-thresholds">Decision 5: Why SemanticKind FP Suppression Instead of Score Thresholds?</h2>
+<p><strong>Rejected Approach:</strong> A single confidence threshold applied uniformly across all IssueTypes.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Rejected approach:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> should_report</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">issue_candidate</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">IssueCandidate</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    issue_candidate</span><span style="color: #94E2D5;">.</span><span>confidence </span><span style="color: #94E2D5;">&gt;=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">7</span><span style="color: #9399B2;font-style: italic;">  // Single threshold for all types</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Rationale:</strong></p>
+<ul>
+<li><code>write_to_immutable</code> needs different precision than <code>cross_language_free</code></li>
+<li>C patterns differ fundamentally from Python patterns (C: explicit free; Python: reference counting)</li>
+<li>A single threshold creates a binary "good/bad" split that leaks either too many FP or too many FN</li>
+</ul>
+<p><strong>Current approach:</strong> Each IssueType has its own suppression rules, each SemanticKind variant has specific suppression logic:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: /Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-semantics/src/resource/semantic_tree/kind.rs</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">crate</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> fn</span><span style="color: #89B4FA;font-style: italic;"> suppresses_write_to_immutable</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InteriorMutability</span><span style="color: #94E2D5;"> |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MutableParam</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MutableLocal</span><span style="color: #94E2D5;"> |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">VolatileStore</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">crate</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> fn</span><span style="color: #89B4FA;font-style: italic;"> suppresses_cross_language_free</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">IntoRawTransfer</span><span style="color: #94E2D5;"> |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">LibraryRelease</span><span style="color: #94E2D5;"> |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">RaiiDropRelease</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each issue type has 2-5 specific SemanticKind suppression types, not a single score.</p>
+<hr />
+<h2 id="decision-6-issue-model-28-specific-types-or-1-generic-type">Decision 6: Issue Model — 28 Specific Types or 1 Generic Type?</h2>
+<p><strong>Rejected Approach:</strong> A single <code>Issue</code> with a <code>kind: String</code> field.</p>
+<p><strong>Rationale:</strong></p>
+<ul>
+<li>Strong typing makes verification layer code self-documenting</li>
+<li>Pattern matching on enum variants is exhaustive — no unhandled issue types at compile time</li>
+<li>Each variant can carry specific metadata relevant to that issue type</li>
+</ul>
+<p><strong>The 28 IssueKinds</strong> (defined in <code>/Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-core/src/issue.rs</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: /Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-core/src/issue.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> IssueKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Memory safety</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    UseAfterFree</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DoubleFree</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MemoryLeak</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Ownership</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OwnershipViolation</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OwnershipEscapeLeak</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    PhantomOwnershipTransfer</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Cross-language</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FfiTypeMismatch</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FfiUnsafeCall</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    WrongDeallocator</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CrossFamilyFree</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FfiNullPtrDeref</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    InvalidPtrCast</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Borrow</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    BorrowEscape</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MutableBorrowConflict</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    LifetimeMismatch</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Write</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    WriteToReadonly</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    WriteToImmutable</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Resource</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FileDescriptorLeak</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ResourceLeak</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HandleLeak</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    SocketLeak</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MissingClose</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ResourceBoundaryViolation</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Concurrency</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ThreadSafetyViolation</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MissingLock</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DoubleLock</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Dataflow</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Misinit</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CopyLeak</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    IncorrectSize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Cost: Adding a new issue type requires: (1) adding variant to IssueKind, (2) implementing mapping to IssueSeverity, (3) implementing mapping to CWE, (4) adding terminal display support, (5) adding EvidenceKind → IssueKind mapping.</p>
+<hr />
+<h2 id="decision-7-effect-enum-18-variants-or-generic-resource-state-machine">Decision 7: Effect Enum — 18 Variants or Generic Resource State Machine?</h2>
+<p><strong>Rejected Approach:</strong> A general-purpose resource state machine with N states and M transitions.</p>
+<p><strong>Rationale:</strong></p>
+<ul>
+<li>18 concrete variants are easier to pattern match and analyze than a matrix of states</li>
+<li>The effect model maps directly to LLVM IR semantics: <code>load</code> creates Acquire, <code>store</code> creates Release</li>
+<li>No need for a state machine engine — each variant encodes its semantics directly</li>
+</ul>
+<p><strong>The 18 Effect variants</strong> (defined in <code>/Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-types/src/effect.rs</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: /Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-types/src/effect.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Foundation</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Acquire</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Release</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ConditionalRelease</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Retain</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    IrqSave</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    IrqRestore</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Memory</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Load</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Store</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Call</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Return</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Ownership</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    TakePointer</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Drop</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Escape / Constraint</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Escape</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Constrain</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Cross-language</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    AcquireShared</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ReleaseShared</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Move</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Clone</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each <code>Effect</code> maps to a specific LLVM IR instruction pattern:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Example: Effect → IR instruction mapping logic</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> effect_from_instruction</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">opcode</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span> opcode</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;load&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Load</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;store&quot;</span><span style="color: #94E2D5;"> |</span><span style="color: #A6E3A1;"> &quot;memcpy&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Store</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;call&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Call</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;ret&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Return</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;alloca&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Acquire</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;free&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Release</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;getelementptr&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">TakePointer</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> None</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="decision-8-why-rust-not-c-or-ocaml">Decision 8: Why Rust, Not C++ or OCaml?</h2>
+<p>This is more of a language choice than architecture, but it affects every line of code.</p>
+<p><strong>Rejected Approaches:</strong></p>
+<ul>
+<li><strong>C++</strong>: LLVM-native ecosystem, but memory safety issues are themselves a source of false positives in analysis</li>
+<li><strong>OCaml/ML</strong>: Academic static analysis standard, but FFI to C++ LLVM infrastructure is painful</li>
+<li><strong>Haskell</strong>: Strong type system for AST manipulation, but performance predictability is poor</li>
+</ul>
+<p><strong>Why Rust won:</strong></p>
+<ul>
+<li><strong>Memory safety guarantees align with analysis goals</strong>: An analyzer that flags memory bugs cannot afford to have memory bugs itself</li>
+<li><strong>Cargo ecosystem</strong>: <code>bumpalo</code> (arena allocator), <code>serde</code> (serialization), <code>clap</code> (CLI), <code>thiserror</code> (error handling) — all mature</li>
+<li><strong>Performance predictability</strong>: No GC pauses, no JIT warmup — consistent sub-second latency</li>
+<li><strong>Cross-compilation</strong>: Static binaries for Linux/macOS/Windows — users don't need LLVM runtime</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Why Rust?&quot;</span></span>
+<span class="giallo-l"><span>        A[&quot;No GC pauses&lt;br/&gt;← Predictable latency for CLI&quot;] --&gt; D[Chosen: Rust]</span></span>
+<span class="giallo-l"><span>        B[&quot;bumpalo + serde + clap&lt;br/&gt;← Mature ecosystem&quot;] --&gt; D</span></span>
+<span class="giallo-l"><span>        C[&quot;Static binaries&lt;br/&gt;← Zero-install deployment&quot;] --&gt; D</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Rejected&quot;</span></span>
+<span class="giallo-l"><span>        E[&quot;C++: Memory bugs in analysis tool&quot;]</span></span>
+<span class="giallo-l"><span>        F[&quot;OCaml: FFI overhead with LLVM&quot;]</span></span>
+<span class="giallo-l"><span>        G[&quot;Haskell: Performance unpredictability&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre>
+<hr />
+<h2 id="decision-9-what-was-deliberately-not-done">Decision 9: What Was Deliberately Not Done?</h2>
+<h3 id="1-no-abstract-interpretation-engine">1. No Abstract Interpretation Engine</h3>
+<p>Abstract interpretation would give path-sensitive precision but current resources don't justify building a complete interpreter for LLVM IR.</p>
+<h3 id="2-no-interactive-mode-lsp-server">2. No Interactive Mode / LSP Server</h3>
+<p>OmniScope is batch-process CLI only. Adding LSP would require rethinking the pipeline for incremental analysis — a fundamental architectural change.</p>
+<h3 id="3-no-web-ide-integration-vscode-extension-github-app">3. No Web IDE Integration (VSCode Extension / GitHub App)</h3>
+<p>The current terminal report (<code>/Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-core/src/terminal_report.rs</code>) outputs formatted terminal text:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: /Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-core/src/terminal_report.rs</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> render_issue</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">issue</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Issue</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> severity_tag</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> match</span><span> issue</span><span style="color: #94E2D5;">.</span><span>severity </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        IssueSeverity</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Critical</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;CRITICAL&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        IssueSeverity</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">High</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;HIGH&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        IssueSeverity</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Medium</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;MEDIUM&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        IssueSeverity</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Low</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;LOW&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        IssueSeverity</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Info</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #A6E3A1;"> &quot;INFO&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    format!</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;</span><span style="color: #F5C2E7;">\n\n</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">severity</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;"> [</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">issue_kind</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">] </span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">function</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">:</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">line</span><span style="color: #9399B2;">}</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">  → </span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">message</span><span style="color: #9399B2;">}</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        severity</span><span style="color: #94E2D5;"> =</span><span> severity_tag</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        issue_kind</span><span style="color: #94E2D5;"> =</span><span> issue</span><span style="color: #94E2D5;">.</span><span>kind</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        function</span><span style="color: #94E2D5;"> =</span><span> issue</span><span style="color: #94E2D5;">.</span><span>location</span><span style="color: #94E2D5;">.</span><span>function</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">as_deref</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap_or</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;unknown&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        line</span><span style="color: #94E2D5;"> =</span><span> issue</span><span style="color: #94E2D5;">.</span><span>location</span><span style="color: #94E2D5;">.</span><span>line</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        message</span><span style="color: #94E2D5;"> =</span><span> issue</span><span style="color: #94E2D5;">.</span><span>message</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    )</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>A proper IDE plugin would require structured output (JSON/SARIF) + an extension wrapper. The <code>finding_view</code> module (<code>/Users/scc/code/rustcode/OmniScope-rs/crates/omniscope-core/src/finding_view/</code>) provides structured output, but the IDE integration layer remains a TODO.</p>
+<h3 id="4-no-real-time-analysis">4. No Real-Time Analysis</h3>
+<p>OmniScope only analyzes statically extracted IR, not running processes. Real-time/dynamic analysis requires a completely different architecture — runtime instrumentation, trace capture, memory access pattern recording.</p>
+<hr />
+<h2 id="summary-architecture-decision-records">Summary: Architecture Decision Records</h2>
+<table><thead><tr><th>Decision</th><th>Chosen</th><th>Rejected</th><th>Key Reason</th></tr></thead><tbody>
+<tr><td>Analysis target</td><td>LLVM IR</td><td>Source AST</td><td>Unified representation for cross-language</td></tr>
+<tr><td>Pipeline structure</td><td>22 small passes</td><td>1 monolithic pass</td><td>Debuggability, testability</td></tr>
+<tr><td>Semantic model</td><td>Semantic Tree (pattern-based)</td><td>Abstract interpretation</td><td>Scalability for 6 languages</td></tr>
+<tr><td>Graph engine</td><td>BTreeMap</td><td>petgraph</td><td>Frequent merge/split operations</td></tr>
+<tr><td>FP suppression</td><td>Type-specific rules</td><td>Single confidence threshold</td><td>Language-specific precision needed</td></tr>
+<tr><td>Issue model</td><td>28 typed variants</td><td>1 generic type</td><td>Compile-time exhaustiveness</td></tr>
+<tr><td>Effect model</td><td>18 concrete variants</td><td>Generic state machine</td><td>Direct IR mapping</td></tr>
+<tr><td>Implementation language</td><td>Rust</td><td>C++, OCaml, Haskell</td><td>Memory safety + ecosystem</td></tr>
+</tbody></table>
+<p>Each of these decisions represents a trade-off. None is universally "right" — they're right for OmniScope's specific constraints: <strong>cross-language, batch analysis, CLI-first, Rust-based, LLVM IR-centric.</strong></p>
+<h2 id="honest-limitations-what-still-hurts">Honest Limitations: What Still Hurts</h2>
+<h3 id="1-irreversible-ir-information-loss">1. Irreversible IR Information Loss</h3>
+<p>Once source code is compiled to LLVM IR, information is irretrievably lost: variable names, comments, type aliases, macro expansions. The analyzer sometimes produces diagnostics reading "variable %4" — the IR name is meaningless to users.</p>
+<h3 id="2-ir-extraction-fragmentation">2. IR Extraction Fragmentation</h3>
+<p>Each language needs a path from source to <code>.ll</code>:</p>
+<ul>
+<li>C/C++: Clang (mature)</li>
+<li>Rust: rustc with <code>--emit=llvm-ir</code> (mature)</li>
+<li>Go/Golang: <code>go tool compile -S</code> + conversion (fragile)</li>
+<li>Python: cinder/cython → LLVM (experimental)</li>
+<li>Java: JVM IR → LLVM frontend (not done)</li>
+<li>Swift: swiftc → LLVM (works but tricky)</li>
+</ul>
+<p>This means OmniScope's analysis coverage across languages is uneven.</p>
+<h3 id="3-evidence-chain-completeness-trade-off">3. Evidence Chain Completeness Trade-off</h3>
+<p>The 4-layer evidence chain (IRPattern → BehaviorPattern → SemanticKind → SemanticFact) covers well-trodden patterns:</p>
+<ul>
+<li>CPython: Py_IncRef/Py_DecRef → retain/release</li>
+<li>Rust: Box::into_raw → IntoRawTransfer</li>
+<li>C++: destructor → RaiiDropRelease</li>
+</ul>
+<p>But new patterns (e.g., Swift's ARC, Go's defer) require building new IRPattern detectors.</p>
+<h3 id="4-false-negative-blind-spots">4. False Negative Blind Spots</h3>
+<p>The noise reduction system is optimized for FP reduction. Known blind spots:</p>
+<ul>
+<li><strong>Conditional leaks</strong>: <code>if (error) { free(ptr); } else { use(ptr); }</code> — if the use-side forgets to free, it may be missed</li>
+<li><strong>Reference cycles</strong>: Python's reference counting can't detect cycles without a GC</li>
+<li><strong>Concurrent resource sharing</strong>: Thread A acquires, Thread B releases — cross-thread ownership is not modeled</li>
+</ul>
+<hr />
+<h2 id="closing-what-would-i-do-differently">Closing: What Would I Do Differently?</h2>
+<p>If I were to rebuild OmniScope from scratch, I'd change three things:</p>
+<ol>
+<li>
+<p><strong>Separate IR extraction more cleanly from analysis</strong>: Currently, ir_extractor is a C++ binary in <code>tools/</code> with its own build system. A cleaner approach would make extraction a plugin that ships with each supported language's compiler.</p>
+</li>
+<li>
+<p><strong>Build a proper intermediate evidence representation</strong>: The current <code>EvidenceBundle</code> is dynamically typed (<code>HashMap&lt;String, Box&lt;dyn Any&gt;&gt;</code>). A formal evidence schema would make adding new evidence types safer and more discoverable.</p>
+</li>
+<li>
+<p><strong>Invest more in cross-function analysis early</strong>: <code>CrossFunctionLifetimePass</code> was added in response to a pain point, not by design. Architecture-first for interprocedural analysis would have reduced the need for some noise reduction layers.</p>
+</li>
+</ol>
+<hr />
+<p><em>Previous: <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/06-reflection/./05-ir-pattern-atlas.md">IR Pattern Atlas — From Evidence Chain to Semantic Suppression</a></em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-ir-pattern-atlas/">
+                                <span class="button__text">OmniScope Architecture Deep Dive (Part 5): IR Pattern Atlas — From Evidence Chain to Semantic Suppression</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

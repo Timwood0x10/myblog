@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>OmniScope Architecture Deep Dive (Part 4): Resource Families — Breaking Language Barriers: From Effect to Evidence Chain Pipeline | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="A deep dive into the resource family abstraction that turns hundreds of language-specific allocation and release patterns into a unified semantic vocabulary — the backbone of the Effect enum, ownership state machine, and MemoryGraph.">
+
+    <meta property="og:description" content="A deep dive into the resource family abstraction that turns hundreds of language-specific allocation and release patterns into a unified semantic vocabulary — the backbone of the Effect enum, ownership state machine, and MemoryGraph.">
+    <meta property="og:title" content="OmniScope Architecture Deep Dive (Part 4): Resource Families — Breaking Language Barriers: From Effect to Evidence Chain Pipeline | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/04-resource-family/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="A deep dive into the resource family abstraction that turns hundreds of language-specific allocation and release patterns into a unified semantic vocabulary — the backbone of the Effect enum, ownership state machine, and MemoryGraph.">
+    <meta name="twitter:title" content="OmniScope Architecture Deep Dive (Part 4): Resource Families — Breaking Language Barriers: From Effect to Evidence Chain Pipeline | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/04-resource-family/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/04-resource-family/">OmniScope Architecture Deep Dive (Part 4): Resource Families — Breaking Language Barriers: From Effect to Evidence Chain Pipeline</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-26
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/architecture/">#Architecture</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/semantic-analysis/">#Semantic Analysis</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="omniscope-architecture-deep-dive-part-4-resource-families-breaking-language-barriers-from-effect-to-evidence-chain-pipeline">OmniScope Architecture Deep Dive (Part 4): Resource Families — Breaking Language Barriers: From Effect to Evidence Chain Pipeline</h1>
+<blockquote>
+<p>"A tool that only understands C's malloc/free, yet must analyze resource transfers across Rust, C++, Python, and Java. Eventually I realized: the problem isn't the language — it's the Resource Family. This is the fact pipeline that connects the Effect enum, the ownership state machine, the memory graph, and evidence fusion."</p>
+</blockquote>
+<hr />
+<h2 id="the-challenge-the-effect-enum-the-analyzer-needs-an-atomic-language">The Challenge: The Effect Enum — The Analyzer Needs an Atomic Language</h2>
+<p>In the early days of OmniScope, recognizing function behavior relied on function name matching. Seeing <code>free</code> meant release. Seeing <code>malloc</code> meant allocation.</p>
+<p>This approach collapsed quickly. Because there were hundreds of function variants to handle:</p>
+<ul>
+<li>Allocation variants: <code>alloc</code>, <code>malloc</code>, <code>calloc</code>, <code>realloc</code>, <code>_Znwm</code>, <code>__rust_alloc</code>, <code>PyMem_Malloc</code>, <code>HeapAlloc</code>...</li>
+<li>Release variants: <code>free</code>, <code>delete</code>, <code>__rust_dealloc</code>, <code>PyMem_Free</code>, <code>HeapFree</code>, <code>inflateEnd</code>...</li>
+<li>Plus all the edge cases: conditional release, refcount increment/decrement, ownership transfer, escape, type coercion...</li>
+</ul>
+<p>The mapping from function name to behavior was chaotic, unmaintainable, and impossible to reason about.</p>
+<p>I realized: <strong>We need a set of atomic semantic primitives to describe the ownership behavior of any function.</strong></p>
+<p>This is the origin of the <code>Effect</code> enum, defined in <code>crates/omniscope-types/src/effect.rs</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Ownership effect of a function call — the analyzer&#39;s atomic semantic primitive</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">///</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Each IR call site is mapped to one or more Effects, describing the impact</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// of that call on resource ownership. This is the bridge between IR analysis</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// and ownership reasoning.</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">#</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">derive</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Debug</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Clone</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> PartialEq</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Eq</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Hash</span><span style="color: #9399B2;">)]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Explicit resource acquisition (allocation)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Acquire</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Explicit resource release</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Release</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Conditional release — only releases when refcount reaches zero</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ConditionalRelease</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Refcount increment — resource is retained</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Retain</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Resource is owned by the caller upon function return</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ReturnsOwned</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Resource is borrowed by the caller upon function return</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ReturnsBorrowed</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Call consumes ownership of a parameter</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ConsumesArg</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Resource is stored into an owning container object</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StoresArgToOwner</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Resource is stored into global state</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StoresArgToGlobal</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Output parameter is initialized</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    InitializesOutParam</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Resource escapes through a callback function</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EscapesToCallback</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Explicit ownership escape (e.g., Box::into_raw)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OwnershipEscape</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Ownership reclaim (e.g., Box::from_raw)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OwnershipReclaim</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Cross-language release (allocation family != release family)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CrossLanguageFree</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        alloc_family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        release_family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Null-guarded release — only releases if pointer is not null</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    NullGuardedRelease</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Output parameter owned by caller on success path</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OutParamOwnedOnSuccess</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Output parameter is null on error path</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OutParamNullOnError</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Store null after release (use-after-free protection)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    NullStoreAfterRelease</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span><span> arg</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>These 18 variants cover every resource behavior pattern encountered in the real world. Each <code>Effect</code> carries <code>family</code> information (which resource family it belongs to) and <code>arg</code>/<code>result</code> (which parameter or return value is involved).</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Does this effect represent resource acquisition?</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> is_acquire</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Acquire</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">OwnershipReclaim</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Does this effect represent resource release?</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> is_release</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Release</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ConditionalRelease</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">CrossLanguageFree</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">NullGuardedRelease</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        )</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Does this effect represent refcount retention?</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> is_retain</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Retain</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// Does this effect represent ownership escape?</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> is_ownership_escape</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">OwnershipEscape</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">OwnershipReclaim</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    /// The resource family of this effect</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> family</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">FamilyId</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        match</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Acquire</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Release</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ConditionalRelease</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Retain</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ReturnsOwned</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ReturnsBorrowed</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ConsumesArg</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">StoresArgToOwner</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">StoresArgToGlobal</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InitializesOutParam</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">EscapesToCallback</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">OwnershipEscape</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">OwnershipReclaim</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">CrossLanguageFree</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">NullGuardedRelease</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">OutParamOwnedOnSuccess</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">OutParamNullOnError</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">NullStoreAfterRelease</span><span style="color: #9399B2;"> {</span><span> family</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">*</span><span>family</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="ownershipstate-8-state-machine">OwnershipState: 8-State Machine</h2>
+<p>With the atomic language defined, the next step is state tracking. <strong>OwnershipState</strong> (<code>crates/omniscope-semantics/src/resource/ownership_state.rs</code>) defines 8 states:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Untracked</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Not yet tracked by the system</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Acquired</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Resource acquired, awaiting release</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Released</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Resource properly released</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Escaped</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">EscapeKind</span><span style="color: #9399B2;">),</span><span style="color: #9399B2;font-style: italic;">  // Escaped to caller / out-param / callback</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Transferred</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // Ownership transferred to another entity</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Retained</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Reference count increased (shared ownership)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Borrowed</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Borrowed reference (non-owning)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Unknown</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // Cannot determine state</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The complete state transition logic:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> ResourceInstance</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> transition</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> event</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipEvent</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> function</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">(),</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipError</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        match</span><span> event</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            OwnershipEvent</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Acquire</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Acquired</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                self</span><span style="color: #94E2D5;">.</span><span>acquired_in </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>function</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            OwnershipEvent</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Release</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> match</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Acquired</span><span style="color: #94E2D5;"> |</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Retained</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                    self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Released</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                    self</span><span style="color: #94E2D5;">.</span><span>released_in </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>function</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                    Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Released</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">OwnershipError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">DoubleRelease</span><span style="color: #9399B2;"> {</span><span> id</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>id </span><span style="color: #9399B2;">}),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Borrowed</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">OwnershipError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ReleaseBorrowed</span><span style="color: #9399B2;"> {</span><span> id</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>id </span><span style="color: #9399B2;">}),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Escaped</span><span style="color: #9399B2;">(</span><span>_</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                    self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Released</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                    Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Transferred</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">OwnershipError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InvalidTransition</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }),</span></span>
+<span class="giallo-l"><span>                _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">OwnershipError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InvalidTransition</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            OwnershipEvent</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ConditionalRelease</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> match</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Retained</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                    self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Acquired</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;"> // refcount decreased, still alive</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                    Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Acquired</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                    self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Released</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                    self</span><span style="color: #94E2D5;">.</span><span>released_in </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>function</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                    Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Released</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">OwnershipError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">DoubleRelease</span><span style="color: #9399B2;"> {</span><span> id</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>id </span><span style="color: #9399B2;">}),</span></span>
+<span class="giallo-l"><span>                _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">OwnershipError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InvalidTransition</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            OwnershipEvent</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Retain</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> match</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Acquired</span><span style="color: #94E2D5;"> |</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Retained</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                    self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Retained</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                    Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span>                _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">OwnershipError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InvalidTransition</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            OwnershipEvent</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Transfer</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> match</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Acquired</span><span style="color: #94E2D5;"> |</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Retained</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                    self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Transferred</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                    Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span>                _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">OwnershipError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InvalidTransition</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            OwnershipEvent</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Escape</span><span style="color: #9399B2;">(</span><span>kind</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Escaped</span><span style="color: #9399B2;">(</span><span>kind</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            OwnershipEvent</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Borrow</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">                self</span><span style="color: #94E2D5;">.</span><span>state </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipState</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Borrowed</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">                Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="memorygraph-unified-resource-view">MemoryGraph: Unified Resource View</h2>
+<p>The ownership state machine tracks individual resources. For cross-function, cross-referencing resource flow analysis, OmniScope uses <strong>MemoryGraph</strong> (<code>crates/omniscope-semantics/src/resource/memory_graph.rs</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> ResourceClass</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HeapMemory</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // malloc, new, Box, Vec</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MmapRegion</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // mmap, VirtualAlloc, shmget</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FileDescriptor</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // open, creat, socket</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Socket</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">          // socket, accept, connect</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ProcessHandle</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">   // fork, CreateProcess</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ThreadHandle</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // pthread_create, CreateThread</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    RuntimeManaged</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // GC objects, ref-counted</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    LibraryManaged</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // Managed by a specific library</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HandleBased</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Windows HANDLE, Unix fd</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    MutexLock</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // Mutex, Lock</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    UserManaged</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Custom allocation</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Unknown</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Family to ResourceClass mapping:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> ResourceClass</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> family_to_resource_class</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">family</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F38BA8;"> Self</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        match</span><span> family</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            f</span><span style="color: #CBA6F7;"> if</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;heap&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;rust_alloc&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;c_malloc&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> HeapMemory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            f</span><span style="color: #CBA6F7;"> if</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;mmap&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;shm&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> MmapRegion</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            f</span><span style="color: #CBA6F7;"> if</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;fd&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;file&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;open&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> FileDescriptor</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            f</span><span style="color: #CBA6F7;"> if</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;socket&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;tcp&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;udp&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Socket</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            f</span><span style="color: #CBA6F7;"> if</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;mutex&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;lock&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> MutexLock</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            f</span><span style="color: #CBA6F7;"> if</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;process&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;thread&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> ProcessHandle</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            f</span><span style="color: #CBA6F7;"> if</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;gc&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ||</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;refcount&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> RuntimeManaged</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            f</span><span style="color: #CBA6F7;"> if</span><span> f</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;handle&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> HandleBased</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Unknown</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Memory graph nodes and edges:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> MemoryNode</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> resource_class</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> ResourceClass</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> state</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> ResourceState</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> function_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> family_id</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">FamilyId</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> value</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // SSA register name</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> allocation_site</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEdge</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> source</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> target</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> kind</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEdgeKind</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> annotation</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Core MemoryGraph API:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> MemoryGraph</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> add_node</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> node</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> MemoryNode</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> get_node</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">MemoryNode</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> get_node_mut</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F9E2AF;font-style: italic;"> MemoryNode</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> set_state</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> state</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> ResourceState</span><span style="color: #9399B2;">) {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> find_by_value</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> function</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> value</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> edges_of_kind</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> kind</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEdgeKind</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">MemoryEdge</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> outgoing_edges</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> node</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">MemoryEdge</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> incoming_edges</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> node</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">MemoryEdge</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> find_alloc_site</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> value</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> get_release_edge</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> node</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">MemoryEdge</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    subgraph &quot;MemoryGraph Resource Flow&quot;</span></span>
+<span class="giallo-l"><span>        A[&quot;Node#1: HeapMemory, Owned&lt;br/&gt;malloc(64)&quot;] --&gt;|&quot;Acquire&quot;| B[&quot;Node#2: HeapMemory, Owned&lt;br/&gt;struct field&quot;]</span></span>
+<span class="giallo-l"><span>        A --&gt;|&quot;Alias&quot;| C[&quot;Node#3: ptr copy&quot;]</span></span>
+<span class="giallo-l"><span>        A --&gt;|&quot;StoreToOwner&quot;| D[&quot;Node#4: Container&lt;br/&gt;HashMap entry&quot;]</span></span>
+<span class="giallo-l"><span>        A --&gt;|&quot;ReturnToCaller&quot;| E[&quot;Node#5: EscapedToCaller&lt;br/&gt;caller frees&quot;]</span></span>
+<span class="giallo-l"><span>        D --&gt;|&quot;Release&quot;| F[&quot;Node#6: HeapMemory, Released&lt;br/&gt;free&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre><h2 id="contractgraphbuilder-fifo-pairing-for-release-validation">ContractGraphBuilder: FIFO Pairing for Release Validation</h2>
+<p>The MemoryGraph tracks resource nodes and edges, but it still can't answer a key question: <strong>"Is this release operation valid for my resource?"</strong> This requires a contract graph.</p>
+<p><code>ContractGraphBuilder</code> (<code>crates/omniscope-semantics/src/resource/contract_graph.rs</code>) constructs a <code>ContractGraph</code> for each function:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> ContractGraph</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> contracts</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">ContractEdge</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> function_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> ContractEdge</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> acquire</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Acquisition (allocation) effect</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> release</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Effect</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Release (deallocation) effect</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> family</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> FamilyId</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> confidence</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> f32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The core algorithm uses <strong>FIFO pairing</strong> — each acquire is paired with the earliest unmatched release of the same family:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> pair_acquire_release</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">acquires</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #9399B2;">],</span><span style="color: #EBA0AC;"> releases</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #9399B2;">])</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">ContractEdge</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> release_iter</span><span style="color: #94E2D5;"> =</span><span> releases</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span>    acquires</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">filter_map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>acquire</span><span style="color: #94E2D5;">|</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Find earliest unmatched release of the same family</span></span>
+<span class="giallo-l"><span>        release_iter</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">find</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>release</span><span style="color: #94E2D5;">|</span><span> release</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">family</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> ==</span><span> acquire</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">family</span><span style="color: #9399B2;">())</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            .</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>release</span><span style="color: #94E2D5;">|</span><span style="color: #F9E2AF;font-style: italic;"> ContractEdge</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                acquire</span><span style="color: #94E2D5;">:</span><span> acquire</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>                release</span><span style="color: #94E2D5;">:</span><span> release</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>                family</span><span style="color: #94E2D5;">:</span><span> acquire</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">family</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>                confidence</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">collect</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="cross-family-fallback">Cross-Family Fallback</h3>
+<p>When resource families mismatch (e.g., Rust-allocated memory released by C's <code>free</code>), <code>ContractGraphBuilder</code> attempts cross-family matching. But with stricter conditions:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> match_cross_family</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">acquire</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> release</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Effect</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Condition 1: Resource class compatibility</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    resource_classes_compatible</span><span style="color: #9399B2;">(</span><span>acquire</span><span style="color: #9399B2;">,</span><span> release</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Condition 2: Allocation/release count matching</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;&amp;</span><span style="color: #89B4FA;font-style: italic;"> allocation_count_matches</span><span style="color: #9399B2;">(</span><span>acquire</span><span style="color: #9399B2;">,</span><span> release</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Condition 3: On the same pointer value</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;&amp;</span><span style="color: #89B4FA;font-style: italic;"> same_pointer_value</span><span style="color: #9399B2;">(</span><span>acquire</span><span style="color: #9399B2;">,</span><span> release</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Condition 4: Alias relationship exists in MemoryGraph</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;&amp;</span><span style="color: #89B4FA;font-style: italic;"> has_alias_in_memory_graph</span><span style="color: #9399B2;">(</span><span>acquire</span><span style="color: #9399B2;">,</span><span> release</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Condition 5: No explicit ownership transfer</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;&amp; !</span><span style="color: #89B4FA;font-style: italic;">has_ownership_escape</span><span style="color: #9399B2;">(</span><span>acquire</span><span style="color: #9399B2;">,</span><span> release</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Condition 6: Confidence threshold (0.5 min)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    &amp;&amp;</span><span style="color: #89B4FA;font-style: italic;"> cross_family_confidence</span><span style="color: #9399B2;">(</span><span>acquire</span><span style="color: #9399B2;">,</span><span> release</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">5</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="issue-system-from-analysis-to-reportable-result">Issue System: From Analysis to Reportable Result</h2>
+<p>All analysis converges on Issues. The <code>IssueKind</code> enum (<code>crates/omniscope-core/src/issue.rs</code>) defines 28 kinds across 4 groups:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> IssueKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ⭐ FFI Boundary (8)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CrossLanguageFree</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipViolation</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> FfiTypeMismatch</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    UncheckedReturn</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> NullableReturn</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> FfiStackBorrow</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    BorrowEscape</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> CallbackEscapeIssue</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 🔧 Local Memory (7)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DoubleFree</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> UseAfterFree</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> MemoryLeak</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    NullDereference</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> BufferOverflow</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> IntegerOverflow</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    UninitializedMemory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 🔧 Resource Contract (9)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DefiniteLeak</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> ConditionalLeak</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> OwnershipEscapeLeak</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CrossFunctionLeak</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> CrossFunctionDoubleFree</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CrossFamilyFree</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> MismatchedDeallocator</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DeallocMismatch</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> NullDeref</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ⚡ Concurrency (3)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DataRaceAccess</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> SendSyncViolation</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> ThreadEscape</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 📋 Catch-all (1)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Diagnostic</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each Issue has a CWE mapping and confidence:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> IssueKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> cwe</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> u32</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        match</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            IssueKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">CrossLanguageFree</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 762</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            IssueKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">DoubleFree</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 415</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            IssueKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">UseAfterFree</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 416</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            IssueKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MemoryLeak</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 401</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            IssueKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">NullDereference</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 476</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            IssueKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">FfiTypeMismatch</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 843</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            IssueKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">UncheckedReturn</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 252</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            IssueKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">BufferOverflow</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 120</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            IssueKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">IntegerOverflow</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 190</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">            // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> Confidence</span><span style="color: #9399B2;"> {</span><span style="color: #89B4FA;font-style: italic;"> Low</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">3</span><span style="color: #9399B2;">),</span><span style="color: #89B4FA;font-style: italic;"> Medium</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">6</span><span style="color: #9399B2;">),</span><span style="color: #89B4FA;font-style: italic;"> High</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">) }</span></span></code></pre><h2 id="evidencebundle-the-3-source-fusion-hub">EvidenceBundle: The 3-Source Fusion Hub</h2>
+<p><code>EvidenceBundle</code> (<code>crates/omniscope-pass/src/resource/evidence_bundle.rs</code>) aggregates evidence from three sources:</p>
+<ol>
+<li><strong>MemoryGraph</strong> — resource class, allocation/release points, edge relationships</li>
+<li><strong>SRT resolutions</strong> — semantic kind annotations from <code>SemanticTree</code></li>
+<li><strong>SRT facts</strong> — <code>SemanticFact</code> from <code>pattern_to_facts</code></li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> EvidenceBundle</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> candidate_id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> issue_kind</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> IssueKind</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> alloc_function</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> release_function</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> alloc_caller</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> release_caller</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> semantic_kinds</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">SemanticKind</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> semantic_facts</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">SemanticFact</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> evidence_kinds</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">EvidenceKind</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> has_same_resource_evidence</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> function_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> instruction_index</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> confidence</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> f32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> EvidenceBundle</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> from_candidate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">candidate</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> IssueCandidate</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> fact_store</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">FactStore</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F38BA8;"> Self</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let mut</span><span> bundle</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> EvidenceBundle</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span>candidate</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Source 1: MemoryGraph integration</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>mg</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> fact_store</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">MemoryGraph</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;memory_graph&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>            bundle</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">merge_memory_graph</span><span style="color: #9399B2;">(</span><span>mg</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Source 2: SRT resolution integration</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>srt</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> fact_store</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">SemanticTree</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;semantic_tree&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>            bundle</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">merge_srt_resolutions</span><span style="color: #9399B2;">(</span><span>srt</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Source 3: SRT fact integration</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>facts</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> fact_store</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get_semantic_facts_for</span><span style="color: #9399B2;">(</span><span>bundle</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">function_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">as_str</span><span style="color: #9399B2;">()) {</span></span>
+<span class="giallo-l"><span>            bundle</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">merge_semantic_facts</span><span style="color: #9399B2;">(</span><span>facts</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>        bundle</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Two-level suppression logic:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// First level: Semantic suppression before leak verification</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> bundle</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">has_semantic_suppression_high_confidence</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F9E2AF;font-style: italic;"> VerifierVerdict</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ExplainedSafe</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> bundle</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">has_semantic_suppression_medium_confidence</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F9E2AF;font-style: italic;"> VerifierVerdict</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ProbableIssue</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Second level: Leak-specific suppression after verification</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">match</span><span style="color: #89B4FA;font-style: italic;"> verify_definite_leak_with_bundle</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>bundle</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    VerifierVerdict</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ConfirmedIssue</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Finally, double-check with cross-function data</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        verify_cross_function_leak</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>bundle</span><span style="color: #9399B2;">,</span><span> cross_fn_data</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    other</span><span style="color: #94E2D5;"> =&gt;</span><span> other</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="complete-10-step-data-pipeline">Complete 10-Step Data Pipeline</h2>
+<p>The complete pipeline from Effect to Issue:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    Step1[&quot;1. RawFactCollector&lt;br/&gt;IR→Effect mapping&quot;] --&gt;</span></span>
+<span class="giallo-l"><span>    Step2[&quot;2. ContractGraphBuilder&lt;br/&gt;FIFO acquire→release pairing&quot;] --&gt;</span></span>
+<span class="giallo-l"><span>    Step3[&quot;3. OwnershipSolver&lt;br/&gt;State machine transitions&quot;] --&gt;</span></span>
+<span class="giallo-l"><span>    Step4[&quot;4. MemoryGraph&lt;br/&gt;Unified resource graph&quot;] --&gt;</span></span>
+<span class="giallo-l"><span>    Step5[&quot;5. CrossFunctionLifetime&lt;br/&gt;Interprocedural analysis&quot;] --&gt;</span></span>
+<span class="giallo-l"><span>    Step6[&quot;6. RaiiDropPass + HeapProvenancePass&lt;br/&gt;Semantic kind annotation&quot;] --&gt;</span></span>
+<span class="giallo-l"><span>    Step7[&quot;7. IssueCandidateBuilder&lt;br/&gt;Aggregate candidates&quot;] --&gt;</span></span>
+<span class="giallo-l"><span>    Step8[&quot;8. EvidenceBundle::from_candidate&lt;br/&gt;3-source fusion&quot;] --&gt;</span></span>
+<span class="giallo-l"><span>    Step9[&quot;9. IssueVerifierPass&lt;br/&gt;9-layer noise reduction&quot;] --&gt;</span></span>
+<span class="giallo-l"><span>    Step10[&quot;10. Final Issue&lt;br/&gt;28 kinds, 4 verdicts&quot;]</span></span></code></pre>
+<p>Source file mapping:</p>
+<table><thead><tr><th>Step</th><th>Data Structure</th><th>Source File</th><th>Lines</th></tr></thead><tbody>
+<tr><td>1</td><td>Effect → RawFact</td><td><code>crates/omniscope-pass/src/resource/raw_fact_collector.rs</code></td><td>1532</td></tr>
+<tr><td>2</td><td>ContractGraph</td><td><code>crates/omniscope-semantics/src/resource/contract_graph.rs</code></td><td>881</td></tr>
+<tr><td>3</td><td>OwnershipState → ResourceInstance</td><td><code>crates/omniscope-semantics/src/resource/ownership_state.rs</code></td><td>1059</td></tr>
+<tr><td>4</td><td>MemoryGraph</td><td><code>crates/omniscope-semantics/src/resource/memory_graph.rs</code></td><td>603</td></tr>
+<tr><td>5</td><td>CrossFunctionLifetimeData</td><td><code>crates/omniscope-pass/src/resource/cross_function_lifetime_pass.rs</code></td><td>1023</td></tr>
+<tr><td>6</td><td>SemanticKind</td><td><code>crates/omniscope-semantics/src/resource/semantic_tree/kind.rs</code></td><td>1029</td></tr>
+<tr><td>7</td><td>IssueCandidate</td><td><code>crates/omniscope-pass/src/resource/issue_candidate.rs</code></td><td>612</td></tr>
+<tr><td>8</td><td>EvidenceBundle</td><td><code>crates/omniscope-pass/src/resource/evidence_bundle.rs</code></td><td>1261</td></tr>
+<tr><td>9</td><td>VerifierVerdict</td><td><code>crates/omniscope-pass/src/resource/issue_verifier/mod.rs</code></td><td>712</td></tr>
+<tr><td>10</td><td>Issue</td><td><code>crates/omniscope-core/src/issue.rs</code></td><td>300</td></tr>
+</tbody></table>
+<h2 id="honest-limitations-14-documented">Honest Limitations (14 documented)</h2>
+<ol>
+<li><strong>Effect enum coverage limited</strong> — 18 variants cover the core but miss edge cases (e.g., thread-local storage, signal handlers)</li>
+<li><strong>ConditionalRelease dichotomy</strong> — either Acquired→Released (true release) or Retained→Acquired (refcount decrement). Real reference counting has more intermediate states</li>
+<li><strong>ConditionalRelease limitation</strong> — cannot distinguish Python's Py_DECREF (unconditional decrement) from C++ shared_ptr (also unconditional decrement)</li>
+<li><strong>FIFO pairing is a heuristic</strong> — FIFO pairing assumes acquire/release are ordered. Programming patterns like "allocate on thread A, release on thread B" break this assumption</li>
+<li><strong>Cross-family matching confidence threshold (0.5)</strong> — is empirical and not proven optimal across all projects</li>
+<li><strong>merge_cross_module limitations</strong> — cross-module merging can only handle 1-to-many. Many-to-many module graphs exceed current capabilities</li>
+<li><strong>ResourceClass classification granularity</strong> — <code>HeapMemory</code> is too coarse. A <code>HeapMemory</code> from <code>malloc</code> and a <code>HeapMemory</code> from <code>new</code> have different ABIs</li>
+<li><strong>MemoryNode.value uses String</strong> — SSA register names as strings lack type safety</li>
+<li><strong>EvidenceBundle fusion relies on function name matching</strong> — not value-based SSA analysis. After inlining, function names disappear and matching fails</li>
+<li><strong>EvidenceBundle has 1,261 lines</strong> — too many responsibilities. Should be split</li>
+<li><strong>Confidence thresholds are guess-based</strong> — 0.9 for high, 0.6 for medium. These thresholds have never been validated against real-world data</li>
+<li><strong>28 IssueKinds is both too many and too few</strong> — too many for users to grasp quickly; too few for precise bug classification</li>
+<li><strong>CWE mapping may not perfectly align</strong> — classification standards departments and static analysis tools differ</li>
+<li><strong>Lack of Issue deduplication across compilation units</strong> — the same bug may be reported in multiple IR files</li>
+</ol>
+<hr />
+<p><em>Previous: <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/04-resource-family/./03-noise-reduction.md">Noise Reduction — An Epic Optimization from 5,098 to ~45</a></em>
+<em>Next: <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/04-resource-family/./05-ir-pattern-atlas.md">IR Pattern Atlas — From Evidence Chain to Semantic Suppression</a></em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-ir-pattern-atlas/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">OmniScope Architecture Deep Dive (Part 5): IR Pattern Atlas — From Evidence Chain to Semantic Suppression</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/03-noise-reduction/">
+                                <span class="button__text">OmniScope Architecture Deep Dive (Part 3): Noise Reduction — An Epic Optimization from 5,098 to ~45</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

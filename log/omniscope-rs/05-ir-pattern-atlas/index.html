@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>OmniScope Architecture Deep Dive (Part 5): IR Pattern Atlas — From Evidence Chain to Semantic Suppression | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="After scanning 67,337 LLVM IR instructions, the Rust rewrite built a four-layer evidence chain — IRPattern → BehaviorPattern → SemanticKind → SemanticFact — that finally made false-positive suppression traceable and explainable.">
+
+    <meta property="og:description" content="After scanning 67,337 LLVM IR instructions, the Rust rewrite built a four-layer evidence chain — IRPattern → BehaviorPattern → SemanticKind → SemanticFact — that finally made false-positive suppression traceable and explainable.">
+    <meta property="og:title" content="OmniScope Architecture Deep Dive (Part 5): IR Pattern Atlas — From Evidence Chain to Semantic Suppression | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-ir-pattern-atlas/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="After scanning 67,337 LLVM IR instructions, the Rust rewrite built a four-layer evidence chain — IRPattern → BehaviorPattern → SemanticKind → SemanticFact — that finally made false-positive suppression traceable and explainable.">
+    <meta name="twitter:title" content="OmniScope Architecture Deep Dive (Part 5): IR Pattern Atlas — From Evidence Chain to Semantic Suppression | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-ir-pattern-atlas/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-ir-pattern-atlas/">OmniScope Architecture Deep Dive (Part 5): IR Pattern Atlas — From Evidence Chain to Semantic Suppression</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/pattern-matching/">#Pattern Matching</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/semantic-analysis/">#Semantic Analysis</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="omniscope-architecture-deep-dive-part-5-ir-pattern-atlas-from-evidence-chain-to-semantic-suppression">OmniScope Architecture Deep Dive (Part 5): IR Pattern Atlas — From Evidence Chain to Semantic Suppression</h1>
+<blockquote>
+<p>After scanning 67,337 LLVM IR instructions, I came to a brutal realization: <strong>A static analyzer isn't failing because it's not smart enough — it's failing because it never built a complete evidence chain from "instruction" to "semantics."</strong></p>
+<p>FP suppression without an evidence chain is, at its core, guesswork. OmniScope solves this with a four-layer evidence chain: IRPattern → BehaviorPattern → SemanticKind → SemanticFact → Evidence.</p>
+</blockquote>
+<hr />
+<h2 id="the-core-problem-why-do-analyzers-still-report-false-positives">The Core Problem: Why Do Analyzers Still Report False Positives?</h2>
+<p>In OmniScope's early versions, FP suppression relied on a "name whitelist" — skip <code>strlen</code>, flag <code>free</code>. The problems were obvious:</p>
+<ol>
+<li><strong>Names are unreliable</strong>: After LTO inlining, function names disappear, replaced by <code>call @0x7f8a43</code></li>
+<li><strong>Semantic confusion</strong>: <code>malloc</code> in Rust's <code>alloc::alloc</code> is allocation, and in C it's also allocation — but the ownership semantics are completely different</li>
+<li><strong>Cross-language disaster</strong>: Python's <code>Py_DECREF</code> looks like a "release function" from C's perspective, but it's part of refcount management</li>
+</ol>
+<p>The root cause: <strong>The analyzer only sees IR instructions, yet it must make semantic judgments about ownership safety. There's no evidence chain in between.</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph LR</span></span>
+<span class="giallo-l"><span>    subgraph EvidenceChain[&quot;OmniScope Four-Layer Evidence Chain&quot;]</span></span>
+<span class="giallo-l"><span>        A[&quot;IR Instruction&lt;br/&gt;%1 = atomicrmw sub&quot;] --&gt; B[&quot;BehaviorPattern&lt;br/&gt;ConditionalRelease&quot;]</span></span>
+<span class="giallo-l"><span>        B --&gt; C[&quot;SemanticKind&lt;br/&gt;RaiiDropRelease&quot;]</span></span>
+<span class="giallo-l"><span>        C --&gt; D[&quot;SemanticFact&lt;br/&gt;confidence=High&lt;br/&gt;source=IRPattern&quot;]</span></span>
+<span class="giallo-l"><span>        D --&gt; E[&quot;Evidence&lt;br/&gt;&#39;drop_in_place release&lt;br/&gt;does not constitute UAF&#39;&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"><span>    </span></span>
+<span class="giallo-l"><span>    subgraph OldWay[&quot;Traditional Approach (No Evidence Chain)&quot;]</span></span>
+<span class="giallo-l"><span>        F[&quot;see call @free&quot;] --&gt; G[&quot;Report UseAfterFree directly&quot;]</span></span>
+<span class="giallo-l"><span>        G --&gt; H[&quot;Massive FP&lt;br/&gt;No traceability&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre>
+<hr />
+<h2 id="layer-1-irpattern-raw-instruction-fingerprints">Layer 1: IRPattern — Raw Instruction Fingerprints</h2>
+<p>The bottom layer is raw pattern matching on LLVM IR instructions. This is not about "looking at function names" — it's about <strong>the dataflow relationships between instructions</strong>.</p>
+<p>Evidence chain starting point: <code>crates/omniscope-semantics/src/resource/ir_pattern.rs</code></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// detect_conditional_release: doesn&#39;t look at function names, only at instruction flow</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> detect_conditional_release</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">body</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">FunctionBody</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">BehaviorPattern</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Find atomicrmw sub (refcount decrement)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Check if result is used for icmp eq (compare to zero)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Conditional branch → non-zero branch calls destroy</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> atomic</span><span style="color: #CBA6F7;"> in</span><span> atomic_insts</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> atomic</span><span style="color: #94E2D5;">.</span><span>atomic_op </span><span style="color: #94E2D5;">==</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;sub&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            for</span><span> icmp</span><span style="color: #CBA6F7;"> in</span><span> icmp_insts</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                if</span><span> icmp</span><span style="color: #94E2D5;">.</span><span>icmp_pred </span><span style="color: #94E2D5;">==</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;eq&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">                    &amp;&amp;</span><span> icmp</span><span style="color: #94E2D5;">.</span><span>operands</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>atomic</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">dest</span><span style="color: #9399B2;">)</span><span> </span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                    return</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">BehaviorPattern</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ConditionalRelease</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                        atomic_op</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;sub&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                        threshold</span><span style="color: #94E2D5;">:</span><span> icmp</span><span style="color: #94E2D5;">.</span><span>operands</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">last</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                    });</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    None</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This code detects the following sequence in LLVM IR:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="llvm"><span class="giallo-l"><span>%old = </span><span style="color: #CBA6F7;">atomicrmw sub</span><span> ptr %rc, </span><span style="color: #CBA6F7;">i32</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;font-style: italic;">   ; refcount--</span></span>
+<span class="giallo-l"><span>%zero = </span><span style="color: #CBA6F7;">icmp eq i32</span><span> %old, </span><span style="color: #FAB387;">0</span><span style="color: #9399B2;font-style: italic;">           ; compare to zero?</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">br i1</span><span> %zero, </span><span style="color: #CBA6F7;">label</span><span> %release, </span><span style="color: #CBA6F7;">label</span><span> %done</span><span style="color: #9399B2;font-style: italic;">  ; conditional branch</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">release</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">  call void</span><span style="color: #89B4FA;font-style: italic;"> @__rust_dealloc</span><span>(...)       </span><span style="color: #9399B2;font-style: italic;">; release only when zero</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">  ret void</span></span>
+<span class="giallo-l"><span>done:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">  ret void</span></span></code></pre>
+<p><code>ir_pattern.rs</code> (1867 lines) defines 20+ IR instruction pattern detection functions:</p>
+<table><thead><tr><th>IR Instruction Sequence</th><th>BehaviorPattern</th><th>Typical Scenario</th></tr></thead><tbody>
+<tr><td><code>atomicrmw sub</code> + <code>icmp eq</code> + <code>br</code> + <code>call free</code></td><td>ConditionalRelease</td><td>Arc/Rc Drop</td></tr>
+<tr><td><code>call</code> return value only used in arithmetic/store</td><td>PureComputation</td><td>strlen, getenv</td></tr>
+<tr><td><code>call</code> returns ptr → passed to free</td><td>OwnershipTransfer</td><td>Cross-family release</td></tr>
+<tr><td><code>getelementptr</code> + <code>bitcast</code> + <code>ret</code></td><td>PointerProjection</td><td>as_ptr()</td></tr>
+<tr><td><code>store</code> to struct field + <code>ret void</code></td><td>Initialization</td><td>Constructor</td></tr>
+<tr><td><code>alloca</code> ptr → <code>store</code> to <code>@global</code></td><td>StackToGlobalEscape</td><td>Use-after-return</td></tr>
+<tr><td><code>call @free(ptr %p)</code> ... <code>call @fn(..., ptr %p)</code></td><td>FreeThenCallbackUse</td><td>CWE-416 UAF</td></tr>
+</tbody></table>
+<p>Key design: <strong>Detection order equals priority order</strong>. <code>extract_behavior()</code> checks safe patterns first (ConditionalRelease, NullGuardedRelease), then dangerous patterns (OwnershipTransfer), and finally falls back to PureComputation.</p>
+<hr />
+<h2 id="layer-2-behaviorpattern-behavioral-pattern-enum">Layer 2: BehaviorPattern — Behavioral Pattern Enum</h2>
+<p>Extracted from IR instruction patterns into the <code>BehaviorPattern</code> enum, with 20+ variants:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> BehaviorPattern</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ConditionalRelease</span><span style="color: #9399B2;">   {</span><span> atomic_op</span><span style="color: #9399B2;">,</span><span> threshold</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    PureComputation</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OwnershipTransfer</span><span style="color: #9399B2;">    {</span><span> is_acquire</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    PointerProjection</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Initialization</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    InternalBridge</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    BorrowedReturn</span><span style="color: #9399B2;">       {</span><span> from_readonly_param</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    RAiiDropRelease</span><span style="color: #9399B2;">      {</span><span> is_drop_in_place</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    IntoRawTransfer</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    PosixNonMemoryOp</span><span style="color: #9399B2;">     {</span><span> category</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PosixOpCategory</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    NullGuardedRelease</span><span style="color: #9399B2;">   {</span><span> arg_index</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    NullStoreAfterRelease</span><span style="color: #9399B2;"> {</span><span> arg_index</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FallibleOutParamInit</span><span style="color: #9399B2;"> {</span><span> out_arg_index</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OutParamNullOnError</span><span style="color: #9399B2;">  {</span><span> out_arg_index</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    OutParamOwnedOnSuccess</span><span style="color: #9399B2;"> {</span><span> out_arg_index</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StoreToOwner</span><span style="color: #9399B2;">         {</span><span> owner_field</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StoreToRuntime</span><span style="color: #9399B2;">       {</span><span> runtime_target</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ResourceEscape</span><span style="color: #9399B2;">       {</span><span> escape_type</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> EscapeType</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ReleaseOnAllExitPaths</span><span style="color: #9399B2;"> {</span><span> release_function</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StackToGlobalEscape</span><span style="color: #9399B2;">  {</span><span> global_target</span><span style="color: #9399B2;">,</span><span> alloca_reg</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    ReturnAlias</span><span style="color: #9399B2;">          {</span><span> aliased_param</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FreeThenCallbackUse</span><span style="color: #9399B2;">  {</span><span> freed_reg</span><span style="color: #9399B2;">,</span><span> use_callee</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HeapToGlobalEscape</span><span style="color: #9399B2;">   {</span><span> global_target</span><span style="color: #9399B2;">,</span><span> param_reg</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    BufferOverflow</span><span style="color: #9399B2;">       {</span><span> callee</span><span style="color: #9399B2;">,</span><span> overflow_amount</span><span style="color: #9399B2;">,</span><span> opcode</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each variant is a <strong>semantic abstraction</strong> over an IR instruction sequence — instead of saying "I see atomicrmw sub + icmp eq + br + call," we say "this is a conditional release."</p>
+<p>This abstraction means downstream code doesn't need to understand LLVM IR details:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// pattern_to_facts.rs: transforms BehaviorPattern into SemanticFact</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">crate</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> fn</span><span style="color: #89B4FA;font-style: italic;"> pattern_to_facts</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;">    pattern</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">BehaviorPattern</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> func_name</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> _func_id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">SemanticFact</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span> pattern</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        BehaviorPattern</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ConditionalRelease</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ..</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            SemanticFact</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                SemanticKey</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Symbol</span><span style="color: #9399B2;">(</span><span>func_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">into</span><span style="color: #9399B2;">()),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ReleaseOnAllExitPaths</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                FactConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">High</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                FactSource</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">IRPattern</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;ConditionalRelease: atomicrmw conditional release&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            )</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        ],</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        BehaviorPattern</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PureComputation</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            SemanticFact</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                SemanticKey</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Symbol</span><span style="color: #9399B2;">(</span><span>func_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">into</span><span style="color: #9399B2;">()),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">NonMemoryResource</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                FactConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">High</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                FactSource</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">IRPattern</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;PureComputation: no ownership side effects&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            )</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        ],</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        BehaviorPattern</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">OwnershipTransfer</span><span style="color: #9399B2;"> {</span><span> is_acquire</span><span style="color: #9399B2;"> }</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            let</span><span> kind</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> if</span><span style="color: #94E2D5;"> *</span><span>is_acquire</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HeapProvenance</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                        else</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">IntoRawTransfer</span><span style="color: #9399B2;"> };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            vec!</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">SemanticFact</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                SemanticKey</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Symbol</span><span style="color: #9399B2;">(</span><span>func_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">into</span><span style="color: #9399B2;">()),</span><span> kind</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                FactConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Medium</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;"> FactSource</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">IRPattern</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">                format!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;OwnershipTransfer: is_acquire=</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> is_acquire</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            )]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        },</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // ... remaining ~20 pattern mappings ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="layer-3-semantickind-55-variant-semantic-classification-system">Layer 3: SemanticKind — 55+ Variant Semantic Classification System</h2>
+<p><code>SemanticKind</code> is defined in <code>crates/omniscope-semantics/src/resource/semantic_tree/kind.rs</code>, and is the semantic core of the entire evidence chain.</p>
+<h3 id="r-0-through-r-8-suppression-rules">R-0 through R-8 Suppression Rules</h3>
+<p>9 R-N rules originate from the <code>bun_fp_reduction_plan</code>, covering the root causes of all measured false positives:</p>
+<table><thead><tr><th>Rule</th><th>SemanticKind</th><th>Suppresses</th><th>FP Covered</th></tr></thead><tbody>
+<tr><td>R-0</td><td>ReadonlyParam / MutableParam</td><td>write_to_immutable</td><td>1877</td></tr>
+<tr><td>R-1</td><td>HeapProvenance / GlobalProvenance</td><td>borrow_escape</td><td>71</td></tr>
+<tr><td>R-2</td><td>InteriorMutability</td><td>write_to_immutable</td><td>~100</td></tr>
+<tr><td>R-3</td><td>RaiiDropRelease</td><td>use_after_free</td><td>3</td></tr>
+<tr><td>R-4</td><td>FileOperation / NetworkOperation / ProcessOperation</td><td>cross_language_free</td><td>0</td></tr>
+<tr><td>R-5</td><td>AbortOnOom</td><td>leak/leak_pair</td><td>0</td></tr>
+<tr><td>R-6</td><td>IntoRawTransfer</td><td>cross_language_free</td><td>4</td></tr>
+<tr><td>R-7</td><td>LibraryRelease</td><td>cross_language_free</td><td>0</td></tr>
+<tr><td>R-8</td><td>FromParameter</td><td>borrow_escape</td><td>39</td></tr>
+</tbody></table>
+<p>Plus R-10 (SSA local values), R-13 (C/C++ no immutable semantics), R-14 (Rust arena internals), R-15 (RawVec buffer writes) — these rules are implemented in <code>WriteToImmutablePass</code> (809 lines).</p>
+<h3 id="cross-language-patterns-6-language-adapters">Cross-Language Patterns (6 Language Adapters)</h3>
+<p>The <code>from_function_name()</code> method (kind.rs line 593) covers six languages through 42+ pattern matching branches:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> from_function_name</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">func_name</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F38BA8;"> Self</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Python: 8 patterns</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> func_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Py_INCREF&quot;</span><span style="color: #9399B2;">)  {</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PythonRefcountInc</span><span style="color: #9399B2;">; }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> func_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Py_DECREF&quot;</span><span style="color: #9399B2;">)  {</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PythonRefcountDec</span><span style="color: #9399B2;">; }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> func_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;PyList_GetItem&quot;</span><span style="color: #9399B2;">) {</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PythonBorrowedRef</span><span style="color: #9399B2;">; }</span></span>
+<span class="giallo-l"><span>    </span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Go: 4 patterns (defer / SetFinalizer / mallocgc / _Cgo_)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> func_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">starts_with</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;_Cgo_&quot;</span><span style="color: #9399B2;">)  {</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">GoCgoWrapper</span><span style="color: #9399B2;">; }</span></span>
+<span class="giallo-l"><span>    </span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // C++: 4 patterns (unique_ptr / shared_ptr / ~destructor / __cxa_*)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> func_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">starts_with</span><span style="color: #9399B2;">(&#39;</span><span style="color: #A6E3A1;">~</span><span style="color: #9399B2;">&#39;)</span><span style="color: #94E2D5;"> ||</span><span> func_name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;::~&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">CppDestructor</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    </span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // C#: 3 patterns (SafeHandle / Finalize / DllImport)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Java: 3 patterns (LocalRef / GlobalRef / WeakRef)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // WASM/JS: 7 patterns (malloc/free / emscripten_* / __import_*)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="helper-methods">Helper Methods</h3>
+<p>Each SemanticKind provides three query methods:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> safety_score</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> f32</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">RaiiDropRelease</span><span style="color: #94E2D5;">     =&gt;</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // Compiler-managed, completely safe</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">CppUniquePtr</span><span style="color: #94E2D5;">        =&gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">9</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // Exclusive ownership</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PythonRefcountDec</span><span style="color: #94E2D5;">   =&gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">3</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // Manual refcount, high risk</span></span>
+<span class="giallo-l"><span>        _</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">5</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> requires_cleanup</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PythonOwnedRef</span><span> </span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HeapProvenance</span><span> </span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">IntoRawTransfer</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">JavaGlobalRef</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> is_borrowed_or_temporary</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PythonBorrowedRef</span><span> </span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">JavaLocalRef</span><span> </span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">FromParameter</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="semantickey-6-query-dimensions">SemanticKey — 6 Query Dimensions</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKey</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Symbol</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">),</span><span style="color: #9399B2;font-style: italic;">         // Symbol name (function, variable, type)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Value</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">),</span><span style="color: #9399B2;font-style: italic;">          // SSA register name</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Resource</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">),</span><span style="color: #9399B2;font-style: italic;">          // Resource allocation point ID</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Path</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">),</span><span style="color: #9399B2;font-style: italic;">      // (function name, path ID) path-sensitive analysis</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Owner</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">),</span><span style="color: #9399B2;font-style: italic;">          // Owner name (container, struct)</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CallSite</span><span style="color: #9399B2;"> {</span><span> caller</span><span style="color: #9399B2;">,</span><span> callee</span><span style="color: #9399B2;">,</span><span> index</span><span style="color: #9399B2;"> },</span><span style="color: #9399B2;font-style: italic;">  // Call site</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="layer-4-semanticfact-traceable-evidence-with-confidence">Layer 4: SemanticFact — Traceable Evidence with Confidence</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TD</span></span>
+<span class="giallo-l"><span>    subgraph FactSystem[&quot;SemanticFact Confidence System&quot;]</span></span>
+<span class="giallo-l"><span>        A[FactConfidence] --&gt; A1[&quot;High (1.0)&lt;br/&gt;IR pattern + name double confirmation&quot;]</span></span>
+<span class="giallo-l"><span>        A --&gt; A2[&quot;Medium (0.6)&lt;br/&gt;Single source inference&quot;]</span></span>
+<span class="giallo-l"><span>        A --&gt; A3[&quot;Low (0.3)&lt;br/&gt;Speculative reasoning&quot;]</span></span>
+<span class="giallo-l"><span>        </span></span>
+<span class="giallo-l"><span>        B[FactSource] --&gt; B1[&quot;IRPattern&lt;br/&gt;Instruction pattern detection&quot;]</span></span>
+<span class="giallo-l"><span>        B --&gt; B2[&quot;ContractDB&lt;br/&gt;Resource family database&quot;]</span></span>
+<span class="giallo-l"><span>        B --&gt; B3[&quot;BehaviorSummary&lt;br/&gt;Function behavior summary&quot;]</span></span>
+<span class="giallo-l"><span>        B --&gt; B4[&quot;BoundaryDetector&lt;br/&gt;FFI boundary detection&quot;]</span></span>
+<span class="giallo-l"><span>        B --&gt; B5[&quot;LanguageAdapter&lt;br/&gt;Language adapter&quot;]</span></span>
+<span class="giallo-l"><span>        B --&gt; B6[&quot;MemoryGraph&lt;br/&gt;Memory graph analysis&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"><span>    </span></span>
+<span class="giallo-l"><span>    C[SemanticResolution] --&gt; C1[&quot;kind: SemanticKind&quot;]</span></span>
+<span class="giallo-l"><span>    C --&gt; C2[&quot;confidence: f32&quot;]</span></span>
+<span class="giallo-l"><span>    C --&gt; C3[&quot;evidence: String&quot;]</span></span>
+<span class="giallo-l"><span>    C --&gt; C4[&quot;pattern_id: &amp;str&lt;br/&gt;e.g., &#39;R-0&#39;, &#39;R-3&#39;&quot;]</span></span></code></pre><h3 id="semanticresolution-vs-semanticfact">SemanticResolution vs SemanticFact</h3>
+<ul>
+<li><strong>SemanticResolution</strong> (stored in <code>SemanticTree</code>): Records <em>why</em> a value has a specific semantic kind. Written by detection passes, queried by suppression passes.</li>
+<li><strong>SemanticFact</strong> (produced via <code>pattern_to_facts()</code>): Records <em>what</em> is known, with explicit source and confidence. Produced by IRBehaviorSummaryPass, consumed by IssueCandidateBuilder.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> resolution</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> SemanticResolution</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    kind</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HeapProvenance</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    confidence</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">85</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    evidence</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;call @malloc → store to %ptr&quot;</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">into</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span>    pattern_id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;R-1&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> fact</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> SemanticFact</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">    SemanticKey</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Symbol</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;my_function&quot;</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">into</span><span style="color: #9399B2;">()),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">    SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HeapProvenance</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">    FactConfidence</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">High</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">    FactSource</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">IRPattern</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;OwnershipTransfer: is_acquire=true&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">);</span></span></code></pre><h3 id="four-suppression-methods">Four Suppression Methods</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> suppresses_write_to_immutable</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MutableParam</span><span> </span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InteriorMutability</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> suppresses_borrow_escape</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HeapProvenance</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">GlobalProvenance</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">FromParameter</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> suppresses_use_after_free</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">RaiiDropRelease</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> suppresses_cross_language_free</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        matches!</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">IntoRawTransfer</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">FileOperation</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">            |</span><span style="color: #F9E2AF;font-style: italic;"> SemanticKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">LibraryRelease</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="the-pass-pipeline-from-detection-to-suppression">The Pass Pipeline: From Detection to Suppression</h2>
+<p>Five detection passes + one classification pass form the complete pipeline from IR to semantics:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    subgraph Classification[&quot;Classification Layer (SurfaceClassifierPass)&quot;]</span></span>
+<span class="giallo-l"><span>        S1[&quot;L1: Linkage analysis&lt;br/&gt;internal/external&quot;]</span></span>
+<span class="giallo-l"><span>        S2[&quot;L2: Source path heuristic&lt;br/&gt;user/runtime/stdlib&quot;]</span></span>
+<span class="giallo-l"><span>        S3[&quot;L3: CallGraph reachability&lt;br/&gt;Reachable from FFI boundary → Boundary&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph Detection[&quot;Detection Layer (5 Passes)&quot;]</span></span>
+<span class="giallo-l"><span>        D1[&quot;HeapProvenancePass&lt;br/&gt;R-1: malloc/Box/Arc provenance&quot;]</span></span>
+<span class="giallo-l"><span>        D2[&quot;InteriorMutabilityPass&lt;br/&gt;R-2: UnsafeCell detection&quot;]</span></span>
+<span class="giallo-l"><span>        D3[&quot;RaiiDropPass&lt;br/&gt;R-3: drop_in_place detection&quot;]</span></span>
+<span class="giallo-l"><span>        D4[&quot;IRBehaviorSummaryPass&lt;br/&gt;BehaviorPattern extraction&quot;]</span></span>
+<span class="giallo-l"><span>        D5[&quot;StructuralInferencePass&lt;br/&gt;R-0/R-4/R-6/R-7 inference&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph Suppression[&quot;Suppression Layer (2 Passes)&quot;]</span></span>
+<span class="giallo-l"><span>        P1[&quot;BorrowEscapePass&lt;br/&gt;Query SemanticTree&lt;br/&gt;R-1/R-8 suppression&quot;]</span></span>
+<span class="giallo-l"><span>        P2[&quot;WriteToImmutablePass&lt;br/&gt;R-0/R-2/R-10/R-13/R-14/R-15 suppression&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph Facts[&quot;Facts Layer&quot;]</span></span>
+<span class="giallo-l"><span>        F1[&quot;pattern_to_facts&lt;br/&gt;BehaviorPattern → SemanticFact&quot;]</span></span>
+<span class="giallo-l"><span>        F2[&quot;SemanticTree&lt;br/&gt;add_resolution()&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    IR[IRModule] --&gt; Classification</span></span>
+<span class="giallo-l"><span>    Classification --&gt; Detection</span></span>
+<span class="giallo-l"><span>    D1 --&gt; F2</span></span>
+<span class="giallo-l"><span>    D2 --&gt; F2</span></span>
+<span class="giallo-l"><span>    D3 --&gt; F2</span></span>
+<span class="giallo-l"><span>    D4 --&gt; F1</span></span>
+<span class="giallo-l"><span>    F1 --&gt; P1</span></span>
+<span class="giallo-l"><span>    F2 --&gt; P1</span></span>
+<span class="giallo-l"><span>    F2 --&gt; P2</span></span></code></pre><h3 id="key-pass-detail">Key Pass Detail</h3>
+<p><strong>SurfaceClassifierPass</strong>: Three-tier classification — L1 checks linkage, L2 checks source path, L3 upgrades via CallGraph reachability from FFI boundary.</p>
+<p><strong>HeapProvenancePass</strong> (244 lines): R-1 detection — detect heap allocation calls, global provenance, stack provenance, write to <code>SemanticTree</code>.</p>
+<p><strong>BorrowEscapePass</strong> (318 lines): Stack escape detection — query <code>SemanticTree</code> for R-1/R-8 suppression.</p>
+<p><strong>WriteToImmutablePass</strong> (809 lines): Immutable write detection — query <code>SemanticTree</code> for R-0/R-2/R-10/R-13/R-14/R-15 suppression.</p>
+<hr />
+<h2 id="complete-evidence-chain-example-arc-drop">Complete Evidence Chain Example: Arc::drop</h2>
+<h3 id="ir-instruction-level">IR Instruction Level</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="llvm"><span class="giallo-l"><span>%old = </span><span style="color: #CBA6F7;">atomicrmw sub</span><span> ptr %rc, </span><span style="color: #CBA6F7;">i32</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;font-style: italic;">   ; refcount--</span></span>
+<span class="giallo-l"><span>%is_zero = </span><span style="color: #CBA6F7;">icmp eq i32</span><span> %old, </span><span style="color: #FAB387;">0</span><span style="color: #9399B2;font-style: italic;">        ; check zero</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">br i1</span><span> %is_zero, </span><span style="color: #CBA6F7;">label</span><span> %free, </span><span style="color: #CBA6F7;">label</span><span> %done</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">free</span><span>:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">  call void</span><span style="color: #89B4FA;font-style: italic;"> @__rust_dealloc</span><span>(ptr %data, </span><span style="color: #CBA6F7;">i64</span><span style="color: #FAB387;"> 16</span><span>, </span><span style="color: #CBA6F7;">i64</span><span style="color: #FAB387;"> 8</span><span>) </span><span style="color: #9399B2;font-style: italic;">; release</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">  ret void</span></span>
+<span class="giallo-l"><span>done:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">  ret void</span></span></code></pre><h3 id="evidence-chain-expansion">Evidence Chain Expansion</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Layer 1: IRPattern</span></span>
+<span class="giallo-l"><span>  detect_conditional_release() → atomicrmw sub + icmp eq + br + call</span></span>
+<span class="giallo-l"><span>  </span></span>
+<span class="giallo-l"><span>Layer 2: BehaviorPattern</span></span>
+<span class="giallo-l"><span>  BehaviorPattern::ConditionalRelease { atomic_op: &quot;sub&quot;, threshold: &quot;0&quot; }</span></span>
+<span class="giallo-l"><span>  </span></span>
+<span class="giallo-l"><span>Layer 3a: SemanticKind (via from_function_name supplement)</span></span>
+<span class="giallo-l"><span>  __rust_dealloc → SemanticKind::RaiiDropRelease</span></span>
+<span class="giallo-l"><span>Layer 3b: SemanticKind (via pattern_to_facts mapping)</span></span>
+<span class="giallo-l"><span>  ConditionalRelease → SemanticKind::ReleaseOnAllExitPaths</span></span>
+<span class="giallo-l"><span>  </span></span>
+<span class="giallo-l"><span>Layer 4: SemanticFact</span></span>
+<span class="giallo-l"><span>  SemanticFact {</span></span>
+<span class="giallo-l"><span>    key: Symbol(&quot;__rust_dealloc&quot;),</span></span>
+<span class="giallo-l"><span>    kind: RaiiDropRelease,</span></span>
+<span class="giallo-l"><span>    confidence: High,</span></span>
+<span class="giallo-l"><span>    source: IRPattern,</span></span>
+<span class="giallo-l"><span>    evidence: &quot;RAiiDropRelease: drop_in_place=true&quot;,</span></span>
+<span class="giallo-l"><span>  }</span></span>
+<span class="giallo-l"><span>  </span></span>
+<span class="giallo-l"><span>Suppression judgment: SemanticKind::RaiiDropRelease.suppresses_use_after_free() → true</span></span>
+<span class="giallo-l"><span>Conclusion: UseAfterFree suppressed → FP eliminated ✅</span></span></code></pre>
+<hr />
+<h2 id="honest-limitations">Honest Limitations</h2>
+<h3 id="1-from-function-name-is-a-sandcastle">1. <code>from_function_name</code> Is a Sandcastle</h3>
+<p>42+ hardcoded if-else branches covering 6 languages. Every new library (libuv, openssl, sqlite) requires new branches. Should be replaced by a YAML/TOML-configured rule engine — but low priority since existing coverage suffices.</p>
+<h3 id="2-r-n-rule-confidence-from-limited-samples">2. R-N Rule Confidence from Limited Samples</h3>
+<p>R-0 through R-8 data comes from the main project's <code>.ll</code> files (primarily Rust and C/C++). For Zig, Swift, Nim — unknown.</p>
+<h3 id="3-four-layer-evidence-chain-unverifiable-at-fp-0">3. Four-Layer Evidence Chain Unverifiable at FP = 0</h3>
+<p>When FP approaches zero, <code>suppresses_*</code> methods become unverifiable — can you prove zero false negatives in a zero-FP set? Current approach: every suppression rule must attach evidence, and <code>--no-suppression</code> mode exists for regression testing.</p>
+<h3 id="4-semanticfact-and-semanticresolution-dualism">4. SemanticFact and SemanticResolution Dualism</h3>
+<p>Functionally the same — recording "what I know." Separation is historical and should be merged.</p>
+<h3 id="5-performance-cost">5. Performance Cost</h3>
+<p>Four-layer chain means every IR instruction may be processed 4 times. On large projects (bun's 200,000 functions), analysis time may double. Layer 1's PureComputation filters out ~80% of functions before they enter Layer 2.</p>
+<hr />
+<p><em>Previous: <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-ir-pattern-atlas/./04-resource-family.md">Resource Families — Breaking Language Barriers</a></em>
+<em>Next: <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/05-ir-pattern-atlas/./06-reflection.md">Reflection — Architecture Tradeoffs You Didn't See</a></em></p>
+<p><strong>Key Source Files:</strong></p>
+<ul>
+<li><code>crates/omniscope-semantics/src/resource/ir_pattern.rs</code> (1867 lines) — IR pattern detection</li>
+<li><code>crates/omniscope-semantics/src/resource/semantic_tree/kind.rs</code> (1029 lines) — SemanticKind 55+ variants</li>
+<li><code>crates/omniscope-semantics/src/resource/semantic_engine.rs</code> (1853 lines) — FFI safety evaluation</li>
+<li><code>crates/omniscope-pass/src/resource/pattern_to_facts.rs</code> — BehaviorPattern→SemanticFact mapping</li>
+<li><code>crates/omniscope-pass/src/analysis/</code> — RaiiDropPass, InteriorMutabilityPass, HeapProvenancePass, BorrowEscapePass, WriteToImmutablePass</li>
+</ul>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/06-reflection/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">OmniScope Architecture Deep Dive (Part 6): Reflection — The Architectural Trade-offs You Never Saw</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/04-resource-family/">
+                                <span class="button__text">OmniScope Architecture Deep Dive (Part 4): Resource Families — Breaking Language Barriers: From Effect to Evidence Chain Pipeline</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>
