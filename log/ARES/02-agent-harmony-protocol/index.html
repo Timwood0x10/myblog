@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Agent Harmony Protocol — The Communication Foundation for Multi-Agent Systems | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="AHP — a communication protocol that doesn't touch the wire, built on Go channels for sub-microsecond latency.">
+
+    <meta property="og:description" content="AHP — a communication protocol that doesn't touch the wire, built on Go channels for sub-microsecond latency.">
+    <meta property="og:title" content="Agent Harmony Protocol — The Communication Foundation for Multi-Agent Systems | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/02-agent-harmony-protocol/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="AHP — a communication protocol that doesn't touch the wire, built on Go channels for sub-microsecond latency.">
+    <meta name="twitter:title" content="Agent Harmony Protocol — The Communication Foundation for Multi-Agent Systems | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/02-agent-harmony-protocol/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/02-agent-harmony-protocol/">Agent Harmony Protocol — The Communication Foundation for Multi-Agent Systems</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/concurrency/">#Concurrency</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/protocol/">#Protocol</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ares-architecture-deep-dive-ii-agent-harmony-protocol-the-communication-foundation-for-multi-agent-systems">ares Architecture Deep Dive (II): Agent Harmony Protocol — The Communication Foundation for Multi-Agent Systems</h1>
+<blockquote>
+<p>When it comes to multi-Agent systems, most people's first reaction is: "How do Agents talk to each other? Via HTTP or WebSocket? Through a message queue?"
+My answer is rather blunt: <strong>Running in the same process, and you still want to communicate over the network? Just use Go channels and be done with it.</strong>
+And that's how AHP was born — a communication protocol that doesn't touch the wire.</p>
+</blockquote>
+<h2 id="foreword">Foreword</h2>
+<p>What's the most annoying thing about building a multi-Agent system? It's not that the Agents aren't smart enough — it's that the Agents don't talk to each other.</p>
+<p>The Leader assigns a task to a Sub. The Sub finishes and wants to report back, only to find that the Leader has already timed out. The Sub wants to report its progress, but there's nowhere to do so. The Leader wants to know if the Sub is still alive, but there's no heartbeat mechanism.</p>
+<p>When I first built this in Python, I used Redis queues. Later I switched to Go and wanted a more formal solution, so I spent two full days wrestling with RabbitMQ — the first day installing Erlang, configuring vhosts, setting up exchanges, mapping out binding keys; the second day writing 200+ lines of glue code just to deliver a single message from Agent A to Agent B.</p>
+<p>When I finally ran the benchmark, the end-to-end latency had gone from &lt;1μs (Go channel) to 2ms+ — that's a 2000x slowdown, and it wasn't even caused by network latency since both Agents were in the same process. Pure serialization and routing overhead. I thought: <strong>Same process, two goroutines, sending a message still has to go through the network? That's just insane.</strong></p>
+<p>So I wrote a purely in-process communication protocol: no network, no serialization, no middleware dependency. Just channels + shared memory.</p>
+<h2 id="i-why-reinvent-the-wheel">I. Why reinvent the wheel?</h2>
+<p>ares has two roles: Leader Agent (who assigns work) and Sub Agent (who does the work). The communication between them needs to handle a bunch of annoyances:</p>
+<ul>
+<li><strong>Async messaging</strong>: The Leader can toss out a task and move on, without waiting for the Sub to finish</li>
+<li><strong>Progress feedback</strong>: The Sub needs to let the Leader know when it's 50% done</li>
+<li><strong>Heartbeat detection</strong>: The Leader needs to know if the Sub has crashed</li>
+<li><strong>Fault tolerance</strong>: If a message fails to send, there needs to be a fallback</li>
+</ul>
+<p>I looked around and found that everything was either too heavy (RabbitMQ), too slow (Redis over the network), or philosophically misaligned with Go. In the end I decided: <strong>Build my own.</strong></p>
+<p>The reasoning is actually very simple:</p>
+<ol>
+<li><strong>Fast</strong>: Channel-based messaging vs. network RTT — the gap is so large there's no need to compare</li>
+<li><strong>Simple</strong>: No need to deal with serialization, network jitter, partition tolerance, or any of those distributed system nightmares</li>
+<li><strong>Easy to change</strong>: If we ever need to go microservice, just swap the underlying transport from channels to gRPC — the business code on top doesn't need to change a single line</li>
+</ol>
+<h2 id="ii-overall-architecture">II. Overall Architecture</h2>
+<p>The overall architecture of AHP can be summarized in one diagram:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant LA as Leader Agent</span></span>
+<span class="giallo-l"><span>    participant SA as Sub Agent</span></span>
+<span class="giallo-l"><span>    participant HM as HeartbeatMonitor</span></span>
+<span class="giallo-l"><span>    participant DLQ as Dead Letter Queue</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    LA-&gt;&gt;SA: SendMessage(Enqueue)</span></span>
+<span class="giallo-l"><span>    SA--&gt;&gt;LA: ReceiveMessage(Dequeue)</span></span>
+<span class="giallo-l"><span>    SA-&gt;&gt;HM: RecordHeartbeat</span></span>
+<span class="giallo-l"><span>    HM-&gt;&gt;HM: CheckTimeouts</span></span>
+<span class="giallo-l"><span>    HM-&gt;&gt;SA: TimeoutCallback</span></span>
+<span class="giallo-l"><span>    LA-&gt;&gt;DLQ: Failed messages</span></span></code></pre>
+<p>Core components include:</p>
+<table><thead><tr><th>Component</th><th>Responsibility</th><th>Implementation Highlight</th></tr></thead><tbody>
+<tr><td><code>Protocol</code></td><td>Unified facade, composes all sub-components</td><td>Facade pattern, provides all-in-one interface</td></tr>
+<tr><td><code>MessageQueue</code></td><td>Independent message queue per Agent</td><td>Based on buffered channel + backup buffer + atomic.Bool</td></tr>
+<tr><td><code>HeartbeatMonitor</code></td><td>Heartbeat detection + timeout callback</td><td>Shared instance, no extra components needed for distributed systems</td></tr>
+<tr><td><code>DLQ</code></td><td>Dead letter message storage and retry</td><td>Supports custom handlers and automatic retry</td></tr>
+<tr><td><code>QueueRegistry</code></td><td>Manages all Agent queues</td><td>Lazy loading + double-checked locking</td></tr>
+<tr><td><code>Codec</code></td><td>Message serialization</td><td>JSON implementation, CodecRegistry is extensible</td></tr>
+</tbody></table>
+<h2 id="iii-message-model">III. Message Model</h2>
+<h3 id="3-1-five-message-types">3.1 Five Message Types</h3>
+<p>AHP defines 5 message types, covering all scenarios in inter-Agent communication:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    AHPMethodTask</span><span style="color: #F9E2AF;font-style: italic;">      AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;TASK&quot;</span><span style="color: #9399B2;font-style: italic;">      // Task assignment</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    AHPMethodResult</span><span style="color: #F9E2AF;font-style: italic;">    AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;RESULT&quot;</span><span style="color: #9399B2;font-style: italic;">     // Task result</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    AHPMethodProgress</span><span style="color: #F9E2AF;font-style: italic;">  AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;PROGRESS&quot;</span><span style="color: #9399B2;font-style: italic;">   // Progress feedback</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    AHPMethodACK</span><span style="color: #F9E2AF;font-style: italic;">       AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;ACK&quot;</span><span style="color: #9399B2;font-style: italic;">        // Acknowledgment reply</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    AHPMethodHeartbeat</span><span style="color: #F9E2AF;font-style: italic;"> AHPMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;HEARTBEAT&quot;</span><span style="color: #9399B2;font-style: italic;">  // Heartbeat signal</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre><h3 id="3-2-message-structure">3.2 Message Structure</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> AHPMessage</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    MessageID</span><span style="color: #CBA6F7;">   string</span><span style="color: #A6E3A1;">         `json:&quot;message_id&quot;`</span></span>
+<span class="giallo-l"><span>    Method</span><span style="color: #F9E2AF;font-style: italic;">      AHPMethod</span><span style="color: #A6E3A1;">      `json:&quot;method&quot;`</span></span>
+<span class="giallo-l"><span>    AgentID</span><span style="color: #CBA6F7;">     string</span><span style="color: #A6E3A1;">         `json:&quot;agent_id&quot;`</span></span>
+<span class="giallo-l"><span>    TargetAgent</span><span style="color: #CBA6F7;"> string</span><span style="color: #A6E3A1;">         `json:&quot;target_agent&quot;`</span></span>
+<span class="giallo-l"><span>    TaskID</span><span style="color: #CBA6F7;">      string</span><span style="color: #A6E3A1;">         `json:&quot;task_id&quot;`</span></span>
+<span class="giallo-l"><span>    SessionID</span><span style="color: #CBA6F7;">   string</span><span style="color: #A6E3A1;">         `json:&quot;session_id&quot;`</span></span>
+<span class="giallo-l"><span>    Payload</span><span style="color: #CBA6F7;">     map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #A6E3A1;"> `json:&quot;payload&quot;`</span></span>
+<span class="giallo-l"><span>    Timestamp</span><span style="color: #F9E2AF;font-style: italic;">   time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span><span style="color: #A6E3A1;">      `json:&quot;timestamp&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="3-3-messageid-generation">3.3 MessageID Generation</h3>
+<p>The MessageID is designed as a three-segment ID:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> generateMessageID</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    id</span><span style="color: #94E2D5;"> :=</span><span> atomic</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">AddUint64</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>messageIDCounter</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    randSuffix</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> getRandomSuffix</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;%s.%d.%s&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Now</span><span style="color: #9399B2;">().</span><span style="color: #89B4FA;font-style: italic;">Format</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;20060102150405.000000&quot;</span><span style="color: #9399B2;">),</span><span> id</span><span style="color: #9399B2;">,</span><span> randSuffix</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<ul>
+<li><strong>Timestamp prefix</strong>: Human-readable, makes debugging easier</li>
+<li><strong>Atomic counter</strong>: Incrementing sequence number for multiple messages within the same nanosecond</li>
+<li><strong>Random suffix</strong>: Avoids conflicts in multi-process scenarios</li>
+</ul>
+<p>This scheme doesn't rely on a global coordinator and guarantees uniqueness within a process.</p>
+<h3 id="3-4-helper-constructors">3.4 Helper Constructors</h3>
+<p>AHP provides a set of constructors that abstract away the details of message building:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">NewMessage</span><span style="color: #9399B2;">(</span><span>method</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">,</span><span> targetAgent</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">NewTaskMessage</span><span style="color: #9399B2;">(</span><span>agentID</span><span style="color: #9399B2;">,</span><span> targetAgent</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">,</span><span> payload</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">NewResultMessage</span><span style="color: #9399B2;">(</span><span>agentID</span><span style="color: #9399B2;">,</span><span> targetAgent</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">NewProgressMessage</span><span style="color: #9399B2;">(</span><span>agentID</span><span style="color: #9399B2;">,</span><span> targetAgent</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">,</span><span> progress</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">NewACKMessage</span><span style="color: #9399B2;">(</span><span>agentID</span><span style="color: #9399B2;">,</span><span> targetAgent</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">NewHeartbeatMessage</span><span style="color: #9399B2;">(</span><span>agentID</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>One notable case is <code>NewResultMessage</code>: it wraps <code>*models.TaskResult</code> into <code>Payload["result"]</code>, while <code>GetResult()</code> needs to handle the type loss that occurs after JSON deserialization — <code>TaskResult</code> becomes <code>map[string]any</code>. <code>GetResult()</code> internally implements the <code>reconstructTaskResult</code> function, which uses reflection and field mapping to rebuild the original struct.</p>
+<h2 id="iv-message-queue-messagequeue">IV. Message Queue: MessageQueue</h2>
+<h3 id="4-1-core-implementation">4.1 Core Implementation</h3>
+<p><code>MessageQueue</code> is built on top of a buffered Go channel:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MessageQueue</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    messages</span><span style="color: #CBA6F7;">     chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">AHPMessage</span></span>
+<span class="giallo-l"><span>    agentID</span><span style="color: #CBA6F7;">      string</span></span>
+<span class="giallo-l"><span>    opts</span><span style="color: #94E2D5;">         *</span><span style="color: #F9E2AF;font-style: italic;">QueueOptions</span></span>
+<span class="giallo-l"><span>    backupBuffer</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">AHPMessage</span></span>
+<span class="giallo-l"><span>    backupMu</span><span style="color: #F9E2AF;font-style: italic;">     sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span></span>
+<span class="giallo-l"><span>    closed</span><span style="color: #F9E2AF;font-style: italic;">       atomic</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Bool</span></span>
+<span class="giallo-l"><span>    closeOnce</span><span style="color: #F9E2AF;font-style: italic;">    sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Once</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="4-2-enqueue-non-blocking-write">4.2 Enqueue: Non-blocking Write</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">q </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MessageQueue</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Enqueue</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> msg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">AHPMessage</span><span style="color: #9399B2;">) (</span><span style="color: #EBA0AC;font-style: italic;">retErr</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> q</span><span style="color: #9399B2;">.</span><span>closed</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Load</span><span style="color: #9399B2;">() {</span><span style="color: #CBA6F7;"> return</span><span> errors</span><span style="color: #9399B2;">.</span><span>ErrQueueClosed</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> recover</span><span style="color: #9399B2;">();</span><span> r</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span> retErr</span><span style="color: #94E2D5;"> =</span><span> errors</span><span style="color: #9399B2;">.</span><span>ErrQueueClosed</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> q</span><span style="color: #9399B2;">.</span><span>messages</span><span style="color: #94E2D5;"> &lt;-</span><span> msg</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    default</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> errors</span><span style="color: #9399B2;">.</span><span>ErrQueueFull</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Design highlights:</p>
+<ol>
+<li><strong>Non-blocking</strong>: Returns <code>ErrQueueFull</code> immediately when the channel is full, does not block the caller</li>
+<li><strong>atomic.Bool for closed check</strong>: Lock-free check of the closed flag</li>
+<li><strong>defer recover fallback</strong>: Panic from <code>send on closed channel</code> is gracefully caught</li>
+<li><strong>Unused context parameter</strong>: The <code>default</code> branch will never select <code>ctx.Done()</code>, making the context parameter effectively useless here</li>
+</ol>
+<h3 id="4-3-dequeue-blocking-read">4.3 Dequeue: Blocking Read</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">q </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MessageQueue</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Dequeue</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">AHPMessage</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    q</span><span style="color: #9399B2;">.</span><span>backupMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>q</span><span style="color: #9399B2;">.</span><span>backupBuffer</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        msg</span><span style="color: #94E2D5;"> :=</span><span> q</span><span style="color: #9399B2;">.</span><span>backupBuffer</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>        q</span><span style="color: #9399B2;">.</span><span>backupBuffer</span><span style="color: #94E2D5;"> =</span><span> q</span><span style="color: #9399B2;">.</span><span>backupBuffer</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">:]</span></span>
+<span class="giallo-l"><span>        q</span><span style="color: #9399B2;">.</span><span>backupMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> msg</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    q</span><span style="color: #9399B2;">.</span><span>backupMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> msg</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> := &lt;-</span><span>q</span><span style="color: #9399B2;">.</span><span>messages</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span>ok</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> errors</span><span style="color: #9399B2;">.</span><span>ErrQueueClosed</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> msg</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #94E2D5;"> &lt;-</span><span>ctx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Done</span><span style="color: #9399B2;">():</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Err</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Dequeue supports context cancellation, which is Go's standard cancelable blocking pattern.</p>
+<h3 id="4-4-peek-and-backup-buffer">4.4 Peek and Backup Buffer</h3>
+<p><code>Peek()</code> allows checking the front of the queue without removing the message. The core challenge is: once a message is taken out of a channel, if the channel is full, it cannot be put back. The solution is the <code>backupBuffer</code>, which serves as overflow storage — <code>Dequeue</code> reads from the backupBuffer first.</p>
+<h3 id="4-5-queueregistry-queue-manager">4.5 QueueRegistry: Queue Manager</h3>
+<p><code>QueueRegistry</code>'s <code>GetOrCreate</code> method uses the <strong>Double-Checked Locking</strong> pattern:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">r </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">QueueRegistry</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> GetOrCreate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">MessageQueue</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    r</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RLock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>    q</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> r</span><span style="color: #9399B2;">.</span><span>queues</span><span style="color: #9399B2;">[</span><span>agentID</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>    r</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RUnlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> ok</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> q</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span>    r</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> r</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> q</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> r</span><span style="color: #9399B2;">.</span><span>queues</span><span style="color: #9399B2;">[</span><span>agentID</span><span style="color: #9399B2;">];</span><span> ok</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> q</span><span style="color: #9399B2;"> }</span><span style="color: #9399B2;font-style: italic;"> // Double-check</span></span>
+<span class="giallo-l"><span>    q</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> NewMessageQueue</span><span style="color: #9399B2;">(</span><span>agentID</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #9399B2;">.</span><span>defaultOpts</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    r</span><span style="color: #9399B2;">.</span><span>queues</span><span style="color: #9399B2;">[</span><span>agentID</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> q</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> q</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="v-heartbeat-detection-heartbeatmonitor">V. Heartbeat Detection: HeartbeatMonitor</h2>
+<h3 id="5-1-core-flow">5.1 Core Flow</h3>
+<ul>
+<li>Each Agent sends heartbeats at a fixed interval (default 5s)</li>
+<li>HeartbeatMonitor records the timestamp of the most recent heartbeat</li>
+<li>If the timeout threshold (default 30s) is exceeded and the number of consecutive misses reaches the limit (default 3), the Agent is marked offline</li>
+</ul>
+<h3 id="5-2-timeout-detection-algorithm">5.2 Timeout Detection Algorithm</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">HeartbeatMonitor</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> CheckTimeouts</span><span style="color: #9399B2;">() []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    timedOut</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">checkAndMarkOffline</span><span style="color: #9399B2;">()</span><span style="color: #9399B2;font-style: italic;">  // Detection under write lock</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> timedOut</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">notifyCallbacks</span><span style="color: #9399B2;">(</span><span>agentID</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">        // Execute callbacks outside the lock</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> timedOut</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Key edge case handling:</p>
+<ol>
+<li><strong>Gradual timeout</strong>: An Agent is only declared offline after 3 missed heartbeats, preventing false positives from occasional network latency</li>
+<li><strong>Avoid duplicate callbacks</strong>: An Agent already marked Offline will not trigger callbacks again</li>
+<li><strong>Callbacks executed outside the lock</strong>: <code>notifyCallbacks</code> copies the callback list, releases the lock, then executes — this is critical for preventing deadlocks</li>
+</ol>
+<h3 id="5-3-two-types-of-heartbeatsender">5.3 Two Types of HeartbeatSender</h3>
+<ol>
+<li><strong><code>ahp.HeartbeatSender</code></strong>: Sends an <code>AHPMethodHeartbeat</code> message to the target's <code>MessageQueue</code> — this is <strong>in-band</strong> heartbeat</li>
+<li><strong><code>heartbeatSender</code></strong> (in <code>internal/agents/sub/</code>): Directly calls <code>HeartbeatMonitor.RecordHeartbeat</code> — this is <strong>out-of-band</strong> heartbeat</li>
+</ol>
+<p>Currently, the Sub Agent uses the second approach, which is more efficient in a monolithic deployment.</p>
+<h2 id="vi-dead-letter-queue-dlq">VI. Dead Letter Queue: DLQ</h2>
+<p>When <code>Enqueue</code> returns an error, <code>Protocol.SendMessage</code> routes the failed message to the DLQ:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> classifyEnqueueError</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">err</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Is</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">,</span><span> apperrors</span><span style="color: #9399B2;">.</span><span>ErrQueueClosed</span><span style="color: #9399B2;">):</span><span style="color: #CBA6F7;">  return</span><span style="color: #A6E3A1;"> &quot;queue_closed&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Is</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">,</span><span> apperrors</span><span style="color: #9399B2;">.</span><span>ErrQueueFull</span><span style="color: #9399B2;">):</span><span style="color: #CBA6F7;">    return</span><span style="color: #A6E3A1;"> &quot;queue_full&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Is</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">,</span><span> context</span><span style="color: #9399B2;">.</span><span>Canceled</span><span style="color: #9399B2;">):</span><span style="color: #CBA6F7;">          return</span><span style="color: #A6E3A1;"> &quot;context_canceled&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Is</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">,</span><span> context</span><span style="color: #9399B2;">.</span><span>DeadlineExceeded</span><span style="color: #9399B2;">):</span><span style="color: #CBA6F7;">  return</span><span style="color: #A6E3A1;"> &quot;context_deadline&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    default</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;">                                        return</span><span style="color: #A6E3A1;"> &quot;unknown&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>DLQProcessor</code> supports registering custom handlers by error type, and supports automatic retry:</p>
+<ul>
+<li><code>MaxRetries = 0</code>: Unlimited retries</li>
+<li><code>MaxRetries &gt; 0</code>: Marked as exhausted after reaching the limit</li>
+<li>Currently no exponential backoff — this is an area for improvement</li>
+</ul>
+<h2 id="vii-protocol-facade">VII. Protocol Facade</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Protocol</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    registry</span><span style="color: #94E2D5;">  *</span><span style="color: #F9E2AF;font-style: italic;">QueueRegistry</span></span>
+<span class="giallo-l"><span>    dlq</span><span style="color: #94E2D5;">       *</span><span style="color: #F9E2AF;font-style: italic;">DLQ</span></span>
+<span class="giallo-l"><span>    codec</span><span style="color: #F9E2AF;font-style: italic;">     Codec</span></span>
+<span class="giallo-l"><span>    heartbeat</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">HeartbeatMonitor</span></span>
+<span class="giallo-l"><span>    config</span><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">ProtocolConfig</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><table><thead><tr><th>Method</th><th>Function</th></tr></thead><tbody>
+<tr><td><code>SendMessage(ctx, msg)</code></td><td>Sends a message, routes to DLQ on failure</td></tr>
+<tr><td><code>ReceiveMessage(ctx, agentID)</code></td><td>Receives a message, blocks until available</td></tr>
+<tr><td><code>SendTask/SendResult</code></td><td>Convenience methods for sending</td></tr>
+<tr><td><code>RecordHeartbeat(agentID)</code></td><td>Records a heartbeat</td></tr>
+<tr><td><code>CheckTimeouts()</code></td><td>Checks for timeouts</td></tr>
+<tr><td><code>Stats()</code></td><td>Runtime status snapshot</td></tr>
+<tr><td><code>Close()</code></td><td>Closes all resources</td></tr>
+</tbody></table>
+<h2 id="viii-ahp-integration-in-agents">VIII. AHP Integration in Agents</h2>
+<h3 id="8-1-messenger-interface">8.1 Messenger Interface</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Messenger</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    SendMessage</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> msg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ahp</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AHPMessage</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ReceiveMessage</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ahp</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AHPMessage</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Both Leader Agent and Sub Agent implement this interface. During construction, <code>MessageQueue</code> and <code>HeartbeatMonitor</code> are injected via dependency injection.</p>
+<h3 id="8-2-dispatcher-s-task-distribution">8.2 Dispatcher's Task Distribution</h3>
+<p><code>taskDispatcher</code> supports both <strong>local execution</strong> and <strong>distributed dispatch</strong> modes. The core logic is in <code>executeTask</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> executor</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> d</span><span style="color: #9399B2;">.</span><span>executorFuncs</span><span style="color: #9399B2;">[</span><span>task</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #9399B2;">];</span><span> ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #89B4FA;font-style: italic;"> executor</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> task</span><span style="color: #9399B2;">,</span><span> agentAddr</span><span style="color: #9399B2;">,</span><span> sessionID</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">  // Local execution</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> d</span><span style="color: #9399B2;">.</span><span>messageSender</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #9399B2;font-style: italic;"> /* return error */</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span>msg</span><span style="color: #94E2D5;"> :=</span><span> ahp</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewTaskMessage</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">                        // Send via AHP</span></span>
+<span class="giallo-l"><span>d</span><span style="color: #9399B2;">.</span><span>messageSender</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Send</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> agentAddr</span><span style="color: #9399B2;">,</span><span> msg</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">return</span><span> d</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">waitForResult</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> task</span><span style="color: #9399B2;">.</span><span>TaskID</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">              // Block waiting for result</span></span></code></pre>
+<p>This design allows the Agent communication pattern to seamlessly switch between monolithic and distributed deployments.</p>
+<h2 id="ix-design-pattern-summary">IX. Design Pattern Summary</h2>
+<table><thead><tr><th>Pattern</th><th>Location</th><th>Description</th></tr></thead><tbody>
+<tr><td><strong>Facade</strong></td><td><code>Protocol</code></td><td>Unified interface, composes all components</td></tr>
+<tr><td><strong>Registry</strong></td><td><code>QueueRegistry</code>, <code>CodecRegistry</code></td><td>Named instance management, lazy loading</td></tr>
+<tr><td><strong>Strategy</strong></td><td><code>Codec</code> interface</td><td>Replaceable serialization strategy</td></tr>
+<tr><td><strong>Observer</strong></td><td><code>TimeoutCallback</code></td><td>Heartbeat timeout callback</td></tr>
+<tr><td><strong>Dead Letter Queue</strong></td><td><code>DLQ</code> + <code>DLQProcessor</code></td><td>Failed message storage and retry</td></tr>
+<tr><td><strong>Double-Checked Locking</strong></td><td><code>GetOrCreate</code></td><td>Balances performance and correctness</td></tr>
+<tr><td><strong>Panic Recovery</strong></td><td><code>Enqueue</code></td><td><code>defer recover()</code> handles concurrent close</td></tr>
+<tr><td><strong>Lock-Free Read</strong></td><td><code>atomic.Bool</code></td><td>Lock-free reading of close state</td></tr>
+</tbody></table>
+<h2 id="x-key-design-decisions">X. Key Design Decisions</h2>
+<h3 id="10-1-why-non-blocking-enqueue">10.1 Why Non-blocking Enqueue?</h3>
+<ul>
+<li>Agents run in a multi-threaded environment; blocking could lead to cascading waits</li>
+<li>DLQ provides better fault-tolerance semantics — failed messages can be retried</li>
+<li>Callers have greater control: retry immediately, retry later, or discard</li>
+</ul>
+<h3 id="10-2-toctou-avoidance">10.2 TOCTOU Avoidance</h3>
+<p><code>SendMessage</code> has a critical design choice: <strong>it does not check IsFull before enqueuing</strong>. If it checked first and then enqueued, the queue could go from not-full to full between the check and the enqueue (a TOCTOU race condition), causing message loss. Directly performing the operation and handling errors is more robust.</p>
+<h3 id="10-3-serialization-extensibility">10.3 Serialization Extensibility</h3>
+<p>Currently AHP is purely in-process communication, so JSON is sufficient. But the Codec interface has reserved extensibility in two directions:</p>
+<ol>
+<li><strong>Cross-process communication</strong>: protobuf/msgpack can provide smaller payloads</li>
+<li><strong>Persistence</strong>: If DLQ messages need to be persisted to disk, binary formats are more advantageous</li>
+</ol>
+<h2 id="xi-what-s-missing-honest-section">XI. What's Missing? (Honest Section)</h2>
+<p>To be honest, AHP isn't perfect. I've run into a few pain points myself, some of them quite painful:</p>
+<ol>
+<li><strong>Purely in-process</strong>: Can't span processes. If you need distributed deployment, you'll need to swap out the MessageQueue implementation. And "swap out the implementation" isn't as simple as it sounds — channel's synchronous semantics are fundamentally different from async network message queues, and there are plenty of edge cases to handle in the transition</li>
+<li><strong>No broadcast</strong>: Want to send a message to multiple Sub Agents? You'll have to send them one by one in a Leader-side for loop. At one point I needed to notify 6 Sub Agents simultaneously — by the time the Leader had sent to the 3rd one, the 1st had already finished execution. Serial sending became the bottleneck of the entire workflow</li>
+<li><strong>Retry strategy is too naive</strong>: The DLQ retry interval is fixed — no exponential backoff. Once a downstream API went down for 10 minutes, and the DLQ hammered it with fixed-interval retries the entire time, making an already fragile situation worse. I added circuit-breaking logic afterward — should have done it from the start</li>
+<li><strong>Routing is too rigid</strong>: No support for content-based dynamic routing or Topic subscriptions. Current routing is just "send to this AgentID" — if I want to route by message type, I have to write if-else chains at the business layer</li>
+</ol>
+<p>There's also a less obvious cost: <strong>the "just swap the implementation" assumption may be wrong in the short term.</strong> Many of AHP's semantics (non-blocking Enqueue, backup buffer, shared-memory Heartbeat) depend on channel's synchronous characteristics. When you actually switch to gRPC or RabbitMQ, porting these behaviors is far harder than it looks on paper — you need to reimplement a whole set of asynchronous semantics that just <em>look like</em> channels. An abstraction layer can isolate interfaces, but it can't isolate semantic differences.</p>
+<p>All that said, these limitations are <strong>acceptable trade-offs</strong> at the monolithic stage — the channel approach eliminated 90% of distributed system complexity for me. If I'd gone with RabbitMQ from day one, inter-Agent communication might have been more robust, but the project would have taken one to two extra weeks to launch, not to mention the ongoing operational cost. For a startup-stage project, that math works out every time.</p>
+<h2 id="summary">Summary</h2>
+<p>AHP is the communication wheel I built for ares. Channel-based messaging, DLQ as fallback, HeartbeatMonitor for liveness checks — three pieces combined, and the multi-Agent communication infrastructure is good to go.</p>
+<p>Those interfaces left in the code (Codec, DLQ handler, MessageSender) are essentially escape hatches I left for myself: if we ever need to switch to gRPC or RabbitMQ, just swap out one layer of implementation — the business code on top doesn't change. This kind of design is especially important in startup projects — you never know what the architecture will look like tomorrow.</p>
+<p>Next up, let's talk about <strong>Memory Distillation</strong> — how Agents distill useful experience from hundreds of conversation histories and reuse them directly when encountering similar problems.</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/03-memory-distillation/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Memory Distillation — When the Agent Learns to Forget and Refine</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/01-architecture-overview/">
+                                <span class="button__text">The Big Picture — Why Another Agent Framework?</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

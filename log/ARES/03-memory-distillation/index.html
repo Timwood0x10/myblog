@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Memory Distillation — When the Agent Learns to Forget and Refine | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="From term frequency analysis to three-layer memory architecture — teaching agents to forget and refine.">
+
+    <meta property="og:description" content="From term frequency analysis to three-layer memory architecture — teaching agents to forget and refine.">
+    <meta property="og:title" content="Memory Distillation — When the Agent Learns to Forget and Refine | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/03-memory-distillation/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="From term frequency analysis to three-layer memory architecture — teaching agents to forget and refine.">
+    <meta name="twitter:title" content="Memory Distillation — When the Agent Learns to Forget and Refine | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/03-memory-distillation/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/03-memory-distillation/">Memory Distillation — When the Agent Learns to Forget and Refine</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory/">#Memory</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rag/">#RAG</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ares-architecture-deep-dive-iii-memory-distillation-when-the-agent-learns-to-forget-and-refine">ares Architecture Deep Dive (III): Memory Distillation — When the Agent Learns to Forget and Refine</h1>
+<blockquote>
+<p>Ever used one of those chatbots? After 50 rounds it starts rambling because the context window is bursting at the seams.
+What's more frustrating is: it just helped you solve one problem, and the next time you encounter something similar — it starts reasoning from scratch all over again.
+I thought to myself: <strong>When in doubt, add a middle layer. One layer not enough, add another. What about giving term frequency analysis a try?</strong>
+And so Memory Distillation was born — teaching the Agent to forget and refine.</p>
+</blockquote>
+<hr />
+<h2 id="1-term-frequency-analysis-the-first-instinct">1. Term Frequency Analysis: The First Instinct</h2>
+<p>Let me start with the detour I took.</p>
+<p>There are many ways to solve the "memory explosion" problem. My first thought wasn't a three-layer architecture — it was <strong>term frequency analysis</strong>. The idea was simple:</p>
+<blockquote>
+<p>Break the Agent's conversation history into words, and count which words appear most often. High frequency = this topic comes up often = worth remembering.</p>
+</blockquote>
+<p>It's intuitive, right? Isn't that how humans summarize experiences too — "The user keeps asking about database slowness lately, so this must be a high-frequency lesson." I hacked together an extremely simple version back then:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> KeywordExtractor</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    stopwords</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">bool</span><span style="color: #9399B2;font-style: italic;">  // &quot;的&quot;、&quot;了&quot;、&quot;是&quot;、&quot;好的&quot;、&quot;谢谢&quot;……</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">e </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">KeywordExtractor</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Extract</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> messages</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">Message</span><span style="color: #9399B2;">) ([]</span><span style="color: #F9E2AF;font-style: italic;">Keyword</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    freq</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> msg</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> messages</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> _</span><span style="color: #9399B2;">,</span><span> word</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span style="color: #89B4FA;font-style: italic;"> tokenize</span><span style="color: #9399B2;">(</span><span>msg</span><span style="color: #9399B2;">.</span><span>Content</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span style="color: #94E2D5;"> !</span><span>e</span><span style="color: #9399B2;">.</span><span>stopwords</span><span style="color: #9399B2;">[</span><span>word</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span>                freq</span><span style="color: #9399B2;">[</span><span>word</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Sort by frequency, take top-K</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> keywords</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">Keyword</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> word</span><span style="color: #9399B2;">,</span><span> count</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> freq</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        keywords</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>keywords</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Keyword</span><span style="color: #9399B2;">{</span><span>Word</span><span style="color: #9399B2;">:</span><span> word</span><span style="color: #9399B2;">,</span><span> Freq</span><span style="color: #9399B2;">:</span><span> count</span><span style="color: #9399B2;">})</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    sort</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Slice</span><span style="color: #9399B2;">(</span><span>keywords</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">i</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> j</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> keywords</span><span style="color: #9399B2;">[</span><span>i</span><span style="color: #9399B2;">].</span><span>Freq</span><span style="color: #94E2D5;"> &gt;</span><span> keywords</span><span style="color: #9399B2;">[</span><span>j</span><span style="color: #9399B2;">].</span><span>Freq</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>keywords</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        keywords</span><span style="color: #94E2D5;"> =</span><span> keywords</span><span style="color: #9399B2;">[:</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> keywords</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This code looks pretty silly now, but at the time I thought it was beautiful — O(n) scan, one <code>map[string]int</code> does it all, no LLM needed, no database, not even a network request. In the early "get it running first" phase of the project, this simple and crude approach was irresistibly tempting.</p>
+<p>But after running it for a while, all the problems surfaced.</p>
+<h3 id="high-frequency-importance">High Frequency ≠ Importance</h3>
+<p>Term frequency only looks at "how many times something appears." In Agent conversations, the most frequent words are always these:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>&quot;Hello&quot; → opening line for every round</span></span>
+<span class="giallo-l"><span>&quot;OK&quot; → user&#39;s confirmation reply</span></span>
+<span class="giallo-l"><span>&quot;Thanks&quot; → closing remarks</span></span>
+<span class="giallo-l"><span>&quot;Please help me&quot; → polite prefix for every request</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Even with a stop word list filtering them out, genuinely valuable concepts — like &quot;database connection pool,&quot; &quot;index optimization,&quot; &quot;query timeout&quot; — appear an order of magnitude less frequently than &quot;OK.&quot; All you can tell is &quot;which words appear often,&quot; not &quot;what problem the user encountered and how the Agent solved it.&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>### Loss of Semantic Structure</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Term frequency flattens dialogue into a bag of words, completely losing the conversation&#39;s &quot;problem → solution&quot; mapping:</span></span>
+<span class="giallo-l"></span></code></pre>
+<p>User: "Database query timed out"
+Agent: "Checked the indexes, found a missing composite index, created it"</p>
+<p>Term frequency tells you:
+"database"×2 → "query"×1 → "timeout"×1 → "index"×2 → "check"×1 → "create"×1</p>
+<p>But you don't know:
+"Database query timeout" is the problem
+"Missing composite index" is the cause
+"Created it" is the solution</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"></span>
+<span class="giallo-l"><span>The most valuable part of a conversation — the causal chain of **&quot;what the user encountered → what the Agent did&quot;** — gets completely flattened by the bag-of-words model. And this is the core of experience reuse: you need to know that &quot;a missing index caused a timeout, and creating a composite index fixed it,&quot; not that &quot;the word &#39;index&#39; appeared twice.&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>### Cannot Support Semantic Retrieval</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>The most fatal limitation of the term frequency approach: you can&#39;t search using natural language semantics.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>User asks: &quot;Database is slow again, any ideas?&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>The term frequency matching logic is: split words → find common high-frequency words → score. &quot;Database&quot; matches, but &quot;slow&quot; vs &quot;timeout&quot; don&#39;t match because the surface forms are different. Technically you could use Word2Vec for word vector expansion, but the training and maintenance costs are several times higher than just using LLM embeddings directly — using term frequency for retrieval is essentially using Naive Bayes for semantic understanding, and the ceiling is too low.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>### Lessons Learned</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>The reason term frequency analysis didn&#39;t work boils down to one sentence: **What Agent memory needs to solve isn&#39;t &quot;which words appeared,&quot; but &quot;which experiences are worth reusing.&quot;**</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>These two questions differ by a dimension. The former is a statistical problem, the latter is a semantic problem. Using statistical tools to solve semantic problems is like using a kitchen knife to turn a screwdriver — it&#39;s not that you can&#39;t do it, but you&#39;ll ruin the screw in the process.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>That&#39;s why I went back to fundamentals and rethought: what does an Agent actually need to remember?</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>---</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>## 2. Let&#39;s Talk Pain Points First</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>The first thing I ran into when running Agents myself wasn&#39;t about &quot;not being smart enough&quot; — it was memory explosion.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>An Agent runs for a few hours and accumulates thousands of conversation messages. Stuff all of that into the LLM&#39;s context? Is 1M context window meant for this? Tokens burn through like crazy, responses get slower and slower, and eventually it&#39;s practically unusable.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>But that&#39;s not what annoyed me the most. What annoyed me most was: **The Agent just solved one problem, and the next time it encounters something similar, it starts reasoning from scratch.**</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Have you experienced these scenarios?</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>1. **Context Bloat**: After 50 rounds, the prompt is crammed with history, token consumption skyrockets, responses are slow as a snail</span></span>
+<span class="giallo-l"><span>2. **Experience Not Reusable**: Just fixed a complex bug, next user asks something similar — the Agent starts reasoning from scratch</span></span>
+<span class="giallo-l"><span>3. **Crash Amnesia**: Agent crashes and restarts automatically, user asks &quot;where were we?&quot;, Agent: 😶</span></span>
+<span class="giallo-l"><span>4. **Retrieval Noise**: Vectorize all conversations and dump them into the database, recall is full of irrelevant old chat records</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>I thought to myself: **This can&#39;t go on.** What the Agent needs to remember isn&#39;t the conversation itself, but the experiences extracted from the conversation. And so Memory Distillation was born.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>---</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>## 3. Three-Layer Memory Architecture</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>The core of the entire memory system is a three-layer architecture, where each layer is more refined, more persistent, and more expensive than the one before:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>```mermaid</span></span>
+<span class="giallo-l"><span>graph LR</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Session Memory&quot;</span></span>
+<span class="giallo-l"><span>        SM1[Sliding Window]</span></span>
+<span class="giallo-l"><span>        SM2[TTL Expiry]</span></span>
+<span class="giallo-l"><span>        SM3[Not Persistent]</span></span>
+<span class="giallo-l"><span>        SM4[Max 100 Entries]</span></span>
+<span class="giallo-l"><span>        SM5[Pure In-Memory]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Task Memory&quot;</span></span>
+<span class="giallo-l"><span>        TM1[Execution Records]</span></span>
+<span class="giallo-l"><span>        TM2[TTL Expiry]</span></span>
+<span class="giallo-l"><span>        TM3[Persistable]</span></span>
+<span class="giallo-l"><span>        TM4[Max 1000 Entries]</span></span>
+<span class="giallo-l"><span>        TM5[Memory / DB]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Distilled Memory&quot;</span></span>
+<span class="giallo-l"><span>        DM1[Structured Knowledge]</span></span>
+<span class="giallo-l"><span>        DM2[Vector Embeddings]</span></span>
+<span class="giallo-l"><span>        DM3[LRU Eviction]</span></span>
+<span class="giallo-l"><span>        DM4[Max 5000 Entries]</span></span>
+<span class="giallo-l"><span>        DM5[pgvector]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"><span>    SM --&gt; TM --&gt; DM</span></span></code></pre>
+<p><strong>Design Philosophy</strong>: Not all data needs distillation, and not all experiences need vectorization.</p>
+<p>These three layers solve different problems:</p>
+<ul>
+<li><strong>Session Memory</strong>: Current conversation context. Equivalent to a human's "short-term working memory," used and discarded</li>
+<li><strong>Task Memory</strong>: Single execution record. Remembers which tasks the Agent performed and what the inputs/outputs were</li>
+<li><strong>Distilled Memory</strong>: Reusable experience. Extracts structured "problem → solution" knowledge from tasks</li>
+</ul>
+<p>Each layer performs a transformation of <strong>getting smaller, getting better, getting more persistent</strong>.</p>
+<hr />
+<h2 id="4-memorymanager-interface-unified-abstraction">4. MemoryManager Interface: Unified Abstraction</h2>
+<p>The three layers of memory functionality are abstracted into the <code>MemoryManager</code> interface, defined in <code>internal/memory/manager.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MemoryManager</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ── Session Layer ──</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    CreateSession</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> userID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    AddMessage</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> role</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> content</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetMessages</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) ([]</span><span style="color: #F9E2AF;font-style: italic;">Message</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    DeleteSession</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    BuildContext</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> input</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ── Task Layer ──</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    CreateTask</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> userID</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> input</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    UpdateTaskOutput</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> taskID</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> output</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    DistillTask</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> taskID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ── Experience Layer ──</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    StoreDistilledTask</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> taskID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> distilled</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    SearchSimilarTasks</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> query</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> limit</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ── Lifecycle ──</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Start</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Stop</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    SetEventStore</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">store</span><span style="color: #F9E2AF;font-style: italic;"> events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">EventStore</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>This</span><span style="color: #CBA6F7;"> interface</span><span> design has several noteworthy points</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #94E2D5;">**</span><span>Clear Layer Separation</span><span style="color: #94E2D5;">**</span><span style="color: #9399B2;">:</span><span> CreateSession</span><span style="color: #94E2D5;">/</span><span>AddMessage</span><span style="color: #94E2D5;">/</span><span>GetMessages operate on sessions</span><span style="color: #9399B2;">,</span><span> CreateTask</span><span style="color: #94E2D5;">/</span><span>UpdateTaskOutput operate on tasks</span><span style="color: #9399B2;">,</span><span> DistillTask</span><span style="color: #94E2D5;">/</span><span>SearchSimilarTasks operate on experiences</span><span style="color: #9399B2;">.</span><span> Upper</span><span style="color: #94E2D5;">-</span><span>layer code only needs to care about the functionality it requires</span><span style="color: #9399B2;">.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #94E2D5;">**</span><span>Distillation is Explicit</span><span style="color: #94E2D5;">**</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> `DistillTask`</span><span> and</span><span style="color: #A6E3A1;"> `StoreDistilledTask`</span><span> are two independent steps</span><span style="color: #9399B2;">.</span><span> Callers can choose between lightweight extraction or full distillation as needed</span><span style="color: #9399B2;">.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #94E2D5;">**</span><span>Event Sourcing Integration</span><span style="color: #94E2D5;">**</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> `SetEventStore`</span><span> connects the memory system to the event bus</span><span style="color: #9399B2;">,</span><span> emitting events</span><span style="color: #CBA6F7;"> for</span><span> all key operations</span><span style="color: #9399B2;">.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>This</span><span style="color: #CBA6F7;"> interface</span><span> has two implementations</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #94E2D5;">|</span><span> Feature</span><span style="color: #94E2D5;"> |</span><span> memoryManager</span><span style="color: #94E2D5;"> |</span><span> ProductionMemoryManager</span><span style="color: #94E2D5;"> |</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">|---------|--------------|------------------------|</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">|</span><span> Use Case</span><span style="color: #94E2D5;"> |</span><span> Dev</span><span style="color: #94E2D5;">/</span><span>Test</span><span style="color: #94E2D5;">/</span><span>Single Machine</span><span style="color: #94E2D5;"> |</span><span> Production</span><span style="color: #94E2D5;">/</span><span>Multi</span><span style="color: #94E2D5;">-</span><span>tenant</span><span style="color: #94E2D5;">/</span><span>HA</span><span style="color: #94E2D5;"> |</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">|</span><span> Session Storage</span><span style="color: #94E2D5;"> |</span><span> In</span><span style="color: #94E2D5;">-</span><span>memory</span><span style="color: #CBA6F7;"> map</span><span style="color: #94E2D5;"> |</span><span> In</span><span style="color: #94E2D5;">-</span><span>memory cache</span><span style="color: #94E2D5;"> +</span><span> PostgreSQL conversations</span><span style="color: #94E2D5;"> |</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">|</span><span> Task Storage</span><span style="color: #94E2D5;"> |</span><span> In</span><span style="color: #94E2D5;">-</span><span>memory</span><span style="color: #CBA6F7;"> map</span><span style="color: #94E2D5;"> |</span><span> PostgreSQL task_results</span><span style="color: #94E2D5;"> |</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">|</span><span> Distillation Engine</span><span style="color: #94E2D5;"> |</span><span> Optional injection</span><span style="color: #94E2D5;"> |</span><span> WriteBuffer</span><span style="color: #94E2D5;"> +</span><span> async embedding</span><span style="color: #94E2D5;"> |</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">|</span><span> Vector Search</span><span style="color: #94E2D5;"> |</span><span> Cosine similarity calculation</span><span style="color: #94E2D5;"> |</span><span> pgvector hybrid search</span><span style="color: #9399B2;"> (</span><span>vector</span><span style="color: #94E2D5;"> +</span><span> BM25</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> |</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">|</span><span> Multi</span><span style="color: #94E2D5;">-</span><span>tenancy</span><span style="color: #94E2D5;"> |</span><span> Not supported</span><span style="color: #94E2D5;"> |</span><span> TenantGuard</span><span style="color: #94E2D5;"> |</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">|</span><span> Session ID</span><span style="color: #94E2D5;"> |</span><span> Timestamp</span><span style="color: #94E2D5;"> +</span><span> userID</span><span style="color: #94E2D5;"> |</span><span> crypto</span><span style="color: #94E2D5;">/</span><span>rand</span><span style="color: #FAB387;"> 12</span><span> bytes → hex</span><span style="color: #94E2D5;"> |</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #94E2D5;">---</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>## </span><span style="color: #FAB387;">5.</span><span> Session Memory</span><span style="color: #9399B2;">:</span><span> Short</span><span style="color: #94E2D5;">-</span><span>Term Working Memory</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Session Memory is the thinnest layer</span><span style="color: #9399B2;">.</span><span> When an Agent starts a conversation</span><span style="color: #9399B2;">,</span><span> it creates a Session and appends messages one by one</span><span style="color: #9399B2;">.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Implementation in the</span><span style="color: #A6E3A1;"> `internal/memory/context`</span><span> package</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">```go</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">type SessionMemory struct {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    sessions    map[string]*Session</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    mu          sync.RWMutex</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    maxSessions int</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    sessionTTL  time.Duration</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">type Session struct {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    ID        string</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    UserID    string</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    Messages  []Message</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    CreatedAt time.Time</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    TTL       time.Duration</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">}</span></span></code></pre>
+<p>The core behavior is straightforward:</p>
+<ul>
+<li><strong>Message Appending</strong>: <code>AddMessage</code> appends to the Messages slice</li>
+<li><strong>Sliding Window</strong>: <code>BuildContext</code> only returns the last N messages (<code>MaxHistory</code>, default 10)</li>
+<li><strong>TTL Expiry</strong>: A background goroutine periodically scans and deletes sessions exceeding <code>SessionTTL</code> (default 24h)</li>
+<li><strong>Pure In-Memory Storage</strong>: Not persisted, lost on system restart</li>
+</ul>
+<p>There's an interesting detail here: <code>BuildContext</code> uses a sliding window when constructing context, not a simple truncation. This means even if a session has 100 messages, the LLM always receives only the latest 10. Older context naturally gets "forgotten."</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">sm </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">SessionMemory</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> BuildContext</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> input</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    session</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> sm</span><span style="color: #9399B2;">.</span><span>sessions</span><span style="color: #9399B2;">[</span><span>sessionID</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> input</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    session</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RLock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> session</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RUnlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Sliding window: only take the last maxHistory entries</span></span>
+<span class="giallo-l"><span>    start</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>session</span><span style="color: #9399B2;">.</span><span>Messages</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span> sm</span><span style="color: #9399B2;">.</span><span>maxHistory</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        start</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>session</span><span style="color: #9399B2;">.</span><span>Messages</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -</span><span> sm</span><span style="color: #9399B2;">.</span><span>maxHistory</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    relevant</span><span style="color: #94E2D5;"> :=</span><span> session</span><span style="color: #9399B2;">.</span><span>Messages</span><span style="color: #9399B2;">[</span><span>start</span><span style="color: #9399B2;">:]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Concatenate into context string</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> sb</span><span style="color: #F9E2AF;font-style: italic;"> strings</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Builder</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> msg</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> relevant</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        sb</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WriteString</span><span style="color: #9399B2;">(</span><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;%s: %s</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> msg</span><span style="color: #9399B2;">.</span><span>Role</span><span style="color: #9399B2;">,</span><span> msg</span><span style="color: #9399B2;">.</span><span>Content</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    sb</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WriteString</span><span style="color: #9399B2;">(</span><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;user: %s</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> input</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> sb</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">String</span><span style="color: #9399B2;">(),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="6-task-memory-execution-logs">6. Task Memory: Execution Logs</h2>
+<p>Task Memory records the complete information of a single Agent execution: what the user input and what the Agent output.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> TaskEntry</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    TaskID</span><span style="color: #CBA6F7;">    string</span></span>
+<span class="giallo-l"><span>    SessionID</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span>    UserID</span><span style="color: #CBA6F7;">    string</span></span>
+<span class="giallo-l"><span>    Input</span><span style="color: #CBA6F7;">     string</span></span>
+<span class="giallo-l"><span>    Output</span><span style="color: #CBA6F7;">    string</span></span>
+<span class="giallo-l"><span>    CreatedAt</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span></span>
+<span class="giallo-l"><span>    TTL</span><span style="color: #F9E2AF;font-style: italic;">       time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The key method of the task layer is <code>Distill()</code> — it's the entry point of the entire distillation pipeline:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">tm </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">TaskMemory</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Distill</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> taskID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    entry</span><span style="color: #9399B2;">,</span><span> exists</span><span style="color: #94E2D5;"> :=</span><span> tm</span><span style="color: #9399B2;">.</span><span>tasks</span><span style="color: #9399B2;">[</span><span>taskID</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>exists</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> ErrTaskNotFound</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    task</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        TaskID</span><span style="color: #9399B2;">:</span><span> entry</span><span style="color: #9399B2;">.</span><span>TaskID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        Payload</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">            &quot;input&quot;</span><span style="color: #9399B2;">:</span><span>   entry</span><span style="color: #9399B2;">.</span><span>Input</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">            &quot;output&quot;</span><span style="color: #9399B2;">:</span><span>  entry</span><span style="color: #9399B2;">.</span><span>Output</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">            &quot;user_id&quot;</span><span style="color: #9399B2;">:</span><span> entry</span><span style="color: #9399B2;">.</span><span>UserID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        },</span></span>
+<span class="giallo-l"><span>        CreatedAt</span><span style="color: #9399B2;">:</span><span> entry</span><span style="color: #9399B2;">.</span><span>CreatedAt</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> task</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This <code>Distill()</code> itself is very lightweight — it just packages the raw data into <code>models.Task</code>. The real "distillation" (refinement, structuring, vectorization) happens in the upper-layer calls.</p>
+<p>In <code>memoryManager</code> (the in-memory version), the complete flow of <code>DistillTask</code> is:</p>
+<ol>
+<li>Call <code>taskMemory.Distill()</code> to get raw data</li>
+<li>Emit <code>EventMemoryDistilled</code> event</li>
+<li>Return <code>*models.Task</code></li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">memoryManager</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> DistillTask</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> taskID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RLock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> m</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RUnlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> m</span><span style="color: #9399B2;">.</span><span>stopped</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> ErrMemoryStopped</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    task</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span>taskMemory</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Distill</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">emitEvent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> events</span><span style="color: #9399B2;">.</span><span>EventMemoryDistilled</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;task_id&quot;</span><span style="color: #9399B2;">:</span><span>      taskID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;session_id&quot;</span><span style="color: #9399B2;">:</span><span>   task</span><span style="color: #9399B2;">.</span><span>Metadata</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;session_id&quot;</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;input_count&quot;</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;">  len</span><span style="color: #9399B2;">(</span><span>task</span><span style="color: #9399B2;">.</span><span>Payload</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;input&quot;</span><span style="color: #9399B2;">].(</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">)),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;output_count&quot;</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>task</span><span style="color: #9399B2;">.</span><span>Payload</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;output&quot;</span><span style="color: #9399B2;">].(</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">)),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> task</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="7-distilled-memory-experience-refinement">7. Distilled Memory: Experience Refinement</h2>
+<p>This is the most valuable part of the entire memory system. After distillation, the data is no longer raw messages, but structured <code>Experience</code>.</p>
+<p>Defined in <code>internal/memory/distillation/service.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Experience</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">               string</span></span>
+<span class="giallo-l"><span>    Problem</span><span style="color: #CBA6F7;">          string</span><span style="color: #9399B2;font-style: italic;">           // The user&#39;s problem/request</span></span>
+<span class="giallo-l"><span>    Solution</span><span style="color: #CBA6F7;">         string</span><span style="color: #9399B2;font-style: italic;">           // The Agent&#39;s solution</span></span>
+<span class="giallo-l"><span>    Confidence</span><span style="color: #CBA6F7;">       float64</span><span style="color: #9399B2;font-style: italic;">          // Confidence [0, 1]</span></span>
+<span class="giallo-l"><span>    ExtractionMethod</span><span style="color: #F9E2AF;font-style: italic;"> ExtractionMethod</span><span style="color: #9399B2;font-style: italic;"> // Extraction method: direct / summary / pattern</span></span>
+<span class="giallo-l"><span>    TenantID</span><span style="color: #CBA6F7;">         string</span></span>
+<span class="giallo-l"><span>    UserID</span><span style="color: #CBA6F7;">           string</span></span>
+<span class="giallo-l"><span>    Vector</span><span style="color: #9399B2;">           []</span><span style="color: #CBA6F7;">float64</span><span style="color: #9399B2;font-style: italic;">        // Vector embedding</span></span>
+<span class="giallo-l"><span>    Metadata</span><span style="color: #CBA6F7;">         map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span></span>
+<span class="giallo-l"><span>    CreatedAt</span><span style="color: #F9E2AF;font-style: italic;">        time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ExtractionMethod</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ExtractionDirect</span><span style="color: #F9E2AF;font-style: italic;">  ExtractionMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;direct&quot;</span><span style="color: #9399B2;font-style: italic;">   // Direct extraction from task</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ExtractionSummary</span><span style="color: #F9E2AF;font-style: italic;"> ExtractionMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;summary&quot;</span><span style="color: #9399B2;font-style: italic;">  // LLM summarization and refinement</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ExtractionPattern</span><span style="color: #F9E2AF;font-style: italic;"> ExtractionMethod</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;pattern&quot;</span><span style="color: #9399B2;font-style: italic;">  // Pattern matching</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>The structure of</span><span style="color: #A6E3A1;"> `Experience`</span><span> embodies three important design decisions</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #FAB387;">1.</span><span style="color: #94E2D5;"> **</span><span>Problem</span><span style="color: #94E2D5;"> +</span><span> Solution Separation</span><span style="color: #94E2D5;">**</span><span style="color: #9399B2;">:</span><span> This is the most valuable form of knowledge</span><span style="color: #9399B2;">.</span><span> Not</span><span style="color: #A6E3A1;"> &quot;what the user said,&quot;</span><span> but</span><span style="color: #A6E3A1;"> &quot;what problem the user encountered and how the Agent solved it&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">2.</span><span style="color: #94E2D5;"> **</span><span>Confidence Score</span><span style="color: #94E2D5;">**</span><span style="color: #9399B2;">:</span><span> Allows the retrieval system to filter results by quality</span><span style="color: #9399B2;">.</span><span> LLM direct extraction has higher confidence</span><span style="color: #9399B2;">,</span><span> pattern matching has lower</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">3.</span><span style="color: #94E2D5;"> **</span><span>ExtractionMethod Traceability</span><span style="color: #94E2D5;">**</span><span style="color: #9399B2;">:</span><span> Knowing where an experience came from facilitates subsequent evaluation and improvement</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>The</span><span style="color: #A6E3A1;"> `Distiller`</span><span> engine takes a set of conversation messages and outputs a set of</span><span style="color: #A6E3A1;"> `Experience`</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">```go</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">type Distiller struct {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    config   DistillationConfig</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    embedder EmbeddingService</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    expRepo  ExperienceRepository</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">func (d *Distiller) DistillConversation(</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    ctx context.Context,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    taskID string,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    messages []Message,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    tenantID, userID string,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">) ([]*Memory, error)</span></span></code></pre>
+<p>Each <code>Memory</code> is converted into an <code>Experience</code> and persisted in the experience repository, with a vector embedding generated simultaneously.</p>
+<hr />
+<h2 id="8-two-distillation-paths">8. Two Distillation Paths</h2>
+<p>ares has two parallel distillation paths. This is not a design compromise, but a layered strategy.</p>
+<p><strong>Path One: Legacy DistillTask (Lightweight Extraction)</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>DistillTask(taskID)</span></span>
+<span class="giallo-l"><span>  → taskMemory.Distill(taskID)    // Package raw data</span></span>
+<span class="giallo-l"><span>  → emit EventMemoryDistilled      // Notify downstream</span></span>
+<span class="giallo-l"><span>  → return *models.Task</span></span></code></pre>
+<p>This path is an O(1) in-memory operation that doesn't involve LLM calls or vector generation. Suitable for high-frequency, low-value tasks — like "check the weather," interactions that don't need long-term memory.</p>
+<p><strong>Path Two: Distiller Engine (Full Distillation)</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>StoreDistilledTask(taskID, distilled)</span></span>
+<span class="giallo-l"><span>  → Extract input/output/user_id from distilled.Payload</span></span>
+<span class="giallo-l"><span>  → Construct []distillation.Message</span></span>
+<span class="giallo-l"><span>  → distiller.DistillConversation(...)</span></span>
+<span class="giallo-l"><span>      → Call LLM for summarization (optional)</span></span>
+<span class="giallo-l"><span>      → Call embedder for vector generation</span></span>
+<span class="giallo-l"><span>      → Return []*Memory</span></span>
+<span class="giallo-l"><span>  → Iterate Memory → Create Experience</span></span>
+<span class="giallo-l"><span>  → expRepo.Create(experience)</span></span></code></pre>
+<p>This path involves LLM calls + vector generation, which is more expensive. Suitable for low-frequency, high-value tasks — like "help me refactor the entire module," the kind of experience worth remembering.</p>
+<p>Callers can choose as needed: high-value tasks go through full distillation, ordinary tasks only do lightweight extraction. This design avoids expensive embedding calls for every single message.</p>
+<hr />
+<h2 id="9-productionmemorymanager-production-grade-implementation">9. ProductionMemoryManager: Production-Grade Implementation</h2>
+<p><code>ProductionMemoryManager</code> is the default implementation for production environments. It's not just a CRUD wrapper, but a data engine with an asynchronous embedding pipeline.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ProductionMemoryManager</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    dbPool</span><span style="color: #94E2D5;">            *</span><span style="color: #F9E2AF;font-style: italic;">postgres</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Pool</span></span>
+<span class="giallo-l"><span>    tenantGuard</span><span style="color: #94E2D5;">       *</span><span style="color: #F9E2AF;font-style: italic;">TenantGuard</span></span>
+<span class="giallo-l"><span>    retrievalService</span><span style="color: #94E2D5;">  *</span><span style="color: #F9E2AF;font-style: italic;">RetrievalService</span></span>
+<span class="giallo-l"><span>    embeddingClient</span><span style="color: #94E2D5;">   *</span><span style="color: #F9E2AF;font-style: italic;">EmbeddingClient</span></span>
+<span class="giallo-l"><span>    writeBuffer</span><span style="color: #94E2D5;">       *</span><span style="color: #F9E2AF;font-style: italic;">WriteBuffer</span></span>
+<span class="giallo-l"><span>    conversationRepo</span><span style="color: #94E2D5;">  *</span><span style="color: #F9E2AF;font-style: italic;">ConversationRepository</span></span>
+<span class="giallo-l"><span>    taskResultRepo</span><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">TaskResultRepository</span></span>
+<span class="giallo-l"><span>    sessionCache</span><span style="color: #94E2D5;">      *</span><span style="color: #F9E2AF;font-style: italic;">SessionCache</span><span style="color: #9399B2;font-style: italic;">   // In-memory LRU cache</span></span>
+<span class="giallo-l"><span>    config</span><span style="color: #F9E2AF;font-style: italic;">            MemoryConfig</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each component has its own responsibility:</p>
+<table><thead><tr><th>Component</th><th>Responsibility</th></tr></thead><tbody>
+<tr><td>dbPool</td><td>PostgreSQL connection pool</td></tr>
+<tr><td>tenantGuard</td><td>Multi-tenant isolation, ensuring one tenant can't see another tenant's data</td></tr>
+<tr><td>retrievalService</td><td>Hybrid search engine (vector + BM25)</td></tr>
+<tr><td>embeddingClient</td><td>Calls external embedding API to generate vectors</td></tr>
+<tr><td>writeBuffer</td><td>Write buffer + async embedding scheduling</td></tr>
+<tr><td>conversationRepo</td><td>Operates conversations table (no vectors, history tracking only)</td></tr>
+<tr><td>taskResultRepo</td><td>Operates task_results table (no vectors)</td></tr>
+<tr><td>sessionCache</td><td>In-memory LRU cache, reduces DB queries for hot sessions</td></tr>
+</tbody></table>
+<p><strong>Session ID Generation Strategy</strong>: The production version uses <code>crypto/rand</code> instead of timestamps to avoid timing attacks and ID prediction:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> generateSessionID</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    b</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">byte</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 12</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> _</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> rand</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">(</span><span>b</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;session_%d&quot;</span><span style="color: #9399B2;">,</span><span> time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Now</span><span style="color: #9399B2;">().</span><span style="color: #89B4FA;font-style: italic;">UnixNano</span><span style="color: #9399B2;">())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #A6E3A1;"> &quot;sess_&quot;</span><span style="color: #94E2D5;"> +</span><span> hex</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">EncodeToString</span><span style="color: #9399B2;">(</span><span>b</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Conversations are NOT embedded with vectors</strong> — this is the most important design principle:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Note: This stores conversations WITHOUT vector embedding (per design standard).</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// conversations table is for history tracking only, retrieval uses knowledge/experience tables.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Conversation history only serves the purpose of</span><span style="color: #A6E3A1;"> &quot;building context for the current session,&quot;</span><span> while experience retrieval uses its own independent experience table</span><span style="color: #9399B2;">.</span><span> Mixing the two in the same vector space would only reduce retrieval precision</span><span style="color: #9399B2;">.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #94E2D5;">---</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>## </span><span style="color: #FAB387;">10.</span><span> Async Embedding Pipeline</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>This is the performance heart of the entire distillation system</span><span style="color: #9399B2;">.</span><span> Let</span><span style="color: #A6E3A1;">&#39;s look at the data flow first:</span></span>
+<span class="giallo-l"></span></code></pre>
+<ol>
+<li>Write to DB with embedding_status = 'pending'</li>
+<li>Write to embedding_queue with dedupe_key</li>
+<li>Background Worker processes embedding tasks</li>
+<li>Worker updates DB with embedding and status = 'completed'</li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"></span>
+<span class="giallo-l"><span>In `StoreDistilledTask`, data flows through the WriteBuffer:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>```go</span></span>
+<span class="giallo-l"><span>writeItem := &amp;postgres.WriteItem{</span></span>
+<span class="giallo-l"><span>    TenantID: tenantID,</span></span>
+<span class="giallo-l"><span>    Table:    &quot;experiences_1024&quot;,</span></span>
+<span class="giallo-l"><span>    Content:  fmt.Sprintf(&quot;%v&quot;, distilled.Payload),</span></span>
+<span class="giallo-l"><span>    Metadata: map[string]interface{}{</span></span>
+<span class="giallo-l"><span>        &quot;output&quot;:   &quot;&quot;,</span></span>
+<span class="giallo-l"><span>        &quot;type&quot;:     &quot;solution&quot;,</span></span>
+<span class="giallo-l"><span>        &quot;agent_id&quot;: &quot;style-agent&quot;,</span></span>
+<span class="giallo-l"><span>    },</span></span>
+<span class="giallo-l"><span>}</span></span>
+<span class="giallo-l"><span>if err := m.writeBuffer.Write(ctx, writeItem); err != nil {</span></span>
+<span class="giallo-l"><span>    return errors.Wrap(err, &quot;write to buffer&quot;)</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>Why asynchronous? Because embedding calls (especially calling external APIs over HTTP) typically have 100ms-500ms latency. If <code>StoreDistilledTask</code> waited synchronously for embedding to complete, the entire Agent task pipeline would be blocked.</p>
+<p>Through the decoupling of <strong>WriteBuffer + EmbeddingQueue + Background Worker</strong>:</p>
+<ul>
+<li><strong>Business write O(1)</strong>: Returns immediately after writing to the buffer, no blocking</li>
+<li><strong>Async processing</strong>: Embedding is processed in batches in the background</li>
+<li><strong>Failure retry</strong>: Data is not lost when the embedding service is temporarily unavailable</li>
+<li><strong>Deduplication protection</strong>: <code>dedupe_key</code> prevents the same data from being embedded multiple times</li>
+</ul>
+<p>This is a classic CQRS variant — write operations don't wait for the read model to be ready. It's particularly suitable for memory systems: users don't need to immediately search for results after calling <code>StoreDistilledTask</code>; brief eventual consistency is acceptable.</p>
+<hr />
+<h2 id="11-vector-retrieval-similar-experience-recall">11. Vector Retrieval: Similar Experience Recall</h2>
+<p>When the Agent needs to reference past experiences, <code>SearchSimilarTasks</code> performs a hybrid search.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ProductionMemoryManager</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> SearchSimilarTasks</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    query</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    limit</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 1. Generate query vector</span></span>
+<span class="giallo-l"><span>    queryVector</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span>embedder</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">EmbedWithPrefix</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> query</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;query:&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Wrap</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;embed query&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 2. Configure retrieval plan — only search experience</span></span>
+<span class="giallo-l"><span>    searchRequest</span><span style="color: #9399B2;">.</span><span>Plan</span><span style="color: #9399B2;">.</span><span>SearchExperience</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span>    searchRequest</span><span style="color: #9399B2;">.</span><span>Plan</span><span style="color: #9399B2;">.</span><span>SearchKnowledge</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span>    searchRequest</span><span style="color: #9399B2;">.</span><span>Plan</span><span style="color: #9399B2;">.</span><span>SearchTools</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span>    searchRequest</span><span style="color: #9399B2;">.</span><span>Plan</span><span style="color: #9399B2;">.</span><span>ExperienceWeight</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 1.0</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 3. Execute hybrid search</span></span>
+<span class="giallo-l"><span>    results</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span>retrievalService</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Search</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> searchRequest</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Wrap</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;search experiences&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 4. Convert back to models.Task format</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> tasks</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> results</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> result</span><span style="color: #9399B2;">.</span><span>Source</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;experience&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            task</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">models</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Task</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>                TaskID</span><span style="color: #9399B2;">:</span><span>   result</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                Payload</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;">  map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                    &quot;input&quot;</span><span style="color: #9399B2;">:</span><span>  result</span><span style="color: #9399B2;">.</span><span>Content</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                    &quot;output&quot;</span><span style="color: #9399B2;">:</span><span> result</span><span style="color: #9399B2;">.</span><span>Metadata</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;output&quot;</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                    &quot;score&quot;</span><span style="color: #9399B2;">:</span><span>  result</span><span style="color: #9399B2;">.</span><span>Score</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                },</span></span>
+<span class="giallo-l"><span>                Priority</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">(</span><span>result</span><span style="color: #9399B2;">.</span><span>Score</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 100</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span>            tasks</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>tasks</span><span style="color: #9399B2;">,</span><span> task</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> tasks</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The key <code>RetrievalPlan</code> struct makes the search strategy highly configurable:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> RetrievalPlan</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    SearchExperience</span><span style="color: #CBA6F7;"> bool</span></span>
+<span class="giallo-l"><span>    SearchKnowledge</span><span style="color: #CBA6F7;">  bool</span></span>
+<span class="giallo-l"><span>    SearchTools</span><span style="color: #CBA6F7;">      bool</span></span>
+<span class="giallo-l"><span>    ExperienceWeight</span><span style="color: #CBA6F7;"> float64</span></span>
+<span class="giallo-l"><span>    KnowledgeWeight</span><span style="color: #CBA6F7;">  float64</span></span>
+<span class="giallo-l"><span>    ToolsWeight</span><span style="color: #CBA6F7;">      float64</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">`RetrievalService.Search()`</span><span> internally implements a hybrid search — running both</span><span style="color: #94E2D5;"> **</span><span>pgvector cosine distance</span><span style="color: #94E2D5;">**</span><span> and</span><span style="color: #94E2D5;"> **</span><span>BM25 full</span><span style="color: #94E2D5;">-</span><span>text search</span><span style="color: #94E2D5;">**</span><span> simultaneously</span><span style="color: #9399B2;">,</span><span> merging results with weights</span><span style="color: #9399B2;">.</span><span> This is the best practice in production</span><span style="color: #9399B2;">:</span><span> pure vector retrieval performs poorly</span><span style="color: #CBA6F7;"> for</span><span> new terms and niche words</span><span style="color: #9399B2;">,</span><span> and combining it with BM25 provides complementary coverage</span><span style="color: #9399B2;">.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>The underlying</span><span style="color: #A6E3A1;"> `VectorStore`</span><span style="color: #CBA6F7;"> interface</span><span> is extremely concise</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">```go</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">type VectorStore interface {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    Search(ctx context.Context, table string, embedding []float64, limit int) ([]*SearchResult, error)</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    AddEmbedding(ctx context.Context, table, id string, embedding []float64, metadata map[string]any) error</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    CreateCollection(ctx context.Context, name string, dimension int) error</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">}</span></span></code></pre>
+<p>The presence of the <code>table</code> parameter means a single VectorStore instance can manage multiple collections — this provides the foundation for multi-tenant isolation: each tenant can have their own experience/knowledge tables, all sharing the same pgvector instance.</p>
+<hr />
+<h2 id="12-event-sourcing-and-memory">12. Event Sourcing and Memory</h2>
+<p>The MemoryManager connects to the event sourcing system via <code>SetEventStore</code>. Key event types:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventMemoryDistilled</span><span style="color: #F9E2AF;font-style: italic;"> EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;memory.distilled&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventSessionCreated</span><span style="color: #F9E2AF;font-style: italic;">  EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;session.created&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventMessageAdded</span><span style="color: #F9E2AF;font-style: italic;">    EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;message.added&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p><code>emitEvent()</code> is called at all key operation points:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// session creation</span></span>
+<span class="giallo-l"><span>m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">emitEvent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> events</span><span style="color: #9399B2;">.</span><span>EventSessionCreated</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;session_id&quot;</span><span style="color: #9399B2;">:</span><span> sessionID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;user_id&quot;</span><span style="color: #9399B2;">:</span><span>    userID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">})</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// message added</span></span>
+<span class="giallo-l"><span>m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">emitEvent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> events</span><span style="color: #9399B2;">.</span><span>EventMessageAdded</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;session_id&quot;</span><span style="color: #9399B2;">:</span><span> sessionID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;role&quot;</span><span style="color: #9399B2;">:</span><span>       role</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">})</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// distillation complete</span></span>
+<span class="giallo-l"><span>m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">emitEvent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> events</span><span style="color: #9399B2;">.</span><span>EventMemoryDistilled</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;task_id&quot;</span><span style="color: #9399B2;">:</span><span>      taskID</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;input_count&quot;</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;">  len</span><span style="color: #9399B2;">(</span><span>inputStr</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;output_count&quot;</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>memories</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">})</span></span></code></pre>
+<p>The purpose of events is not just auditing. In ares, they form the foundation of Runtime Manager <strong>cognitive recovery</strong> (covered in the next section).</p>
+<hr />
+<h2 id="13-runtime-cognitive-recovery">13. Runtime Cognitive Recovery</h2>
+<p>This is the most valuable orchestration scenario for the memory system. When an Agent crashes, the Runtime Manager executes <code>RestoreAgent</code>, recovering memory in two steps.</p>
+<p><strong>Step One: Operational Recovery</strong></p>
+<p><code>recoverAgentState</code> reads events from the EventStore and calls <code>StatefulAgent.RestoreState</code> to rebuild key state such as session_id:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Manager</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> recoverAgentState</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    factory</span><span style="color: #F9E2AF;font-style: italic;"> AgentFactory</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Agent</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    newAgent</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> factory</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> newAgent</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;runtime: factory returned nil for agent %s&quot;</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Replay events</span></span>
+<span class="giallo-l"><span>    evts</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">replayEvents</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> sa</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> newAgent</span><span style="color: #9399B2;">.(</span><span style="color: #F9E2AF;font-style: italic;">base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">StatefulAgent</span><span style="color: #9399B2;">);</span><span> ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Rebuild state from events</span></span>
+<span class="giallo-l"><span>        state</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> buildStateFromEvents</span><span style="color: #9399B2;">(</span><span>evts</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Cognitive recovery: load conversation history</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> m</span><span style="color: #9399B2;">.</span><span>memManager</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            cognitiveState</span><span style="color: #94E2D5;"> :=</span><span> m</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">buildCognitiveState</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">,</span><span> state</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            for</span><span> k</span><span style="color: #9399B2;">,</span><span> v</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> cognitiveState</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                state</span><span style="color: #9399B2;">[</span><span>k</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> v</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Restore state</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>state</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> sa</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RestoreState</span><span style="color: #9399B2;">(</span><span>state</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                slog</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Warn</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;runtime: RestoreState failed&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                    &quot;agent_id&quot;</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;error&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Replay events to agent</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>evts</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> sa</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ReplayEvents</span><span style="color: #9399B2;">(</span><span>evts</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                slog</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Warn</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;runtime: ReplayEvents failed&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                    &quot;agent_id&quot;</span><span style="color: #9399B2;">,</span><span> agentID</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;error&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> newAgent</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #94E2D5;">**</span><span>Step Two</span><span style="color: #9399B2;">:</span><span> Cognitive Recovery</span><span style="color: #94E2D5;">**</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">`buildCognitiveState`</span><span> retrieves recent session and conversation history through the MemoryManager</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">```go</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">func (m *Manager) buildCognitiveState(</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    ctx context.Context,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    agentID string,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    operationalState map[string]any,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">) map[string]any {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    state := make(map[string]any)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    // Get session_id from operational state or checkpoint</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    sessionID, _ := operationalState[&quot;session_id&quot;].(string)</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    if sessionID == &quot;&quot; {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        sessionCtx, sessionCancel := context.WithTimeout(ctx, 5*time.Second)</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        sid, err := m.memManager.GetLatestSessionForLeader(sessionCtx, agentID)</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        sessionCancel()</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        if err != nil {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">            return state</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        }</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        sessionID = sid</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    if sessionID == &quot;&quot; {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        return state</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    // Load conversation history (5 second timeout protection)</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    msgCtx, msgCancel := context.WithTimeout(ctx, 5*time.Second)</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    defer msgCancel()</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    messages, err := m.memManager.GetMessages(msgCtx, sessionID)</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    if err != nil {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        return state</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    if len(messages) &gt; 0 {</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        state[&quot;session_id&quot;] = sessionID</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        state[&quot;conversation_history&quot;] = messages</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    }</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    return state</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">}</span></span></code></pre>
+<p>This mechanism means: when an Agent crashes and is restarted, it doesn't just rebuild the connection pool and timers — it also knows "what were we talking about." This is the cognitive layer of ares's self-healing capability. The 5-second timeout acts as a safety net, preventing a slow DB from blocking the recovery flow.</p>
+<hr />
+<h2 id="14-configuration-system">14. Configuration System</h2>
+<p>The memory system's configuration is exposed at the YAML layer, while runtime parameters are controlled by code constants:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #89B4FA;">memory</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  enabled</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  session</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    enabled</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    max_history</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 50</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  user_profile</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    enabled</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    storage</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> postgres</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    vector_db</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  task_distillation</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    enabled</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    storage</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> postgres</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    vector_store</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    prompt</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;Please summarize the user&#39;s requirements and technical solution, extract reusable patterns&quot;</span></span></code></pre>
+<p>Runtime configuration:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MemoryConfig</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Enabled</span><span style="color: #CBA6F7;">          bool</span><span style="color: #A6E3A1;">          `yaml:&quot;enabled&quot;`</span></span>
+<span class="giallo-l"><span>    Storage</span><span style="color: #CBA6F7;">          string</span><span style="color: #A6E3A1;">        `yaml:&quot;storage&quot;`</span><span style="color: #9399B2;font-style: italic;">       // memory / postgres</span></span>
+<span class="giallo-l"><span>    MaxHistory</span><span style="color: #CBA6F7;">       int</span><span style="color: #A6E3A1;">           `yaml:&quot;max_history&quot;`</span><span style="color: #9399B2;font-style: italic;">   // Default 10</span></span>
+<span class="giallo-l"><span>    MaxSessions</span><span style="color: #CBA6F7;">      int</span><span style="color: #9399B2;font-style: italic;">                                 // Default 100</span></span>
+<span class="giallo-l"><span>    MaxTasks</span><span style="color: #CBA6F7;">         int</span><span style="color: #9399B2;font-style: italic;">                                 // Default 1000</span></span>
+<span class="giallo-l"><span>    MaxDistilledTasks</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;font-style: italic;">                                // Default 5000</span></span>
+<span class="giallo-l"><span>    SessionTTL</span><span style="color: #F9E2AF;font-style: italic;">       time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">                       // Default 24h</span></span>
+<span class="giallo-l"><span>    TaskTTL</span><span style="color: #F9E2AF;font-style: italic;">          time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">                       // Default 7d</span></span>
+<span class="giallo-l"><span>    VectorDim</span><span style="color: #CBA6F7;">        int</span><span style="color: #9399B2;font-style: italic;">                                 // Default 128</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>YAML exposes business</span><span style="color: #94E2D5;">-</span><span>semantic switches</span><span style="color: #9399B2;"> (</span><span>session</span><span style="color: #94E2D5;">/</span><span>profile</span><span style="color: #94E2D5;">/</span><span>distill</span><span style="color: #9399B2;">),</span><span> code constants set performance</span><span style="color: #94E2D5;">-</span><span>related thresholds</span><span style="color: #9399B2;"> (</span><span>TTL</span><span style="color: #94E2D5;">/</span><span>Max</span><span style="color: #9399B2;">),</span><span> and environment variables override sensitive information</span><span style="color: #9399B2;"> (</span><span>DB passwords</span><span style="color: #9399B2;">,</span><span> etc</span><span style="color: #9399B2;">.).</span><span> The three configuration layers don</span><span style="color: #A6E3A1;">&#39;t conflict with each other.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">---</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">## 15. Design Tradeoffs and Evolution</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">After reviewing the entire memory system, there are several design decisions worth discussing in depth:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">### 1. Conversations Are Not Vector-Embedded</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">This was a design point confirmed through repeated deliberation. The comment on `ProductionMemoryManager.AddMessage` explicitly states that the conversations table is only for history tracking, and retrieval uses the independent experience table.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">Rationale: **Conversation history is linear narrative, experience is networked knowledge.** The former only needs chronological ordering, the latter needs semantic retrieval. Mixing the two in the same vector space would only reduce retrieval precision.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">### 2. Two Distillation Paths Coexisting</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">The coexistence of the legacy `DistillTask` and the new `Distiller` engine is not a design compromise, but a layered strategy.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">- `DistillTask`: O(1) in-memory operation, no LLM calls or vector generation</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">- `StoreDistilledTask + Distiller`: Involves LLM calls + vector generation</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">Business logic can choose which path to take based on task value — high-frequency low-value tasks take the lightweight path, low-frequency high-value tasks take the full distillation path.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">### 3. Session ID Generation Strategy Evolution</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">- Dev version: `session_{userID}_{timestamp}` — simple and readable</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">- Production version: `sess_{12 bytes crypto/rand hex}` — unpredictable</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">This reflects the evolution of security awareness. Predictable session IDs are a potential information leak vector in multi-tenant environments.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">### 4. WriteBuffer Async Strategy</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">Write to buffer first → batch flush to DB → async embedding → failure retry. This is a classic CQRS variant.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">Users don&#39;</span><span>t need to immediately search</span><span style="color: #CBA6F7;"> for</span><span> results after calling</span><span style="color: #A6E3A1;"> `StoreDistilledTask`</span><span style="color: #9399B2;">;</span><span> brief eventual consistency</span><span style="color: #9399B2;"> (</span><span>sub</span><span style="color: #94E2D5;">-</span><span>second</span><span style="color: #9399B2;">)</span><span> is acceptable</span><span style="color: #9399B2;">.</span><span> But</span><span style="color: #CBA6F7;"> if</span><span> waiting synchronously</span><span style="color: #CBA6F7;"> for</span><span> embedding</span><span style="color: #9399B2;">,</span><span> users would have to wait hundreds of milliseconds before continuing</span><span style="color: #9399B2;">.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>### </span><span style="color: #FAB387;">5.</span><span> VectorStore</span><span style="color: #A6E3A1;">&#39;s Minimal Design</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">Three methods, one `table` parameter. This allows a single VectorStore instance to manage multiple collections — multi-tenancy just requires sharing the same pgvector instance, isolated by table name.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">### 6. Three-Layer TTL Strategy</span></span>
+<span class="giallo-l"></span></code></pre>
+<p>Session Memory: 24h → Pure in-memory, lost on restart
+Task Memory/DB: 7d → Persistable, periodic cleanup
+Distilled Memory: LRU eviction (Max=5000) → Persistent, evicted by capacity</p>
+<p>TTL increases layer by layer, value density increases layer by layer. Session data is voluminous but short-lived, while Experience data is compact but needs to be retained long-term.</p>
+<hr />
+<h2 id="16-let-s-be-honest-is-this-design-too-heavy">16. Let's Be Honest: Is This Design Too Heavy?</h2>
+<p>Alright, enough praise. Let's be real for a moment.</p>
+<p>Now look back at this memory system — MemoryManager interface, three-layer architecture, async embedding pipeline, event sourcing, cognitive recovery… how many lines of code does all that add up to? Just under <code>internal/memory/</code> there are over forty files. You might be thinking:</p>
+<blockquote>
+<p><strong>Just to remember what the Agent did before, does it really need to be this complicated?</strong></p>
+</blockquote>
+<p>Honestly, fair point.</p>
+<h3 id="this-design-is-heavy">This Design IS Heavy</h3>
+<p>Seven components working together: SessionMemory, TaskMemory, Distiller, WriteBuffer, EmbeddingClient, RetrievalService, EventStore. Each has its own configuration, its own lifecycle, its own error handling. Deploying requires PostgreSQL, pgvector, and an embedding service. Local development? docker-compose with at least three containers.</p>
+<p>For most scenarios — a single-machine Agent, a few dozen calls a day, no need for cross-session experience reuse — this is complete overkill. A <code>map[string][]Message</code> + a periodic cleanup goroutine would suffice. That's how I ran it early on.</p>
+<h3 id="but-there-s-a-reason-it-s-heavy">But There's a Reason It's Heavy</h3>
+<p>This design isn't built for "a few dozen calls a day." It serves these scenarios:</p>
+<ol>
+<li><strong>Multi-tenant production deployment</strong>: One Agent instance serving hundreds of users, each with their own sessions and experience stores. Without TenantGuard, data would leak</li>
+<li><strong>Long-running operation</strong>: Agents running for weeks or months without restart. Without event sourcing, a single crash means amnesia</li>
+<li><strong>Cross-session experience reuse</strong>: This is the core. If your Agent starts each conversation from scratch — then you really don't need this. But if it needs to "learn something from the past hundred conversations," you need a place to store structured experiences, a retrieval method to find the most relevant ones, and an eviction strategy to prevent unbounded growth</li>
+</ol>
+<p>So "heavy" in this design isn't a bug, it's a feature. It pre-pays for problems that might arise in the future — the price is writing a few more layers of abstraction today.</p>
+<h3 id="a-few-things-i-m-not-happy-about-either">A Few Things I'm Not Happy About Either</h3>
+<p>There are some areas I'm not satisfied with either:</p>
+<ul>
+<li><strong>Configuration is too scattered</strong>: YAML switches, code constants, environment variables — three layers covering different dimensions of the same thing. New users need to understand all three to get parameters right</li>
+<li><strong>Async embedding's eventual consistency</strong>: Writes aren't searchable immediately. For most scenarios this is fine, but when a user asks "what did you just learn?", you have to choose between consistency and latency. I chose latency, but it's not without cost</li>
+<li><strong>Conflict detection is too conservative</strong>: Only cosine &gt; 0.85 is considered a conflict. In practice, many semantically similar experiences with different surface forms get stored as two separate entries. Recall may produce duplicates or contradictions. I set PrecisionOverRecall = true as a safety net, but this parameter should be user-configurable</li>
+<li><strong>Gap between in-memory and production versions</strong>: <code>memoryManager</code> only has basic functionality, <code>ProductionMemoryManager</code> is the complete one. Developing with the in-memory version is great, but going to production reveals a bunch of missing features — with no smooth "medium option" in between</li>
+</ul>
+<h3 id="if-you-want-to-use-this">If You Want to Use This</h3>
+<p>My advice: <strong>Don't go all-in from the start.</strong></p>
+<ol>
+<li>Start with just Session Memory + Task Memory, enable <code>BuildContext</code>'s sliding window</li>
+<li>If you find the Agent repeating the same mistakes, turn on Distillation with a simple embedding service</li>
+<li>When user count grows and crashes become frequent, add EventStore and cognitive recovery</li>
+</ol>
+<p>This architecture is designed for <strong>a la carte usage</strong> — you don't need to initialize things you don't use. The interfaces are there, but empty implementations won't waste any of your resources.</p>
+<p>Alright, now that I've admitted the shortcomings, let me still share some hard data.</p>
+<hr />
+<h2 id="17-show-me-the-numbers-how-much-does-distillation-actually-save">17. Show Me the Numbers: How Much Does Distillation Actually Save?</h2>
+<p>After all that architecture and design talk, let's look at some real data. I wrote a benchmark for the distillation pipeline, simulating a typical Agent operations conversation scenario — the user repeatedly asks about database slowness, API errors, configuration issues, and the Agent troubleshoots them one by one.</p>
+<p>The test uses 20 sets of real Problem → Solution pairs (e.g., "Database query timeout → Checked indexes, found missing composite index, created it"), with 15% of messages containing follow-up questions, random sampling per round. The Tokenizer uses character-level estimation (English: 4 chars/token, Chinese: 1.5 chars/token).</p>
+<blockquote>
+<p><strong>On data authenticity</strong>: All token counts in the scenarios below have been <strong>verified through real LLM calls (sensenova-6.7-flash-lite)</strong>, not just estimation. We recorded both the estimated values from <code>estimateTokens()</code> and the actual token counts returned by the LLM, with a deviation rate of approximately <strong>22.3%</strong> (see decoding accuracy verification section for details). The conclusions don't change qualitatively, but the data is more credible.</p>
+</blockquote>
+<h3 id="scenario-1-un-truncated-full-history-the-most-critical-metric">Scenario 1: Un-truncated Full History (The Most Critical Metric)</h3>
+<p>This is where distillation truly shines. If the Agent needs to reference <strong>all</strong> conversation history (without <code>MaxHistory=10</code> truncation), the raw context grows linearly with the number of rounds. Distillation compresses it into 3 highest-priority experience representations:</p>
+<table><thead><tr><th style="text-align: center">Dialogue Rounds</th><th style="text-align: center">Raw Context (tokens)</th><th style="text-align: center">Distilled (tokens)</th><th style="text-align: center">Savings</th></tr></thead><tbody>
+<tr><td style="text-align: center">10</td><td style="text-align: center">1,121</td><td style="text-align: center">379</td><td style="text-align: center"><strong>66.2%</strong></td></tr>
+<tr><td style="text-align: center">20</td><td style="text-align: center">2,124</td><td style="text-align: center">339</td><td style="text-align: center"><strong>84.0%</strong></td></tr>
+<tr><td style="text-align: center">30</td><td style="text-align: center">3,320</td><td style="text-align: center">379</td><td style="text-align: center"><strong>88.6%</strong></td></tr>
+<tr><td style="text-align: center">40</td><td style="text-align: center">4,380</td><td style="text-align: center">339</td><td style="text-align: center"><strong>92.3%</strong></td></tr>
+<tr><td style="text-align: center">50</td><td style="text-align: center">5,387</td><td style="text-align: center">443</td><td style="text-align: center"><strong>91.8%</strong></td></tr>
+<tr><td style="text-align: center">60</td><td style="text-align: center">6,168</td><td style="text-align: center">330</td><td style="text-align: center"><strong>94.6%</strong></td></tr>
+<tr><td style="text-align: center">70</td><td style="text-align: center">7,054</td><td style="text-align: center">379</td><td style="text-align: center"><strong>94.6%</strong></td></tr>
+<tr><td style="text-align: center">80</td><td style="text-align: center">8,257</td><td style="text-align: center">339</td><td style="text-align: center"><strong>95.9%</strong></td></tr>
+<tr><td style="text-align: center">90</td><td style="text-align: center">9,524</td><td style="text-align: center">379</td><td style="text-align: center"><strong>96.0%</strong></td></tr>
+<tr><td style="text-align: center">100</td><td style="text-align: center">10,972</td><td style="text-align: center">339</td><td style="text-align: center"><strong>96.9%</strong></td></tr>
+</tbody></table>
+<p><small><em>The data above is based on estimateTokens() character-level estimation, serving as a baseline reference.</em></small></p>
+<p><strong>LLM Verified Measurement</strong>: We called sensenova-6.7-flash-lite to verify key data points:</p>
+<table><thead><tr><th style="text-align: center">Checkpoint</th><th style="text-align: center">estimateTokens Prediction</th><th style="text-align: center">LLM Actual</th><th style="text-align: center">Deviation</th></tr></thead><tbody>
+<tr><td style="text-align: center">20-round Full Raw</td><td style="text-align: center">2,124</td><td style="text-align: center">1,930</td><td style="text-align: center">-9.1%</td></tr>
+<tr><td style="text-align: center">100-round Full Raw</td><td style="text-align: center">10,972</td><td style="text-align: center">9,163</td><td style="text-align: center">-16.5%</td></tr>
+<tr><td style="text-align: center">20-round Distilled</td><td style="text-align: center">339</td><td style="text-align: center">378</td><td style="text-align: center">+11.5%</td></tr>
+<tr><td style="text-align: center">100-round Distilled</td><td style="text-align: center">339</td><td style="text-align: center">326</td><td style="text-align: center">-3.8%</td></tr>
+</tbody></table>
+<p>Data note: estimateTokens() deviates approximately <strong>±10-15%</strong> for short mixed Chinese-English text, and approximately <strong>±15-20%</strong> for long text. The accuracy of this estimation function is within acceptable engineering range, but precise billing must use the LLM's returned <code>usage.completion_tokens</code> field.</p>
+<p><strong>Result Analysis</strong>: The distilled context size is essentially constant at <strong>330-443 tokens</strong> (about 3 experiences), not growing with the number of dialogue rounds. Savings range from 66% at 10 rounds to <strong>96.9%</strong> at 100 rounds — the longer the conversation, the greater the benefit.</p>
+<p>Based on GPT-5.5 pricing ($5.00/1M input tokens), for a 100-round conversation:</p>
+<ul>
+<li>Raw: 10,972 tokens → $0.055/request</li>
+<li>Distilled: 339 tokens → $0.002/request</li>
+<li>Savings of $0.053 per call. At 100,000 calls per day, that's <strong>$5,300 saved daily</strong>.</li>
+</ul>
+<p>Similarly, using Claude Opus 4.8 (input $5/1M tokens) provides the same input-side savings. The difference between the two is primarily on the output side (GPT-5.5: $30/1M vs Claude Opus 4.8: $25/1M), but since distillation mainly reduces input context, input-side economics is the key factor here.</p>
+<h3 id="scenario-2-multi-session-growth-comparison">Scenario 2: Multi-Session Growth Comparison</h3>
+<p>This is closer to actual usage — each new conversation round builds on the distillation results from previous rounds. Simulates 10 conversations, 5 rounds each, with no history truncation:</p>
+<table><thead><tr><th style="text-align: center">Session</th><th style="text-align: center">Raw Context (tokens)</th><th style="text-align: center">Distilled (tokens)</th><th style="text-align: center">Savings</th><th style="text-align: center">Cumulative Experiences</th></tr></thead><tbody>
+<tr><td style="text-align: center">1</td><td style="text-align: center">538</td><td style="text-align: center">498</td><td style="text-align: center">7.4%</td><td style="text-align: center">3</td></tr>
+<tr><td style="text-align: center">2</td><td style="text-align: center">1,058</td><td style="text-align: center">796</td><td style="text-align: center">24.8%</td><td style="text-align: center">6</td></tr>
+<tr><td style="text-align: center">3</td><td style="text-align: center">1,509</td><td style="text-align: center">1,061</td><td style="text-align: center">29.7%</td><td style="text-align: center">9</td></tr>
+<tr><td style="text-align: center">4</td><td style="text-align: center">1,974</td><td style="text-align: center">1,317</td><td style="text-align: center">33.3%</td><td style="text-align: center">12</td></tr>
+<tr><td style="text-align: center">5</td><td style="text-align: center">2,620</td><td style="text-align: center">1,567</td><td style="text-align: center">40.2%</td><td style="text-align: center">14</td></tr>
+<tr><td style="text-align: center">6</td><td style="text-align: center">3,320</td><td style="text-align: center">1,567</td><td style="text-align: center">52.8%</td><td style="text-align: center">14</td></tr>
+<tr><td style="text-align: center">7</td><td style="text-align: center">3,938</td><td style="text-align: center">1,567</td><td style="text-align: center">60.2%</td><td style="text-align: center">14</td></tr>
+<tr><td style="text-align: center">8</td><td style="text-align: center">4,380</td><td style="text-align: center">1,918</td><td style="text-align: center">56.2%</td><td style="text-align: center">16</td></tr>
+<tr><td style="text-align: center">9</td><td style="text-align: center">4,690</td><td style="text-align: center">2,126</td><td style="text-align: center">54.7%</td><td style="text-align: center">17</td></tr>
+<tr><td style="text-align: center">10</td><td style="text-align: center">5,387</td><td style="text-align: center">2,126</td><td style="text-align: center"><strong>60.5%</strong></td><td style="text-align: center">17</td></tr>
+</tbody></table>
+<p><small><em>The data above is based on estimateTokens() character-level estimation.</em></small></p>
+<p><strong>LLM Verified Measurement</strong>: In the Session 10 verification, the LLM returned the full raw context as <strong>4,763 tokens</strong> (estimated 5,387) and the distilled context as <strong>1,942 tokens</strong> (estimated 2,126). The distillation savings adjusted from the estimated 60.5% to <strong>59.2%</strong>, within the margin of error.</p>
+<p><strong>Result Analysis</strong>: Raw context grew linearly from 538 tokens to <strong>5,387 tokens</strong> (10x), while distilled context only grew from 498 to <strong>2,126 tokens</strong> (4.3x). More importantly, the 17 accumulated experiences are <strong>high-value structured knowledge</strong> (complete Problem→Solution pairs), while much of the raw context contains meaningless transition dialogue and redundant information.</p>
+<h3 id="scenario-3-information-density-comparison">Scenario 3: Information Density Comparison</h3>
+<p>Under the same budget of approximately 300-400 tokens:</p>
+<table><thead><tr><th style="text-align: left">Metric</th><th style="text-align: center">Raw Context (truncated)</th><th style="text-align: center">Distilled Context</th></tr></thead><tbody>
+<tr><td style="text-align: left">Token count (estimated)</td><td style="text-align: center">~277</td><td style="text-align: center">~339</td></tr>
+<tr><td style="text-align: left">Token count (LLM actual)</td><td style="text-align: center"><strong>312</strong></td><td style="text-align: center"><strong>378</strong></td></tr>
+<tr><td style="text-align: left">Complete Problem→Solution pairs</td><td style="text-align: center"><strong>0</strong> (all fragmented)</td><td style="text-align: center"><strong>3</strong></td></tr>
+<tr><td style="text-align: left">Semantic units</td><td style="text-align: center">10 truncated fragments</td><td style="text-align: center">3 complete experiences</td></tr>
+<tr><td style="text-align: left">Information reusability</td><td style="text-align: center">Low (incomplete context)</td><td style="text-align: center">High (self-contained)</td></tr>
+</tbody></table>
+<p>This is the cost of <code>BuildContext</code>'s <code>MaxHistory=10</code> + 100-character truncation: you save tokens, but the retained information is severely fragmented. At the same token budget, distillation provides complete, independently reusable experiences.</p>
+<p>LLM verification also revealed a systemic issue with <code>estimateTokens()</code>: the function <strong>consistently underestimates token counts</strong>, with a deviation rate of approximately <strong>22.3%</strong> (in one typical context, it estimated 160 tokens while the LLM returned 206). For a billing system, this means budget control based on estimates could overshoot by about 20%. Production environments should use the LLM's returned <code>usage</code> field for precise metering.</p>
+<h3 id="summary">Summary</h3>
+<table><thead><tr><th style="text-align: left">Use Case</th><th style="text-align: center">Best Solution</th><th style="text-align: center">Token Savings</th></tr></thead><tbody>
+<tr><td style="text-align: left">Single conversation, only last few rounds needed</td><td style="text-align: center">Sliding window truncation</td><td style="text-align: center">~70%</td></tr>
+<tr><td style="text-align: left">Cross-session experience reuse</td><td style="text-align: center">Distillation + accumulation</td><td style="text-align: center">40-60% (LLM verified: 59.2%)</td></tr>
+<tr><td style="text-align: left">Full history reference needed</td><td style="text-align: center">Distillation</td><td style="text-align: center"><strong>66-97% (LLM verified: 80.4%-96.4%)</strong></td></tr>
+</tbody></table>
+<blockquote>
+<p><strong>On data sources</strong>: In the data above, "LLM verified" means calling sensenova-6.7-flash-lite to tokenize the actual context and using the returned <code>usage.completion_tokens</code> count. Values not marked "LLM verified" are <code>estimateTokens()</code> character-level estimates. Verification confirmed: the estimated data trends are accurate, but values are generally 10-20% lower.</p>
+</blockquote>
+<p><strong>Core Conclusion</strong>: The greatest value of Memory Distillation isn't "saving tokens" — it's <strong>preserving the semantic integrity of information while saving tokens.</strong> Sliding window truncation directly discards information; distillation refines and stores it. The former is "saving money but going hungry," the latter is "saving money AND eating well."</p>
+<hr />
+<h2 id="conclusion">Conclusion</h2>
+<p>ares's memory system isn't a simple matter of stuffing data into PostgreSQL. It's a complete data refinement pipeline:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Raw Messages → Sliding Window (Session) → Execution Records (Task) → Structured Experiences (Experience) → Vector Index (pgvector)</span></span></code></pre>
+<p>Each layer does the same thing: <strong>get smaller, get better, get more persistent.</strong></p>
+<ul>
+<li><strong>Session</strong>: Remember the current conversation → sliding window keeps only the latest N messages</li>
+<li><strong>Task</strong>: Record a single task → Distill extracts key information</li>
+<li><strong>Experience</strong>: Refine reusable experience → LLM summarization + vectorized storage</li>
+<li><strong>Dashboard</strong>: Flight Recorder visualizes memory status</li>
+</ul>
+<p>What I'm most satisfied with isn't "distillation" itself — it's the closed loop: the experiences distilled not only allow future tasks to retrieve and reuse them, but can also restore conversation context after an Agent crashes. In other words, <strong>the Agent not only gets smarter while alive, but can come back with its memories intact after dying.</strong></p>
+<hr />
+<p><strong>Next Article Preview</strong>: Workflow Engine — I wrote this because I was tired of hard-coded workflows. Changing a flow meant changing code and redeploying, which was way too annoying. So I built a MutableDAG that supports dynamically adding and removing nodes at runtime — you can now change a flow with a single mouse click on the dashboard. There's also thread-safe cycle detection, semaphore-based concurrent scheduling, and a 5-second timeout deadlock protection. Human-in-the-Loop is pluggable too.</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/04-workflow-engine/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Workflow Engine — From DAG to Dynamic Orchestration</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/02-agent-harmony-protocol/">
+                                <span class="button__text">Agent Harmony Protocol — The Communication Foundation for Multi-Agent Systems</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

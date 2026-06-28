@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Event System — Event Sourcing Foundation for State Recovery and Audit Trails | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="If I record every single thing the Agent does, can I fully reconstruct its state after it crashes?">
+
+    <meta property="og:description" content="If I record every single thing the Agent does, can I fully reconstruct its state after it crashes?">
+    <meta property="og:title" content="Event System — Event Sourcing Foundation for State Recovery and Audit Trails | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/08-event-system/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="If I record every single thing the Agent does, can I fully reconstruct its state after it crashes?">
+    <meta name="twitter:title" content="Event System — Event Sourcing Foundation for State Recovery and Audit Trails | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/08-event-system/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/08-event-system/">Event System — Event Sourcing Foundation for State Recovery and Audit Trails</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/audit/">#Audit</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/event-sourcing/">#Event Sourcing</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ares-architecture-deep-dive-viii-event-system-event-sourcing-foundation-for-state-recovery-and-audit-trails">ares Architecture Deep Dive (VIII): Event System — Event Sourcing Foundation for State Recovery and Audit Trails</h1>
+<blockquote>
+<p>Agent startup is an event, task assignment is an event, tool call is an event, LLM response is an event, Agent crash is an event too.
+I thought at the time: <strong>If I record every single thing the Agent does, can I fully reconstruct its state after it crashes?</strong>
+The answer is yes. That's how Event Sourcing works in ares.</p>
+</blockquote>
+<hr />
+<h2 id="1-why-record-every-single-thing">1. Why Record Every Single Thing</h2>
+<p>Back in the early days when I was building Agents, I managed state with a global struct. Everything crammed into one big map — what step the Agent was on, what data it had processed, what errors it hit. It looked simple, but problems surfaced.</p>
+<p>I still remember the worst one: an Agent had been running in production all afternoon, handling 30+ user requests, each involving multiple rounds of conversation and tool calls. Then the process crashed — OOM killed, with only a single "signal: killed" line in the logs.</p>
+<p>All state was gone. No checkpoint, no recovery path, no way to tell what it was working on when it died.</p>
+<p>Users came asking: "Why isn't the Agent responding?" I said: "It lost its memory." That was the moment I realized: without persistent state, an Agent is a disposable consumable — use it once and you can't get it back.</p>
+<p>To put it bluntly, the global map approach has three hard problems:</p>
+<ol>
+<li>Agent crashes → map is gone → state is lost</li>
+<li>Want to know what the Agent did five minutes ago? No record.</li>
+<li>Need to audit whether the Agent made unauthorized tool calls? No log.</li>
+</ol>
+<p>Later I looked into Event Sourcing, and I found its approach is the complete opposite: <strong>Don't store the current state. Store every operation that changed the state. Want the current state? Replay the events and compute it yourself.</strong></p>
+<p>This pattern has been used in financial systems for years, but not so much in Agent frameworks. I figured: since nobody's doing it, I'll build it.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph LR</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Traditional Approach (State Store)&quot;</span></span>
+<span class="giallo-l"><span>        S1[Current State] --&gt;|Update| S2[New State]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Event Sourcing&quot;</span></span>
+<span class="giallo-l"><span>        E1[Event 1] --&gt; E2[Event 2]</span></span>
+<span class="giallo-l"><span>        E2 --&gt; E3[Event 3]</span></span>
+<span class="giallo-l"><span>        E3 --&gt;|Replay| STATE[Derived State]</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre>
+<p>This architecture provides three critical guarantees:</p>
+<ul>
+<li><strong>Complete audit trail</strong>: Every state change is recorded with a timestamp and payload</li>
+<li><strong>Temporal query</strong>: The system can answer "what was the state at time T?"</li>
+<li><strong>State reconstruction</strong>: Any Agent's state can be rebuilt from scratch by replaying its event stream</li>
+</ul>
+<p>Core files:</p>
+<table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>internal/ares_events/types.go</code></td><td>Event model, EventStore interface</td></tr>
+<tr><td><code>internal/ares_events/memory_store.go</code></td><td>In-memory EventStore</td></tr>
+<tr><td><code>internal/ares_events/pg_store.go</code></td><td>PostgreSQL EventStore</td></tr>
+<tr><td><code>internal/ares_events/compactor.go</code></td><td>Event compaction into summaries</td></tr>
+<tr><td><code>internal/ares_events/trim_store.go</code></td><td>Delete old events after compaction</td></tr>
+<tr><td><code>internal/ares_events/compactable_store.go</code></td><td>Auto-compacting EventStore wrapper</td></tr>
+<tr><td><code>internal/ares_events/summary.go</code></td><td>EventSummary model + CompactionConfig</td></tr>
+<tr><td><code>internal/ares_events/summary_repository.go</code></td><td>PgSummaryRepository</td></tr>
+<tr><td><code>internal/ares_events/memory_summary_repo.go</code></td><td>In-memory SummaryRepository</td></tr>
+<tr><td><code>internal/ares_flight/replay.go</code></td><td>ReplaySession for step-by-step replay</td></tr>
+</tbody></table>
+<hr />
+<h2 id="2-event-model">2. Event Model</h2>
+<h3 id="2-1-event-structure">2.1 Event Structure</h3>
+<p><code>internal/ares_events/types.go</code> defines the foundational types:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Event</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">         string</span><span style="color: #A6E3A1;">         `json:&quot;id&quot;`</span></span>
+<span class="giallo-l"><span>    StreamID</span><span style="color: #CBA6F7;">   string</span><span style="color: #A6E3A1;">         `json:&quot;stream_id&quot;`</span></span>
+<span class="giallo-l"><span>    Type</span><span style="color: #F9E2AF;font-style: italic;">       EventType</span><span style="color: #A6E3A1;">      `json:&quot;type&quot;`</span></span>
+<span class="giallo-l"><span>    ModuleName</span><span style="color: #CBA6F7;"> string</span><span style="color: #A6E3A1;">         `json:&quot;module_name,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Payload</span><span style="color: #CBA6F7;">    map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #A6E3A1;"> `json:&quot;payload&quot;`</span></span>
+<span class="giallo-l"><span>    Metadata</span><span style="color: #CBA6F7;">   map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #A6E3A1;"> `json:&quot;metadata,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Version</span><span style="color: #CBA6F7;">    int64</span><span style="color: #A6E3A1;">          `json:&quot;version&quot;`</span></span>
+<span class="giallo-l"><span>    Timestamp</span><span style="color: #F9E2AF;font-style: italic;">  time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span><span style="color: #A6E3A1;">      `json:&quot;timestamp&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each event belongs to a <strong>stream</strong> (identified by <code>StreamID</code>). A stream is an append-only sequence of events for a single entity — typically an Agent. The <code>Version</code> field enables optimistic concurrency control, and the <code>Type</code> field is used for routing and replay classification. The <code>ModuleName</code> field records which subsystem emitted the event — "runtime", "workflow", "memory", etc. This sounds obvious until you try to replay an event stream and discover you can't tell whether <code>step.started</code> came from the workflow engine or the plugin bus. Without it, you're reverse-engineering the source from the payload shape. With it, you know.</p>
+<h3 id="2-2-event-types">2.2 Event Types</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventAgentStarted</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.started&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventAgentStopped</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.stopped&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventAgentFailed</span><span style="color: #F9E2AF;font-style: italic;">         EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.failed&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskCreated</span><span style="color: #F9E2AF;font-style: italic;">         EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.created&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskAssigned</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.assigned&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskCompleted</span><span style="color: #F9E2AF;font-style: italic;">       EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.completed&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskFailed</span><span style="color: #F9E2AF;font-style: italic;">          EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.failed&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventMessageAdded</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;message.added&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventLLMCall</span><span style="color: #F9E2AF;font-style: italic;">             EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;llm.call&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventToolCall</span><span style="color: #F9E2AF;font-style: italic;">            EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;tool.call&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventSessionCreated</span><span style="color: #F9E2AF;font-style: italic;">      EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;session.created&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventFailoverTriggered</span><span style="color: #F9E2AF;font-style: italic;">   EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;failover.triggered&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventFailoverCompleted</span><span style="color: #F9E2AF;font-style: italic;">   EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;failover.completed&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre><h3 id="2-3-eventstore-interface">2.3 EventStore Interface</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EventStore</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Append</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> events</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> expectedVersion</span><span style="color: #CBA6F7;"> int64</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Read</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> opts</span><span style="color: #F9E2AF;font-style: italic;"> ReadOptions</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ReadAll</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> opts</span><span style="color: #F9E2AF;font-style: italic;"> ReadOptions</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Subscribe</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> filter</span><span style="color: #F9E2AF;font-style: italic;"> EventFilter</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">&lt;-</span><span style="color: #CBA6F7;">chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    StreamVersion</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">int64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>classDiagram</span></span>
+<span class="giallo-l"><span>    class EventStore {</span></span>
+<span class="giallo-l"><span>        &lt;&lt;interface&gt;&gt;</span></span>
+<span class="giallo-l"><span>        +Append(ctx, streamID, events, expectedVersion) error</span></span>
+<span class="giallo-l"><span>        +Read(ctx, streamID, opts) []Event</span></span>
+<span class="giallo-l"><span>        +ReadAll(ctx, opts) []Event</span></span>
+<span class="giallo-l"><span>        +Subscribe(ctx, filter) &lt;-chan Event</span></span>
+<span class="giallo-l"><span>        +StreamVersion(ctx, streamID) int64</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    class MemoryEventStore {</span></span>
+<span class="giallo-l"><span>        -streams map[string][]Event</span></span>
+<span class="giallo-l"><span>        +Append()</span></span>
+<span class="giallo-l"><span>        +Read()</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    class PostgresEventStore {</span></span>
+<span class="giallo-l"><span>        -pool *Pool</span></span>
+<span class="giallo-l"><span>        +Append()</span></span>
+<span class="giallo-l"><span>        +Read()</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    class CompactableEventStore {</span></span>
+<span class="giallo-l"><span>        +Append()</span></span>
+<span class="giallo-l"><span>        +Read()</span></span>
+<span class="giallo-l"><span>        +ForceCompact()</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    EventStore &lt;|-- MemoryEventStore</span></span>
+<span class="giallo-l"><span>    EventStore &lt;|-- PostgresEventStore</span></span>
+<span class="giallo-l"><span>    EventStore &lt;|-- CompactableEventStore</span></span>
+<span class="giallo-l"><span>    CompactableEventStore o-- Compactor</span></span>
+<span class="giallo-l"><span>    Compactor o-- SummaryRepository</span></span></code></pre>
+<p>Key semantics:</p>
+<ul>
+<li><code>Append</code> uses <code>expectedVersion</code> for optimistic concurrency control: <code>0</code> means the stream must be empty, <code>-1</code> bypasses the check, a positive value must match the current version</li>
+<li><code>Read</code> supports <code>FromVersion</code>, <code>Limit</code>, and <code>Direction</code> (ascending/descending) via <code>ReadOptions</code></li>
+<li><code>Subscribe</code> returns a channel of events matching the filter; the channel closes when the context is cancelled</li>
+</ul>
+<hr />
+<h2 id="3-store-implementations">3. Store Implementations</h2>
+<h3 id="3-1-memoryeventstore">3.1 MemoryEventStore</h3>
+<p><code>internal/ares_events/memory_store.go</code> provides an in-memory implementation, primarily used for testing and demo mode:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEventStore</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">      sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span>    streams</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">][]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span></span>
+<span class="giallo-l"><span>    events</span><span style="color: #9399B2;">  []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span></span>
+<span class="giallo-l"><span>    version</span><span style="color: #CBA6F7;"> int64</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>Append</code> method performs: lock → version validation → assign sequence numbers → write to both stream store and flat store → notify subscribers. <code>Subscribe</code> creates a buffered channel (capacity 100); new events are broadcast to all channels; if the buffer is full, the event is dropped (non-blocking send).</p>
+<h3 id="3-2-postgreseventstore">3.2 PostgresEventStore</h3>
+<p><code>internal/ares_events/pg_store.go</code> provides a production-grade PostgreSQL implementation:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="sql"><span class="giallo-l"><span style="color: #CBA6F7;">INSERT INTO</span><span> events (id, stream_id, </span><span style="color: #CBA6F7;">type</span><span>, payload, metadata, </span><span style="color: #CBA6F7;">version</span><span>, created_at, </span><span style="color: #CBA6F7;">timestamp</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">VALUES</span><span> ($</span><span style="color: #FAB387;">1</span><span>, $</span><span style="color: #FAB387;">2</span><span>, $</span><span style="color: #FAB387;">3</span><span>, $</span><span style="color: #FAB387;">4</span><span>, $</span><span style="color: #FAB387;">5</span><span>, $</span><span style="color: #FAB387;">6</span><span>, $</span><span style="color: #FAB387;">7</span><span>, $</span><span style="color: #FAB387;">8</span><span>)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">ON</span><span> CONFLICT (stream_id, </span><span style="color: #CBA6F7;">version</span><span>) DO NOTHING</span></span></code></pre>
+<p><code>ON CONFLICT DO NOTHING</code> provides idempotent append — if the same event is inserted twice due to a client retry, the second insert is silently ignored. This is critical for at-least-once delivery semantics.</p>
+<hr />
+<h2 id="4-event-compaction-pipeline">4. Event Compaction Pipeline</h2>
+<p>Without compaction, the event store grows unboundedly. ares's Compactor solves this by summarizing old events into compact snapshots.</p>
+<h3 id="4-1-compactionconfig">4.1 CompactionConfig</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> CompactionConfig</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Threshold</span><span style="color: #CBA6F7;">              int</span><span style="color: #9399B2;font-style: italic;">           // Events triggering compaction (default: 500)</span></span>
+<span class="giallo-l"><span>    KeepRecent</span><span style="color: #CBA6F7;">             int</span><span style="color: #9399B2;font-style: italic;">           // Raw events to retain (default: 100)</span></span>
+<span class="giallo-l"><span>    MaxSummariesPerStream</span><span style="color: #CBA6F7;">  int</span><span style="color: #9399B2;font-style: italic;">           // Max summaries per stream</span></span>
+<span class="giallo-l"><span>    SummaryTTL</span><span style="color: #F9E2AF;font-style: italic;">             time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;"> // Summary retention (default: 30 days)</span></span>
+<span class="giallo-l"><span>    EnableTrimming</span><span style="color: #CBA6F7;">         bool</span><span style="color: #9399B2;font-style: italic;">          // Delete raw events after compaction</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Default behavior: when a stream exceeds 500 events, compact the oldest 400 into a summary, keep the most recent 100 as raw events.</p>
+<h3 id="4-2-compaction-pipeline">4.2 Compaction Pipeline</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TD</span></span>
+<span class="giallo-l"><span>    A[Stream exceeds threshold] --&gt; B[Read all events\nascending order]</span></span>
+<span class="giallo-l"><span>    B --&gt; C{Split at\nKeepRecent}</span></span>
+<span class="giallo-l"><span>    C --&gt;|Candidate events| D[Build EventSummary\nrule-based aggregation]</span></span>
+<span class="giallo-l"><span>    C --&gt;|Recent events| E[Keep in raw store]</span></span>
+<span class="giallo-l"><span>    D --&gt; F[Save summary to\nSummaryRepository]</span></span>
+<span class="giallo-l"><span>    F --&gt; G{EnableTrimming?}</span></span>
+<span class="giallo-l"><span>    G --&gt;|Yes| H[TrimBefore\nDelete old events]</span></span>
+<span class="giallo-l"><span>    G --&gt;|No| I[Keep raw events]</span></span>
+<span class="giallo-l"><span>    H --&gt; J[✓ Compacted]</span></span>
+<span class="giallo-l"><span>    I --&gt; J</span></span></code></pre><h3 id="4-3-defaultsummarizer">4.3 DefaultSummarizer</h3>
+<p>The rule-based summarizer produces concise English summaries without requiring an LLM call:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Agent agent-1 ran 3 task(s) [task-42, task-43, task-44],</span></span>
+<span class="giallo-l"><span>called 5 tool(s) [search, book, weather, calculator, email],</span></span>
+<span class="giallo-l"><span>emitted 23 events over 3m12s,</span></span>
+<span class="giallo-l"><span>bound to user request: &quot;Plan a trip to Tokyo&quot;,</span></span>
+<span class="giallo-l"><span>result: completed</span></span></code></pre><h3 id="4-4-summary-fallback-on-read">4.4 Summary Fallback on Read</h3>
+<p>If raw events have been trimmed, <code>Read</code> automatically falls back to summaries:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">CompactableEventStore</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Read</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> opts</span><span style="color: #F9E2AF;font-style: italic;"> ReadOptions</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    events</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>EventStore</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">,</span><span> opts</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>events</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> events</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    summaries</span><span style="color: #9399B2;">,</span><span> summaryErr</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>compactor</span><span style="color: #9399B2;">.</span><span>repo</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">FindByStreamID</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> summaryErr</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #94E2D5;"> ||</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>summaries</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> events</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    synthetic</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>summaries</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> sum</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> summaries</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        synthetic</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>synthetic</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>            Type</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;"> EventType</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;event.summary&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>            Payload</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;summary_text&quot;</span><span style="color: #9399B2;">:</span><span> sum</span><span style="color: #9399B2;">.</span><span>SummaryText</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;event_count&quot;</span><span style="color: #9399B2;">:</span><span>  sum</span><span style="color: #9399B2;">.</span><span>EventCount</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;outcome&quot;</span><span style="color: #9399B2;">:</span><span>      sum</span><span style="color: #9399B2;">.</span><span>Outcome</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            },</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> synthetic</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="5-replaysession">5. ReplaySession</h2>
+<p><code>internal/ares_flight/replay.go</code> provides step-by-step event replay for a task:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant User as User</span></span>
+<span class="giallo-l"><span>    participant RS as ReplaySession</span></span>
+<span class="giallo-l"><span>    participant Store as EventStore</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    User-&gt;&gt;RS: NewReplaySession(task-42)</span></span>
+<span class="giallo-l"><span>    RS-&gt;&gt;Store: Read(task-42, ascending)</span></span>
+<span class="giallo-l"><span>    Store--&gt;&gt;RS: [Event 1, Event 2, ..., Event N]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    loop Step-by-step replay</span></span>
+<span class="giallo-l"><span>        User-&gt;&gt;RS: Step()</span></span>
+<span class="giallo-l"><span>        RS-&gt;&gt;RS: currentIdx++</span></span>
+<span class="giallo-l"><span>        RS--&gt;&gt;User: ReplayStep{EventType, Payload}</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    User-&gt;&gt;RS: StepTo(5)</span></span>
+<span class="giallo-l"><span>    RS-&gt;&gt;RS: currentIdx = 5</span></span>
+<span class="giallo-l"><span>    RS--&gt;&gt;User: ReplayStep at index 5</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    User-&gt;&gt;RS: Summary()</span></span>
+<span class="giallo-l"><span>    RS--&gt;&gt;User: ReplaySummary{TotalSteps, Duration, Agents}</span></span></code></pre>
+<p>Core methods:</p>
+<ul>
+<li><code>Step()</code>: advance one event, return that step</li>
+<li><code>StepTo(n)</code>: jump to a specified step</li>
+<li><code>Summary()</code>: return an overview (total steps, duration, list of Agent IDs, event type distribution)</li>
+<li><code>Reset()</code>: return to the starting position</li>
+</ul>
+<hr />
+<h2 id="6-store-implementation-comparison">6. Store Implementation Comparison</h2>
+<table><thead><tr><th>Feature</th><th>MemoryEventStore</th><th>PostgresEventStore</th></tr></thead><tbody>
+<tr><td>Persistence</td><td>None (process-level)</td><td>Yes (table storage)</td></tr>
+<tr><td>Concurrency control</td><td>Mutex lock</td><td><code>ON CONFLICT DO NOTHING</code></td></tr>
+<tr><td>Subscription</td><td>Buffered channel + subscriber map</td><td>LISTEN/NOTIFY or polling</td></tr>
+<tr><td>Use cases</td><td>Testing, demo, single process</td><td>Production, distributed deployment</td></tr>
+</tbody></table>
+<hr />
+<h2 id="7-integration-with-agent-resurrection">7. Integration with Agent Resurrection</h2>
+<p>The Event System integrates deeply with the Runtime's resurrection pipeline:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant RT as Runtime</span></span>
+<span class="giallo-l"><span>    participant ES as EventStore</span></span>
+<span class="giallo-l"><span>    participant SA as StatefulAgent</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;RT: NotifyAgentDead(agent-1)</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;RT: factory() creates new instance</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;ES: Read(agent-1, ascending)</span></span>
+<span class="giallo-l"><span>    ES--&gt;&gt;RT: [Event 1, ..., Event N]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Note over RT,SA: Phase A: Rebuild operational state</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;SA: RestoreState({session, tasks, ...})</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;SA: ReplayEvents([Event 1, ..., Event N])</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Note over RT,SA: Phase B: Rebuild cognitive state</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;MM: GetLatestSessionForLeader()</span></span>
+<span class="giallo-l"><span>    MM--&gt;&gt;RT: session-42</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;MM: GetMessages(session-42)</span></span>
+<span class="giallo-l"><span>    MM--&gt;&gt;RT: [Message 1, ..., Message M]</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;SA: Inject cognitive state</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Note over RT,SA: Agent is now fully recovered</span></span>
+<span class="giallo-l"><span>    RT-&gt;&gt;RT: StartAgent new instance</span></span></code></pre>
+<p>Two-phase recovery ensures:</p>
+<ul>
+<li><strong>Operational state</strong> (tasks, sessions, execution status) is reconstructed from the event stream</li>
+<li><strong>Cognitive state</strong> (conversation history, memories) is restored from MemoryManager</li>
+<li><strong>Each phase is independently recoverable</strong> — partial recovery is better than no recovery at all</li>
+</ul>
+<hr />
+<h2 id="8-architectural-summary">8. Architectural Summary</h2>
+<h3 id="design-patterns">Design Patterns</h3>
+<table><thead><tr><th>Pattern</th><th>Location</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>Event Sourcing</td><td><code>types.go</code></td><td>Immutable append-only log</td></tr>
+<tr><td>Optimistic Concurrency Control</td><td><code>Append(expectedVersion)</code></td><td>Conflict detection on concurrent writes</td></tr>
+<tr><td>CQRS</td><td>EventStore (write) + SummaryRepository (read)</td><td>Write-optimized raw store + read-optimized summaries</td></tr>
+<tr><td>Observer</td><td><code>Subscribe(channel)</code></td><td>Real-time event stream push</td></tr>
+<tr><td>Strategy</td><td><code>Summarizer</code> function type</td><td>Pluggable summary generation (rule-based or LLM)</td></tr>
+<tr><td>Decorator</td><td><code>CompactableEventStore</code> wraps <code>EventStore</code></td><td>Transparent compaction, unchanged API</td></tr>
+<tr><td>Debounce</td><td><code>lastChecked</code> map</td><td>Avoid redundant compaction checks</td></tr>
+</tbody></table>
+<h3 id="key-data-flow">Key Data Flow</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Write Path&quot;</span></span>
+<span class="giallo-l"><span>        C[Client] --&gt;|Append| CES[CompactableEventStore]</span></span>
+<span class="giallo-l"><span>        CES --&gt;|1. Write| ES[EventStore]</span></span>
+<span class="giallo-l"><span>        CES --&gt;|2. Background| CP[Compactor]</span></span>
+<span class="giallo-l"><span>        CP --&gt;|3. Summarize| SR[SummaryRepository]</span></span>
+<span class="giallo-l"><span>        CP --&gt;|4. Optionally trim| TS[TrimStore]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Read Path&quot;</span></span>
+<span class="giallo-l"><span>        RS[ReplaySession] --&gt;|Read| CES</span></span>
+<span class="giallo-l"><span>        CES --&gt;|Has events?| ES</span></span>
+<span class="giallo-l"><span>        CES --&gt;|Empty? Fallback| SR</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Subscription Push&quot;</span></span>
+<span class="giallo-l"><span>        DV[Dashboard] --&gt;|Subscribe| CES</span></span>
+<span class="giallo-l"><span>        CES --&gt;|SSE| DV</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre>
+<hr />
+<h2 id="v0-2-4-update">v0.2.4 Update</h2>
+<p><strong>Event.ModuleName</strong>: Every event now carries a <code>ModuleName</code> field identifying which module emitted it. The <code>Emit()</code> signature changed from:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Before: who emitted this event?</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">Emit</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> store</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">,</span><span> eventType</span><span style="color: #9399B2;">,</span><span> payload</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// After: always traceable</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">Emit</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> store</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">,</span><span> eventType</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;runtime&quot;</span><span style="color: #9399B2;">,</span><span> payload</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>When you replay an event stream, you can now see:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;step.started&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">module_name</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;workflow&quot;</span><span style="color: #9399B2;">,</span><span> ...</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;tool.call.completed&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">module_name</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;runtime&quot;</span><span style="color: #9399B2;">,</span><span> ...</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;memory.distilled&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">module_name</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;memory&quot;</span><span style="color: #9399B2;">,</span><span> ...</span><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This closes the "who did what" gap — previously you had to infer the source from the event type and payload. Now it's explicit.</p>
+<hr />
+<h2 id="9-conclusion">9. Conclusion</h2>
+<p>Event Sourcing + CQRS + pluggable stores + auto-compaction — this combination isn't anything new in enterprise systems. But placed within an Agent framework, I think it's a pretty interesting experiment.</p>
+<p>What was the most satisfying experience? An Agent was running a complex multi-step workflow with multiple tool calls and LLM interactions when it crashed halfway through. In the old days, I'd be staring at logs, guessing: was it a prompt problem? An LLM hallucination? Wrong tool parameters? Guess, fix, rerun, repeat — three or four cycles just to pinpoint the issue.</p>
+<p>But this time I opened the Dashboard, found the Agent's event stream, and replayed it step by step from the beginning. By event 7 I was already grinning — the Agent's <code>tool.call:7</code> had returned an empty result from the search API, and it blindly concatenated that empty result into the next LLM prompt without a null check. The bug itself wasn't complicated — what was new is that I <strong>saw the full causal chain</strong> unfolding event by event. Not guessing — watching.</p>
+<p>At that moment, I felt like I wasn't debugging — I was watching a black box flight recorder.</p>
+<p><strong>That's the value of the event system: it doesn't make you run faster. It tells you exactly why things went wrong when they do.</strong></p>
+<hr />
+<p><em>Next preview: Arena / Fault Injection — possibly the most unhinged feature in ares. You can click a button on the Dashboard, assassinate a running Agent, and then watch it resurrect from the ashes.</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/09-arena-fault-injection/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Arena &#x2F; Fault Injection — Break It Deliberately, Watch It Self-Heal</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/07-runtime-lifecycle/">
+                                <span class="button__text">Runtime &amp; Lifecycle — Birth, Death, and Resurrection</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

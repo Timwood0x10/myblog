@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>The Big Picture — Why Another Agent Framework? | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="The problem isn't how to build an Agent — it's how to keep one alive in production.">
+
+    <meta property="og:description" content="The problem isn't how to build an Agent — it's how to keep one alive in production.">
+    <meta property="og:title" content="The Big Picture — Why Another Agent Framework? | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/01-architecture-overview/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="The problem isn't how to build an Agent — it's how to keep one alive in production.">
+    <meta name="twitter:title" content="The Big Picture — Why Another Agent Framework? | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/01-architecture-overview/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/01-architecture-overview/">The Big Picture — Why Another Agent Framework?</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/architecture/">#Architecture</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ares-architecture-deep-dive-i-the-big-picture-why-another-agent-framework">ares Architecture Deep Dive (I): The Big Picture — Why Another Agent Framework?</h1>
+<p>I didn't set out to build a framework. I set out to solve a problem: <strong>Agents kept dying, and I couldn't figure out why.</strong></p>
+<p>It started with a simple chatbot. One Leader, two Subs, a handful of tools. Worked fine in dev. In production, the Leader would silently stop responding after 20 minutes. No error, no panic, no crash log. Just... silence.</p>
+<p>After three days of debugging, I found it: a goroutine leak in the LLM client. One leaked goroutine per request, eventually hitting the OS thread limit. The fix was one line. But finding it took 72 hours because I had <strong>zero visibility</strong> into what the Agent was doing.</p>
+<p>That's when I realized: the problem isn't "how to build an Agent." The problem is "how to keep an Agent alive in production."</p>
+<hr />
+<h2 id="the-three-questions">The Three Questions</h2>
+<p>Every Agent framework answers one question: "How do I make an Agent call an LLM?" That's the easy part. The hard questions are:</p>
+<ol>
+<li><strong>What happens when the Agent dies?</strong> (Resurrection)</li>
+<li><strong>How does it remember what it was doing?</strong> (State Recovery)</li>
+<li><strong>How do I know what went wrong?</strong> (Observability)</li>
+</ol>
+<p>ares is built around these three questions. Everything else — the DAG engine, the memory system, the evolution engine — exists because answering these questions properly requires a lot of infrastructure.</p>
+<hr />
+<h2 id="the-architecture-five-layers">The Architecture: Five Layers</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
+<span class="giallo-l"><span>    subgraph API [&quot;Layer 1: API Contract&quot;]</span></span>
+<span class="giallo-l"><span>        Bootstrap[&quot;Bootstrap Factory&quot;]</span></span>
+<span class="giallo-l"><span>        Interfaces[&quot;AgentService / Runtime / Evolution / Arena / MemoryService / LLMService&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph Runtime [&quot;Layer 2: Runtime&quot;]</span></span>
+<span class="giallo-l"><span>        RT[&quot;Runtime Manager&quot;]</span></span>
+<span class="giallo-l"><span>        Leader[&quot;Leader Agent&quot;]</span></span>
+<span class="giallo-l"><span>        Sub[&quot;Sub Agents&quot;]</span></span>
+<span class="giallo-l"><span>        PluginBus[&quot;PluginBus&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph Workflow [&quot;Layer 3: Workflow&quot;]</span></span>
+<span class="giallo-l"><span>        DAG[&quot;MutableDAG&quot;]</span></span>
+<span class="giallo-l"><span>        Exec[&quot;DynamicExecutor&quot;]</span></span>
+<span class="giallo-l"><span>        Checkpoint[&quot;Checkpoint Resume&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph Memory [&quot;Layer 4: Memory&quot;]</span></span>
+<span class="giallo-l"><span>        Session[&quot;Session Memory&quot;]</span></span>
+<span class="giallo-l"><span>        Distilled[&quot;Distilled Memory&quot;]</span></span>
+<span class="giallo-l"><span>        Retrieval[&quot;Vector Retrieval&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph Infra [&quot;Layer 5: Infrastructure&quot;]</span></span>
+<span class="giallo-l"><span>        Events[&quot;EventStore&quot;]</span></span>
+<span class="giallo-l"><span>        Storage[&quot;VectorStore&quot;]</span></span>
+<span class="giallo-l"><span>        LLM[&quot;LLM Adapters&quot;]</span></span>
+<span class="giallo-l"><span>        Tools[&quot;Tool Registry&quot;]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Bootstrap --&gt; RT</span></span>
+<span class="giallo-l"><span>    RT --&gt; Leader</span></span>
+<span class="giallo-l"><span>    Leader --&gt; Sub</span></span>
+<span class="giallo-l"><span>    Leader --&gt; DAG</span></span>
+<span class="giallo-l"><span>    DAG --&gt; Exec</span></span>
+<span class="giallo-l"><span>    Exec --&gt; PluginBus</span></span>
+<span class="giallo-l"><span>    Session --&gt; Distilled</span></span>
+<span class="giallo-l"><span>    Distilled --&gt; Retrieval</span></span>
+<span class="giallo-l"><span>    RT --&gt; Events</span></span>
+<span class="giallo-l"><span>    DAG --&gt; Events</span></span>
+<span class="giallo-l"><span>    Leader --&gt; LLM</span></span>
+<span class="giallo-l"><span>    Sub --&gt; Tools</span></span></code></pre>
+<p><strong>Layer 1: API Contract</strong> — What the outside world sees. Interfaces only, no implementations. The Bootstrap factory wires everything together. You call <code>bootstrap.New()</code> and get a fully connected system.</p>
+<p><strong>Layer 2: Runtime</strong> — Who does the work. The Runtime Manager owns agent lifecycles: birth, death, resurrection. The Leader plans and delegates. Sub Agents execute. The PluginBus connects everything.</p>
+<p><strong>Layer 3: Workflow</strong> — How work flows. The MutableDAG defines task dependencies. The DynamicExecutor runs them in topological order. Checkpoint Resume lets you pick up where you left off after a crash.</p>
+<p><strong>Layer 4: Memory</strong> — What agents remember. Session memory is short-term. Distilled memory is long-term compressed knowledge. Retrieval finds relevant memories via vector search.</p>
+<p><strong>Layer 5: Infrastructure</strong> — What holds it all up. EventStore records everything. VectorStore indexes memories. LLM Adapters talk to providers. Tool Registry manages capabilities.</p>
+<hr />
+<h2 id="the-design-principles">The Design Principles</h2>
+<p><strong>1. Agents are disposable.</strong></p>
+<p>This is the most important principle. An Agent is not a precious snowflake — it's a goroutine with a heartbeat. If it dies, the Runtime creates a new one and restores its state from the EventStore. This sounds wasteful until you realize it's the only way to guarantee recovery.</p>
+<p><strong>Honest reflection</strong>: We considered making Agents long-lived and resilient. Tried circuit breakers, retry loops, graceful degradation. It worked — until it didn't. The problem is that you can't predict every failure mode. A goroutine leak, a deadlock, an OOM kill — no amount of defensive coding covers all of them. Making Agents disposable means any failure is recoverable, because you always have a fresh start point.</p>
+<p><strong>2. Record everything, replay anything.</strong></p>
+<p>Every action — LLM call, tool invocation, task assignment, memory query — is an event in the EventStore. Want to know what happened? Replay the events. Want to restore state? Replay the events. Want to debug? Replay the events.</p>
+<p><strong>3. Plugins, not hardcoding.</strong></p>
+<p>The PluginBus lets you extend behavior without modifying core code. Checkpoint snapshots, route decisions, tool invocations — all handled by plugins. The Runtime doesn't know or care which plugins are active.</p>
+<p><strong>4. The API layer is a contract, not an implementation.</strong></p>
+<p><code>api/core/</code> defines interfaces. <code>internal/</code> implements them. <code>api/bootstrap/</code> wires them together. You can swap implementations without changing the contract. This matters when you want to test with mocks, or switch from in-memory to PostgreSQL.</p>
+<hr />
+<h2 id="what-makes-this-different">What Makes This Different</h2>
+<p>Most Agent frameworks are "LLM orchestration engines" — they focus on prompt chains and tool calling. ares is an <strong>Agent operating system</strong> — it focuses on keeping Agents alive in production.</p>
+<table><thead><tr><th>Capability</th><th>Typical Framework</th><th>ares</th></tr></thead><tbody>
+<tr><td>Agent lifecycle</td><td>Start and hope</td><td>Birth → Death → Resurrection</td></tr>
+<tr><td>State management</td><td>In-memory struct</td><td>Event Sourcing + Checkpoint</td></tr>
+<tr><td>Failure handling</td><td>Try/catch</td><td>Automatic resurrection with state recovery</td></tr>
+<tr><td>Observability</td><td>Logs</td><td>Logs + Events + Metrics + Traces</td></tr>
+<tr><td>Extensibility</td><td>Subclass</td><td>Plugin system with capability discovery</td></tr>
+<tr><td>Self-improvement</td><td>None</td><td>Genetic algorithm + Dream Cycle</td></tr>
+</tbody></table>
+<hr />
+<h2 id="the-honest-truth">The Honest Truth</h2>
+<p>This project started as a chatbot and grew into something I didn't plan. The evolution engine wasn't in any roadmap — it emerged from the question "what if Agents could optimize their own prompts?" The chaos engineering arena came from "what if I could kill an Agent and watch it recover?" The plugin system came from "what if I could add checkpoint support without touching the executor?"</p>
+<p>Each feature was born from a real problem, not a feature checklist. That's why the architecture looks the way it does — it's not designed top-down, it's evolved bottom-up.</p>
+<p><strong>Honest reflection</strong>: The codebase is bigger than it needs to be. The quant trading module, the interview demo, the MCP dashboard — these are experiments that should probably live in separate repos. The core (Runtime + Workflow + Memory + Events) is solid. The periphery is still finding its shape.</p>
+<p>But that's how real projects work. You don't design the perfect architecture on day one. You solve problems, accumulate code, and occasionally stop to refactor. The refactoring we did in v0.2.4 — unified naming, API layer thinning, module logging — was one of those "stop and clean up" moments.</p>
+<hr />
+<h2 id="what-s-next">What's Next</h2>
+<p>This series walks through each layer in detail:</p>
+<table><thead><tr><th>#</th><th>Topic</th><th>What You'll Learn</th></tr></thead><tbody>
+<tr><td>I</td><td><strong>This article</strong></td><td>The big picture</td></tr>
+<tr><td>II</td><td>Agent Harmony Protocol</td><td>How agents communicate</td></tr>
+<tr><td>III</td><td>Memory Distillation</td><td>How agents remember and forget</td></tr>
+<tr><td>IV</td><td>Workflow Engine</td><td>How tasks flow through a DAG</td></tr>
+<tr><td>V</td><td>Tool Invocation Layer</td><td>How agents use tools</td></tr>
+<tr><td>VI</td><td>Security &amp; Observability</td><td>How to see what's happening</td></tr>
+<tr><td>VII</td><td>Runtime &amp; Lifecycle</td><td>How agents live and die</td></tr>
+<tr><td>VIII</td><td>Event System</td><td>How state is recorded and recovered</td></tr>
+<tr><td>IX</td><td>Arena / Fault Injection</td><td>How to break things deliberately</td></tr>
+<tr><td>X</td><td>Retrieval System</td><td>How to find relevant memories</td></tr>
+<tr><td>XI</td><td>Autonomous Evolution</td><td>How agents improve themselves</td></tr>
+<tr><td>XII</td><td>Security Hardening</td><td>How to defend against threats</td></tr>
+</tbody></table>
+<p>Each article follows the same pattern: <strong>the problem → the design journey → the trade-offs → the honest reflection.</strong></p>
+<p>No marketing. No "10x faster than X." Just engineers talking about engineering.</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/02-agent-harmony-protocol/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Agent Harmony Protocol — The Communication Foundation for Multi-Agent Systems</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/00-intro/">
+                                <span class="button__text">Building Your Own Agent Framework When You&#x27;re Bored</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>MCP Integration — Teaching Agents to Use Tools | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="We had a tool registration problem, not a tool execution problem. We needed a protocol.">
+
+    <meta property="og:description" content="We had a tool registration problem, not a tool execution problem. We needed a protocol.">
+    <meta property="og:title" content="MCP Integration — Teaching Agents to Use Tools | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/15-mcp-integration/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="We had a tool registration problem, not a tool execution problem. We needed a protocol.">
+    <meta name="twitter:title" content="MCP Integration — Teaching Agents to Use Tools | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/15-mcp-integration/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/15-mcp-integration/">MCP Integration — Teaching Agents to Use Tools</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/integration/">#Integration</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/mcp/">#MCP</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ares-architecture-deep-dive-xv-mcp-integration-teaching-agents-to-use-tools">ares Architecture Deep Dive (XV): MCP Integration — Teaching Agents to Use Tools</h1>
+<p>I broke the tool system on a Tuesday afternoon.</p>
+<p>It was supposed to be a simple demo. I'd written a custom tool that talked to a code analysis server — spawn a process, send a JSON request, parse the response. Worked perfectly in my dev environment. Then someone else tried to run it on their machine and got nothing. No error, no output, just a silent failure. Turns out the tool was hardcoded to spawn a binary at an absolute path that only existed on my laptop.</p>
+<p>That was the moment I realized: <strong>we had a tool registration problem, not a tool execution problem.</strong> Every tool was a bespoke integration. Every tool author had to know the internals of our registry. Every deployment was a game of "did you install the right binary?" We needed a protocol — something that let tools describe themselves, discover themselves, and connect without the framework knowing the details.</p>
+<p>That protocol already existed. It's called MCP.</p>
+<hr />
+<h2 id="the-problem-brittle-tools-everywhere">The Problem: Brittle Tools Everywhere</h2>
+<p>Before MCP, registering a tool in ares looked like this:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// The old way: manual, fragile, coupled</span></span>
+<span class="giallo-l"><span>registry</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Register</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;codegraph_analyze&quot;</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">CodeGraphTool</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>    binaryPath</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;/usr/local/bin/codegraph-server&quot;</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // breaks on every machine</span></span>
+<span class="giallo-l"><span>    timeout</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">    30</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Second</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">})</span></span></code></pre>
+<p>Every tool was a Go struct that implemented the <code>core.Tool</code> interface. Every tool author had to import our internal packages, understand our parameter schema format, and handle their own process management. If you wanted to add a tool written in Python or Rust? Good luck. You'd be writing a Go wrapper that spawned a subprocess and spoke some ad-hoc JSON protocol over stdin.</p>
+<p>The worst part was discovery. You couldn't ask a running tool server "what tools do you have?" You had to read the documentation, hope it was up to date, and manually wire everything together. Tools were static. Configuration was manual. And every new integration meant touching the framework's source code.</p>
+<p>We needed tools that could <strong>announce themselves</strong>.</p>
+<hr />
+<h2 id="mcp-the-protocol-that-describes-tools">MCP: The Protocol That Describes Tools</h2>
+<p>The Model Context Protocol is a JSON-RPC 2.0 specification for tool discovery and invocation. The core idea is simple: a server exposes tools with JSON Schema definitions, and a client discovers and calls them over a standard wire format.</p>
+<p>The handshake looks like this:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant C as ares (Client)</span></span>
+<span class="giallo-l"><span>    participant S as MCP Server</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    C-&gt;&gt;S: initialize (protocol version, capabilities)</span></span>
+<span class="giallo-l"><span>    S--&gt;&gt;C: initialize result (server info, capabilities)</span></span>
+<span class="giallo-l"><span>    C-&gt;&gt;S: notifications/initialized</span></span>
+<span class="giallo-l"><span>    C-&gt;&gt;S: tools/list</span></span>
+<span class="giallo-l"><span>    S--&gt;&gt;C: tools (name, description, inputSchema)</span></span>
+<span class="giallo-l"><span>    C-&gt;&gt;S: tools/call (name, arguments)</span></span>
+<span class="giallo-l"><span>    S--&gt;&gt;C: tool result (content blocks, isError flag)</span></span></code></pre>
+<p>Three things make this powerful:</p>
+<ol>
+<li><strong>Self-describing tools</strong> — the server provides JSON Schema for each tool's parameters. No guessing, no documentation rot.</li>
+<li><strong>Transport-agnostic</strong> — the protocol doesn't care if you're talking over stdin/stdout or HTTP. Same messages, different wires.</li>
+<li><strong>Dynamic discovery</strong> — the server can notify the client when tools change. No restart required.</li>
+</ol>
+<p>In ares, we implement this in <code>internal/ares_mcp/client.go</code>. The <code>MCPClient</code> struct manages a single connection to one MCP server. The <code>Connect</code> method performs the full handshake:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MCPClient</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Connect</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>transport</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Start</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;start transport: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    c</span><span style="color: #9399B2;">.</span><span>receiveLoop</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>runReceiveLoop</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">initialize</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;initialize: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> _</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ListTools</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;list tools: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Start the transport, launch the background receive loop, shake hands, discover tools. Four steps, no ambiguity.</p>
+<hr />
+<h2 id="two-transports-one-interface">Two Transports, One Interface</h2>
+<p>The MCP spec defines two transport mechanisms. We implement both, behind a single <code>Transport</code> interface in <code>internal/ares_mcp/transport.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Transport</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Start</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Send</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> msg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">JSONRPCMessage</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Receive</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">JSONRPCMessage</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Close</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Stdio transport</strong> (<code>internal/ares_mcp/transport_stdio.go</code>) launches a subprocess and communicates over newline-delimited JSON on stdin/stdout. This is the workhorse for local tools — the framework spawns the tool server as a child process, and they talk through pipes. The tricky part is making <code>Receive</code> interruptible: the underlying <code>bufio.Scanner.Scan()</code> blocks, so we run it in a goroutine and use a channel to shuttle messages back. When the context is cancelled, we close the stdout pipe to unblock the scanner.</p>
+<p><strong>SSE transport</strong> (<code>internal/ares_mcp/transport_sse.go</code>) communicates over HTTP. The receive path opens a long-lived Server-Sent Events stream via GET; the send path POSTs JSON-RPC messages to a URL the server provides dynamically through an <code>endpoint</code> event. This is for remote tool servers — anything running on another machine, in a container, or behind a network boundary.</p>
+<p>The factory at the bottom of <code>client.go</code> selects between them based on configuration:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewTransportFromConfig</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">config</span><span style="color: #F9E2AF;font-style: italic;"> TransportConfig</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">Transport</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> config</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;stdio&quot;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #89B4FA;font-style: italic;"> NewStdioTransport</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">*</span><span>config</span><span style="color: #9399B2;">.</span><span>Stdio</span><span style="color: #9399B2;">),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;sse&quot;</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #89B4FA;font-style: italic;"> NewSSETransport</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">*</span><span>config</span><span style="color: #9399B2;">.</span><span>SSE</span><span style="color: #9399B2;">),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    default</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;unsupported transport type: %s&quot;</span><span style="color: #9399B2;">,</span><span> config</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Honest reflection</strong>: We considered a third transport — gRPC — because it's faster and has better tooling. We decided against it because MCP's spec only defines stdio and SSE, and we didn't want to maintain a non-standard extension. If the spec adds gRPC later, we'll add it. For now, two transports cover the real use cases: local processes and remote HTTP servers.</p>
+<hr />
+<h2 id="the-manager-juggling-multiple-servers">The Manager: Juggling Multiple Servers</h2>
+<p>A single MCP client is useful. But in practice, you want to connect to multiple tool servers simultaneously — one for code analysis, one for database access, one for file operations. That's where <code>MCPManager</code> comes in.</p>
+<p>The manager lives in <code>internal/ares_mcp/manager.go</code>. It holds a map of named clients, each wrapped in a <code>managedClient</code> struct that tracks connection state, error history, and registered tool names:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MCPManager</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    clients</span><span style="color: #CBA6F7;">  map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">managedClient</span></span>
+<span class="giallo-l"><span>    registry</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Registry</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">       sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span>    config</span><span style="color: #94E2D5;">   *</span><span style="color: #F9E2AF;font-style: italic;">MCPManagerConfig</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> managedClient</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    client</span><span style="color: #94E2D5;">  *</span><span style="color: #F9E2AF;font-style: italic;">MCPClient</span></span>
+<span class="giallo-l"><span>    config</span><span style="color: #F9E2AF;font-style: italic;">  MCPServerConfig</span></span>
+<span class="giallo-l"><span>    connAt</span><span style="color: #F9E2AF;font-style: italic;">  time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span></span>
+<span class="giallo-l"><span>    lastErr</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span>    tools</span><span style="color: #9399B2;">   []</span><span style="color: #CBA6F7;">string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>Start</code> method iterates the configuration and connects to every server marked <code>Enabled &amp;&amp; AutoStart</code>. Each connection follows the same pattern: create transport, create client, handshake, register tools. If a server fails to connect, we log the error and move on to the next one. <strong>One bad server doesn't block the others.</strong></p>
+<p>When a server sends a <code>notifications/tools/list_changed</code> notification — meaning it has added, removed, or modified tools — the client's <code>onChange</code> callback fires, which calls <code>RefreshTools</code> on the manager. This unregisters the old tools from the shared registry, re-discovers via <code>ListTools</code>, and re-registers the new set. The entire process is transparent to the rest of the framework.</p>
+<p>The configuration is declarative:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #89B4FA;">mcp</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  servers</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> name</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> codegraph</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      enabled</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      auto_start</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      timeout</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 30</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      transport</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">        type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> stdio</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">        stdio</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">          command</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> codegraph-mcp-server</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">          args</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;serve&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">          work_dir</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> /path/to/project</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    -</span><span style="color: #89B4FA;"> name</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> remote-db</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      enabled</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      auto_start</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">      transport</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">        type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> sse</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">        sse</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">          url</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> http://db-tools.internal:8080/mcp</span></span></code></pre>
+<p>Validation in <code>internal/ares_config/config.go</code> catches configuration errors early: duplicate server names, missing commands for stdio, missing URLs for SSE, invalid transport types. Fail fast, fail loud.</p>
+<hr />
+<h2 id="the-bridge-mcp-tools-become-native-tools">The Bridge: MCP Tools Become Native Tools</h2>
+<p>Here's where the magic happens. The whole point of MCP integration is that <strong>MCP tools should be indistinguishable from native tools</strong> to the rest of the framework. An agent calling an MCP tool shouldn't know or care that the tool lives in a separate process.</p>
+<p>The bridge is <code>MCPTool</code> in <code>internal/ares_mcp/mcp_tool.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MCPTool</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">BaseTool</span></span>
+<span class="giallo-l"><span>    client</span><span style="color: #94E2D5;">     *</span><span style="color: #F9E2AF;font-style: italic;">MCPClient</span></span>
+<span class="giallo-l"><span>    serverName</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span>    toolDef</span><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">MCPToolDef</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Construction happens in <code>NewMCPTool</code>. It takes an <code>MCPToolDef</code> (the server's description of the tool) and wraps it:</p>
+<ol>
+<li>
+<p><strong>Schema conversion</strong> — The MCP <code>inputSchema</code> is raw JSON Schema. Our tool system uses <code>core.ParameterSchema</code>. The <code>ConvertJSONSchema</code> function in <code>internal/ares_mcp/schema.go</code> bridges the two, preserving type information, required fields, and enum constraints.</p>
+</li>
+<li>
+<p><strong>Namespacing</strong> — Tool names become <code>mcp.&lt;serverName&gt;.&lt;toolName&gt;</code>. If the <code>codegraph</code> server exposes an <code>analyze</code> tool, the full name is <code>mcp.codegraph.analyze</code>. This prevents collisions between tools from different servers.</p>
+</li>
+<li>
+<p><strong>Categorization</strong> — MCP tools get <code>core.CategoryExternal</code> and <code>core.CapabilityExternal</code>. The capability engine in <code>internal/tools/resources/core/capability.go</code> uses these to filter tools by origin.</p>
+</li>
+<li>
+<p><strong>Interface satisfaction</strong> — By embedding <code>base.BaseTool</code>, the <code>MCPTool</code> automatically satisfies the <code>core.Tool</code> interface defined in <code>internal/tools/resources/core/tool.go</code>. No boilerplate.</p>
+</li>
+</ol>
+<p>The <code>Execute</code> method is the payoff:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">t </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MCPTool</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> params</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}) (</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    result</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> t</span><span style="color: #9399B2;">.</span><span>client</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">CallTool</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> t</span><span style="color: #9399B2;">.</span><span>toolDef</span><span style="color: #9399B2;">.</span><span>Name</span><span style="color: #9399B2;">,</span><span> params</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> core</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewErrorResult</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Error</span><span style="color: #9399B2;">()),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> result</span><span style="color: #9399B2;">.</span><span>IsError</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> core</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewErrorResult</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">extractText</span><span style="color: #9399B2;">(</span><span>result</span><span style="color: #9399B2;">.</span><span>Content</span><span style="color: #9399B2;">)),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> core</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewResult</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">true</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}{</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;content&quot;</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;"> extractText</span><span style="color: #9399B2;">(</span><span>result</span><span style="color: #9399B2;">.</span><span>Content</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        &quot;blocks&quot;</span><span style="color: #9399B2;">:</span><span>  result</span><span style="color: #9399B2;">.</span><span>Content</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The tool delegates to the MCP client, which sends a <code>tools/call</code> request over the transport. The response comes back as content blocks (text, images, embedded resources). We convert it to a <code>core.Result</code> and return it.</p>
+<p>Notice the error handling: transport failures and tool-level errors both return <code>core.Result</code> with <code>Success: false</code>, not Go errors. The Go error return is always <code>nil</code>. This keeps the tool execution boundary clean — the caller checks <code>result.Success</code>, not <code>err != nil</code>.</p>
+<hr />
+<h2 id="the-registry-one-map-to-rule-them-all">The Registry: One Map to Rule Them All</h2>
+<p>The <code>core.Registry</code> in <code>internal/tools/resources/core/registry.go</code> is a thread-safe <code>map[string]Tool</code> with a lazy schema cache. MCP tools, built-in tools, plugin tools — they all live in the same registry. When an agent needs to execute a tool, it calls <code>registry.Execute(name, params)</code>. The registry looks up the tool by name, validates parameters against the cached schema, and calls <code>tool.Execute</code>.</p>
+<p>The registration flow for MCP tools:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph LR</span></span>
+<span class="giallo-l"><span>    A[MCPManager.Start] --&gt; B[ConnectServer]</span></span>
+<span class="giallo-l"><span>    B --&gt; C[MCPClient.Connect]</span></span>
+<span class="giallo-l"><span>    C --&gt; D[Transport.Start]</span></span>
+<span class="giallo-l"><span>    D --&gt; E[initialize handshake]</span></span>
+<span class="giallo-l"><span>    E --&gt; F[ListTools]</span></span>
+<span class="giallo-l"><span>    F --&gt; G[registerTools]</span></span>
+<span class="giallo-l"><span>    G --&gt; H[&quot;NewMCPTool (schema + namespace)&quot;]</span></span>
+<span class="giallo-l"><span>    H --&gt; I[registry.Register]</span></span>
+<span class="giallo-l"><span>    I --&gt; J[Tool available to agents]</span></span></code></pre>
+<p>The manager keeps a list of registered tool names per server. When disconnecting, it unregisters exactly those tools — no more, no less. This prevents stale tool references from lingering in the registry after a server goes down.</p>
+<hr />
+<h2 id="error-handling-timeouts-retries-and-graceful-degradation">Error Handling: Timeouts, Retries, and Graceful Degradation</h2>
+<p>MCP tools are network calls in disguise. They can hang, fail, or return garbage. We handle this at multiple layers:</p>
+<p><strong>Timeouts</strong> — Every <code>CallTool</code> invocation uses <code>context.WithTimeout</code>, defaulting to 30 seconds. The timeout is configurable per-server in the YAML config. If a tool server doesn't respond in time, the context cancels, the pending request channel is cleaned up, and the caller gets a timeout error.</p>
+<p><strong>Request correlation</strong> — The <code>MCPClient</code> uses a <code>map[int64]chan *JSONRPCMessage</code> to correlate requests with responses. Each outbound request gets a unique ID from an atomic counter (<code>IDGenerator</code> in <code>internal/ares_mcp/jsonrpc.go</code>). A buffered channel is registered in the <code>pending</code> map before sending. The <code>receiveLoop</code> goroutine dispatches responses to the correct channel by matching <code>msg.ID</code>. If the context times out, the channel is removed from the map, preventing memory leaks.</p>
+<p><strong>JSON-RPC error codes</strong> — The protocol defines standard error codes: <code>ParseError (-32700)</code>, <code>InvalidRequest (-32600)</code>, <code>MethodNotFound (-32601)</code>, <code>InvalidParams (-32602)</code>, <code>InternalError (-32603)</code>. Our <code>JSONRPCError</code> type implements the <code>error</code> interface, so protocol-level errors propagate naturally through Go's error handling.</p>
+<p><strong>Graceful close</strong> — When a transport fails to close, we log the warning but don't propagate the error. The client's <code>Close</code> method drains all pending channels, ensuring no goroutine is left waiting on a response that will never come.</p>
+<p><strong>Honest reflection</strong>: We don't have retry logic or circuit breakers yet. If a tool server crashes mid-request, the caller gets an error and that's it. We considered adding automatic retries with exponential backoff, but decided to keep it simple for now. The manager's <code>RefreshTools</code> handles server-side changes, but transient failures are the caller's problem. This is a gap we'll close when we see real production workloads that need it.</p>
+<hr />
+<h2 id="dashboard-seeing-what-s-connected">Dashboard: Seeing What's Connected</h2>
+<p>The web dashboard needs to show MCP server status in real time. We defined a clean interface for this in <code>internal/dashboard/types.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MCPStatusProvider</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ListServers</span><span style="color: #9399B2;">() []</span><span style="color: #F9E2AF;font-style: italic;">MCPServerStatusView</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>MCPManager</code> satisfies this interface. <code>MCPServerStatusView</code> includes <code>Name</code>, <code>Connected</code>, <code>ToolCount</code>, <code>Version</code>, <code>Error</code>, <code>ConnAt</code>, and a <code>Tools</code> slice with per-tool details. The REST API exposes this at <code>GET /mcp</code> and <code>GET /mcp/{name}</code>.</p>
+<p>For real-time updates, the dashboard uses WebSocket channels. When MCP tools change — a server connects, disconnects, or refreshes its tool set — a <code>mcp_tool_change</code> message is broadcast on the <code>mcp</code> WebSocket channel. The frontend subscribes to this channel and updates the UI without polling.</p>
+<p>The wiring happens in <code>internal/ares_bootstrap/bootstrap.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> SetupMCP</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> cfg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ares_config</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">MCPConfig</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> registry</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Registry</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ares_mcp</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">MCPManager</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // convert config types, create manager, call Start</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is called during bootstrap, before the dashboard or orchestrator starts. By the time the web UI loads, all auto-start MCP servers are already connected and their tools are registered.</p>
+<hr />
+<h2 id="the-plugin-factory-dynamic-tool-creation">The Plugin Factory: Dynamic Tool Creation</h2>
+<p>There's one more integration point: the <code>MCPToolFactory</code> in <code>internal/ares_mcp/factory.go</code>. It implements <code>core.ToolFactory</code> from <code>internal/tools/resources/core/factory.go</code>, which means MCP tools can be created dynamically through the plugin registry.</p>
+<p>The factory accepts a config map with <code>name</code>, <code>transport_type</code>, <code>command</code> or <code>url</code>, creates a temporary MCP client, discovers tools, and returns the first one. This is useful for ad-hoc tool creation — "I need a tool that talks to this server, but I don't want to add it to the YAML config."</p>
+<p>We include a compile-time interface check to make sure we don't accidentally break the contract:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> _</span><span style="color: #F9E2AF;font-style: italic;"> core</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ToolFactory</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MCPToolFactory</span><span style="color: #9399B2;">)(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>This pattern appears everywhere in the MCP codebase. Every transport, every tool, every factory has a compile-time check. It's a small thing, but it catches integration bugs at build time instead of runtime.</p>
+<hr />
+<h2 id="the-honest-truth">The Honest Truth</h2>
+<p>MCP integration was one of those features that started as a "nice to have" and became essential. The initial motivation was selfish — I was tired of writing Go wrappers for Python tools. But once we had the protocol working, something unexpected happened: <strong>other people started writing tool servers.</strong></p>
+<p>The code analysis tool is written in Rust. The database tool is a standalone Go binary. The file search tool is a Python script. They all speak MCP, and they all appear as native tools in ares. The framework doesn't know or care what language they're written in. That's the real value of a protocol — it's a contract, not an implementation.</p>
+<p><strong>Honest reflection</strong>: The schema conversion layer (<code>ConvertJSONSchema</code> in <code>internal/ares_mcp/schema.go</code>) is the weakest link. JSON Schema is a sprawling spec with <code>oneOf</code>, <code>anyOf</code>, <code>allOf</code>, <code>$ref</code>, and a dozen other constructs we don't fully support. We handle the common cases — objects with typed properties, required fields, enums, defaults — but complex nested schemas can produce surprising results. We'll need to invest in a proper JSON Schema parser if MCP adoption grows.</p>
+<p>The server-side implementation (<code>internal/ares_mcp/server.go</code>) is also more complete than we originally planned. We built it for testing, then realized it's useful for creating ares-to-ares tool bridges — one ares instance exposing its tools to another via MCP. This wasn't in the original design, but it fell out naturally from the protocol.</p>
+<hr />
+<h2 id="what-s-next">What's Next</h2>
+<p>The MCP integration is stable, but there's more to do:</p>
+<ul>
+<li><strong>Retry and circuit breaker</strong> patterns for transient failures</li>
+<li><strong>Tool versioning</strong> — handling schema changes when a server updates its tools</li>
+<li><strong>Authentication</strong> — MCP doesn't define auth yet, but we'll need it for production deployments</li>
+<li><strong>Metrics</strong> — tool call latency, error rates, server uptime</li>
+</ul>
+<p>The protocol is young. The ecosystem is growing. And for the first time, adding a tool to ares doesn't require touching the framework's source code. That's the whole point.</p>
+<hr />
+<h2 id="series-index">Series Index</h2>
+<table><thead><tr><th>#</th><th>Topic</th><th>What You'll Learn</th></tr></thead><tbody>
+<tr><td>I</td><td>Architecture Overview</td><td>The big picture and five-layer architecture</td></tr>
+<tr><td>II</td><td>Agent Harmony Protocol</td><td>Multi-agent communication patterns</td></tr>
+<tr><td>III</td><td>Memory Distillation</td><td>How agents remember and forget</td></tr>
+<tr><td>IV</td><td>Workflow Engine</td><td>DAG-based dynamic orchestration</td></tr>
+<tr><td>V</td><td>Tool Invocation Layer</td><td>Three paths to tool execution</td></tr>
+<tr><td>VI</td><td>Security &amp; Observability</td><td>Defense in depth and tracing</td></tr>
+<tr><td>VII</td><td>Runtime &amp; Lifecycle</td><td>Agent birth, death, and resurrection</td></tr>
+<tr><td>VIII</td><td>Event System</td><td>Event sourcing for state recovery</td></tr>
+<tr><td>IX</td><td>Arena / Fault Injection</td><td>Chaos engineering for agents</td></tr>
+<tr><td>X</td><td>Retrieval System</td><td>Hybrid search and scoring</td></tr>
+<tr><td>XI</td><td>Autonomous Evolution</td><td>Self-improving agents</td></tr>
+<tr><td>XII</td><td>Security Hardening</td><td>Threat defense</td></tr>
+<tr><td>XIII</td><td>Bootstrap &amp; API Layer</td><td>Wiring without the pain</td></tr>
+<tr><td>XIV</td><td><em>(Reserved)</em></td><td>—</td></tr>
+<tr><td>XV</td><td><strong>MCP Integration</strong></td><td>Tool discovery and protocol bridging</td></tr>
+</tbody></table>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/14-plugin-system/">
+                                <span class="button__text">Plugin System — Extending Without Touching</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

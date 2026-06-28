@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Plugin System — Extending Without Touching | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="What if the executor didn't know about any of the plugins?">
+
+    <meta property="og:description" content="What if the executor didn't know about any of the plugins?">
+    <meta property="og:title" content="Plugin System — Extending Without Touching | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/14-plugin-system/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="What if the executor didn't know about any of the plugins?">
+    <meta name="twitter:title" content="Plugin System — Extending Without Touching | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/14-plugin-system/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/14-plugin-system/">Plugin System — Extending Without Touching</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/architecture/">#Architecture</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/plugin/">#Plugin</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ares-architecture-deep-dive-xiv-plugin-system-extending-without-touching">ares Architecture Deep Dive (XIV): Plugin System — Extending Without Touching</h1>
+<blockquote>
+<p>I had a checkpoint plugin, a memory router, and a tool recorder — all wired directly into the executor. Every time I wanted to add a new behavior, I was editing the same 400-line file, adding another <code>if</code> branch, another goroutine, another channel. The executor was becoming a junk drawer.
+That's when I realized: the problem isn't that we need more features. The problem is that every feature lives in the same place. <strong>What if the executor didn't know about any of them?</strong></p>
+</blockquote>
+<hr />
+<h2 id="1-the-junk-drawer-problem">1. The Junk Drawer Problem</h2>
+<p>Back when ares had maybe three plugins, life was simple. The executor had a <code>checkpoint</code> field, a <code>router</code> field, and a <code>memory</code> field. Each one was called at a specific point in the step lifecycle — save checkpoint before the step, route after the step, query memory somewhere in between. It worked. It was readable. It was fine.</p>
+<p>Then I added tool recording. Then interrupt handling. Then loop management. Then recovery policies. Then evolution recommendations. Each addition meant touching the executor struct, the executor's <code>Start</code> method, the executor's <code>Stop</code> method, and the step execution path. The struct grew to fifteen fields. The <code>Start</code> method became a laundry list of nil checks and initialization. The step execution path had hook calls interleaved with core logic.</p>
+<p>The worst part? Half these features didn't even know about each other, but they all lived in the same file. The checkpoint plugin needed to flush at loop boundaries — so now the executor knew about both. The memory router needed to find the memory plugin — so the executor was passing references around. The tool recorder needed to write to the same collector as the checkpoint plugin — so the executor was managing a shared data structure that two unrelated features depended on.</p>
+<p>I was building a monolith with extension points painted on.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Before: Executor as Junk Drawer&quot;</span></span>
+<span class="giallo-l"><span>        E[Executor] --&gt; CP[Checkpoint]</span></span>
+<span class="giallo-l"><span>        E --&gt; RT[Router]</span></span>
+<span class="giallo-l"><span>        E --&gt; MM[Memory]</span></span>
+<span class="giallo-l"><span>        E --&gt; TL[Tool Recorder]</span></span>
+<span class="giallo-l"><span>        E --&gt; LP[Loop Manager]</span></span>
+<span class="giallo-l"><span>        E --&gt; RV[Recovery]</span></span>
+<span class="giallo-l"><span>        E --&gt; IR[Interrupt Handler]</span></span>
+<span class="giallo-l"><span>        E --&gt; ER[Evolution]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;After: PluginBus&quot;</span></span>
+<span class="giallo-l"><span>        PB[PluginBus] --&gt; P1[Plugin A]</span></span>
+<span class="giallo-l"><span>        PB --&gt; P2[Plugin B]</span></span>
+<span class="giallo-l"><span>        PB --&gt; P3[Plugin C]</span></span>
+<span class="giallo-l"><span>        PB --&gt; PN[Plugin N]</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre>
+<p>The fix was obvious once I saw it: <strong>stop putting features in the executor. Put them in plugins. Give the executor a bus, and let plugins register themselves.</strong></p>
+<hr />
+<h2 id="2-the-runtimeplugin-interface">2. The RuntimePlugin Interface</h2>
+<p>The interface had to be minimal. If it had too many methods, writing a plugin would feel like writing a mini-executor. If it had too few, plugins couldn't do anything useful.</p>
+<p>Four methods. That's it.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_runtime/plugin.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> RuntimePlugin</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Name</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Capabilities</span><span style="color: #9399B2;">() []</span><span style="color: #F9E2AF;font-style: italic;">Capability</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Start</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> bus</span><span style="color: #F9E2AF;font-style: italic;"> EventBus</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Stop</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>Name()</code> is the identity. <code>Capabilities()</code> is the service tag. <code>Start</code> and <code>Stop</code> are the lifecycle. The key design decision: <code>Start</code> receives the <code>EventBus</code> as a parameter. This means plugins don't need a reference to the bus at construction time — they get it when they start. It also means the bus can be swapped out in tests without rebuilding the plugin.</p>
+<p>The contract says <code>Start</code> MUST be non-blocking. If a plugin needs to run a background goroutine (like the ObserverPlugin draining events), it spawns the goroutine in <code>Start</code> and cancels it in <code>Stop</code>. The bus enforces this with a timeout — more on that later.</p>
+<p>Eight capability constants define the functional areas:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CapObserver</span><span style="color: #F9E2AF;font-style: italic;">   Capability</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;observer&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CapCheckpoint</span><span style="color: #F9E2AF;font-style: italic;"> Capability</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;checkpoint&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CapRouter</span><span style="color: #F9E2AF;font-style: italic;">     Capability</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;router&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CapLoop</span><span style="color: #F9E2AF;font-style: italic;">       Capability</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;loop&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CapMemory</span><span style="color: #F9E2AF;font-style: italic;">     Capability</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;memory&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CapEvolution</span><span style="color: #F9E2AF;font-style: italic;">  Capability</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;evolution&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CapTool</span><span style="color: #F9E2AF;font-style: italic;">       Capability</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;tool&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    CapRecovery</span><span style="color: #F9E2AF;font-style: italic;">   Capability</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;recovery&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p>A plugin can advertise multiple capabilities. The CheckpointPlugin, for example, advertises <code>CapCheckpoint</code>. The MemoryRouter advertises <code>CapRouter</code>. These aren't just labels — they're the keys for runtime service discovery, as we'll see in the <code>PluginsByCap</code> section.</p>
+<h3 id="extended-interfaces">Extended Interfaces</h3>
+<p>Some plugins need more than the base four methods. Rather than bloating <code>RuntimePlugin</code>, we define optional interfaces that the bus can discover via type assertion:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MemoryPlugin</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    RuntimePlugin</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    AdviseRoute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> state</span><span style="color: #F9E2AF;font-style: italic;"> RouteState</span><span style="color: #9399B2;">) ([]</span><span style="color: #F9E2AF;font-style: italic;">RouteAdvice</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EvolutionPlugin</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    RuntimePlugin</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Recommend</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> state</span><span style="color: #F9E2AF;font-style: italic;"> ExecutionState</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">RuntimeRecommendation</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    RecordOutcome</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> outcome</span><span style="color: #F9E2AF;font-style: italic;"> ExecutionOutcome</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> RecoveryPlugin</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    RuntimePlugin</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ShouldRecover</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> failure</span><span style="color: #F9E2AF;font-style: italic;"> StepFailure</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> state</span><span style="color: #F9E2AF;font-style: italic;"> ExecutionState</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> bool</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is the Interface Segregation Principle in practice. The bus doesn't know about <code>MemoryPlugin</code> — only the routers that need memory advice do. The bus doesn't know about <code>EvolutionPlugin</code> — only the evolution router and loop plugin do. Each consumer discovers the interface it needs at runtime.</p>
+<hr />
+<h2 id="3-the-pluginbus-registry-lifecycle-and-event-backbone">3. The PluginBus: Registry, Lifecycle, and Event Backbone</h2>
+<p>The <code>PluginBus</code> is the central nervous system. It's simultaneously a plugin registry, a lifecycle manager, a hook dispatcher, and an event bus. One struct, four jobs.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_runtime/bus.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> PluginBus</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    plugins</span><span style="color: #9399B2;">       []</span><span style="color: #F9E2AF;font-style: italic;">RuntimePlugin</span></span>
+<span class="giallo-l"><span>    hooks</span><span style="color: #9399B2;">         []</span><span style="color: #F9E2AF;font-style: italic;">namedHook</span></span>
+<span class="giallo-l"><span>    caps</span><span style="color: #CBA6F7;">          map</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">Capability</span><span style="color: #9399B2;">][]</span><span style="color: #F9E2AF;font-style: italic;">RuntimePlugin</span></span>
+<span class="giallo-l"><span>    subscribers</span><span style="color: #9399B2;">   []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">subscriber</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">            sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span>    started</span><span style="color: #CBA6F7;">       bool</span></span>
+<span class="giallo-l"><span>    pluginTimeout</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span></span>
+<span class="giallo-l"><span>    logger</span><span style="color: #94E2D5;">        *</span><span style="color: #F9E2AF;font-style: italic;">slog</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Logger</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Construction uses the functional options pattern:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>bus</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> NewPluginBus</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    WithPluginTimeout</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Second</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    WithLogger</span><span style="color: #9399B2;">(</span><span>myLogger</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre><h3 id="registration">Registration</h3>
+<p><code>Register</code> does four things in one call:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">PluginBus</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Register</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">plugin</span><span style="color: #F9E2AF;font-style: italic;"> RuntimePlugin</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 1. Reject nil, duplicates, and late registration</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 2. Append to b.plugins</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 3. Index under each capability in b.caps</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 4. Auto-register as WorkflowHook if implemented</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> hook</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> plugin</span><span style="color: #9399B2;">.(</span><span style="color: #F9E2AF;font-style: italic;">WorkflowHook</span><span style="color: #9399B2;">);</span><span> ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        b</span><span style="color: #9399B2;">.</span><span>hooks</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>b</span><span style="color: #9399B2;">.</span><span>hooks</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> namedHook</span><span style="color: #9399B2;">{</span><span>pluginName</span><span style="color: #9399B2;">:</span><span> plugin</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Name</span><span style="color: #9399B2;">(),</span><span> hook</span><span style="color: #9399B2;">:</span><span> hook</span><span style="color: #9399B2;">})</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>That fourth step is the magic. A plugin that implements both <code>RuntimePlugin</code> and <code>WorkflowHook</code> gets registered as both — without the plugin author writing any glue code. The CheckpointPlugin, ToolPlugin, MemoryRouter, LoopPlugin, InterruptPlugin, and ArenaPlugin all benefit from this. One struct, two interfaces, automatic wiring.</p>
+<h3 id="start-and-stop">Start and Stop</h3>
+<p><code>Start</code> iterates plugins in registration order. <code>Stop</code> iterates in <strong>reverse</strong> order. This is LIFO teardown — the last plugin to start is the first to stop. If plugin B depends on plugin A (say, a router depending on the bus's event system), B should be registered after A and will be stopped before A.</p>
+<p>Every <code>Start</code> and <code>Stop</code> call goes through <code>invokeWithTimeout</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> invokeWithTimeout</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> timeout</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    pluginName</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> fn</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) (</span><span style="color: #EBA0AC;font-style: italic;">err</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    callCtx</span><span style="color: #9399B2;">,</span><span> cancel</span><span style="color: #94E2D5;"> :=</span><span> context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithTimeout</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> timeout</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span style="color: #89B4FA;font-style: italic;"> cancel</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    done</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">chan error</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    go func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        defer func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> recover</span><span style="color: #9399B2;">();</span><span> r</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                done</span><span style="color: #94E2D5;"> &lt;- &amp;</span><span style="color: #F9E2AF;font-style: italic;">PluginError</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>                    PluginName</span><span style="color: #9399B2;">:</span><span> pluginName</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                    Err</span><span style="color: #9399B2;">:</span><span>        ErrPluginPanic</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                    Recovered</span><span style="color: #9399B2;">:</span><span>  r</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }()</span></span>
+<span class="giallo-l"><span>        done</span><span style="color: #94E2D5;"> &lt;-</span><span style="color: #89B4FA;font-style: italic;"> fn</span><span style="color: #9399B2;">(</span><span>callCtx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> err</span><span style="color: #94E2D5;"> = &lt;-</span><span>done</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #94E2D5;"> &lt;-</span><span>callCtx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Done</span><span style="color: #9399B2;">():</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;%w: %w&quot;</span><span style="color: #9399B2;">,</span><span> ErrPluginTimeout</span><span style="color: #9399B2;">,</span><span> callCtx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Err</span><span style="color: #9399B2;">())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Three layers of protection: panic recovery via <code>defer recover()</code>, timeout via <code>context.WithTimeout</code> (default 30 seconds), and error propagation via the result channel. If a plugin panics during <code>Start</code>, the bus catches it, wraps it in a <code>PluginError</code>, and continues with the next plugin. If a plugin hangs forever, the timeout kills it after 30 seconds.</p>
+<p><code>Start</code> collects all errors and returns them joined:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">return</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Join</span><span style="color: #9399B2;">(</span><span>errs</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>This means one failing plugin doesn't prevent others from starting. The bus is optimistic — it starts everything it can and reports all failures at once.</p>
+<h3 id="service-discovery-pluginsbycap">Service Discovery: PluginsByCap</h3>
+<p>This is how plugins find each other without tight coupling:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">PluginBus</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> PluginsByCap</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">cap</span><span style="color: #F9E2AF;font-style: italic;"> Capability</span><span style="color: #9399B2;">) []</span><span style="color: #F9E2AF;font-style: italic;">RuntimePlugin</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    b</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RLock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> b</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RUnlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>    plugins</span><span style="color: #94E2D5;"> :=</span><span> b</span><span style="color: #9399B2;">.</span><span>caps</span><span style="color: #9399B2;">[</span><span>cap</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>plugins</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    result</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #F9E2AF;font-style: italic;">RuntimePlugin</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>plugins</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    copy</span><span style="color: #9399B2;">(</span><span>result</span><span style="color: #9399B2;">,</span><span> plugins</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> result</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The MemoryRouter uses this to find MemoryPlugin instances. The EvolutionRouter uses it to find EvolutionPlugin instances. The LoopPlugin uses it to find CheckpointPlugin, MemoryPlugin, and EvolutionPlugin instances at round boundaries. No direct references, no constructor injection — just "give me everything that can do X."</p>
+<hr />
+<h2 id="4-workflowhook-interceptors-with-teeth">4. WorkflowHook: Interceptors with Teeth</h2>
+<p>The <code>WorkflowHook</code> interface is the step-level extension point:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> WorkflowHook</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    BeforeStep</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> executionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> step</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Step</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    AfterStep</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> executionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> result</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">StepResult</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The bus calls <code>BeforeStep</code> before each step and <code>AfterStep</code> after each step. But here's the critical contract: <strong>hook failures do not abort step execution.</strong> If a hook panics, times out, or returns an error, the bus logs it and moves on to the next hook. The step still executes.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">PluginBus</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> BeforeStep</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> executionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> step</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Step</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> errs</span><span style="color: #9399B2;"> []</span><span style="color: #CBA6F7;">error</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> nh</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> hooks</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> invokeWithTimeout</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> b</span><span style="color: #9399B2;">.</span><span>pluginTimeout</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            nh</span><span style="color: #9399B2;">.</span><span>pluginName</span><span style="color: #94E2D5;">+</span><span style="color: #A6E3A1;">&quot;:beforeStep&quot;</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">sctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                return</span><span> nh</span><span style="color: #9399B2;">.</span><span>hook</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">BeforeStep</span><span style="color: #9399B2;">(</span><span>sctx</span><span style="color: #9399B2;">,</span><span> executionID</span><span style="color: #9399B2;">,</span><span> step</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            });</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            b</span><span style="color: #9399B2;">.</span><span>logger</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Warn</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;runtime: before step hook failed (continuing)&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;plugin&quot;</span><span style="color: #9399B2;">,</span><span> nh</span><span style="color: #9399B2;">.</span><span>pluginName</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;error&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            errs</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>errs</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Join</span><span style="color: #9399B2;">(</span><span>errs</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is a deliberate design choice. A misbehaving hook should not break the workflow. The checkpoint plugin failing to save shouldn't prevent the step from executing. The tool recorder timing out shouldn't hang the pipeline. Log it, aggregate it, keep going.</p>
+<p>The <code>Step</code> and <code>StepResult</code> types are lightweight mirrors of the engine types:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Step</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #9399B2;">,</span><span> Name</span><span style="color: #9399B2;">,</span><span> AgentType</span><span style="color: #9399B2;">,</span><span> Output</span><span style="color: #9399B2;">,</span><span> Error</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span>    Status</span><span style="color: #F9E2AF;font-style: italic;">    StepStatus</span></span>
+<span class="giallo-l"><span>    StartedAt</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> StepResult</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    StepID</span><span style="color: #9399B2;">,</span><span> Name</span><span style="color: #9399B2;">,</span><span> Output</span><span style="color: #9399B2;">,</span><span> Error</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span>    Status</span><span style="color: #F9E2AF;font-style: italic;">   StepStatus</span></span>
+<span class="giallo-l"><span>    Duration</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span></span>
+<span class="giallo-l"><span>    Metadata</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>These are defined in the <code>ares_runtime</code> package to avoid import cycles with the workflow engine. The engine copies data into these structs before calling the bus, and the bus passes them to hooks. It's a boundary — clean, explicit, and dependency-free.</p>
+<hr />
+<h2 id="5-eventbus-typed-pub-sub-with-drop-semantics">5. EventBus: Typed Pub/Sub with Drop Semantics</h2>
+<p>The <code>EventBus</code> interface is how plugins communicate without knowing each other:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EventBus</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Emit</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> eventType</span><span style="color: #F9E2AF;font-style: italic;"> ares_events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">EventType</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">        moduleName</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> payload</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Subscribe</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> filter</span><span style="color: #F9E2AF;font-style: italic;"> ares_events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">EventFilter</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">&lt;-</span><span style="color: #CBA6F7;">chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ares_events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>PluginBus</code> itself implements <code>EventBus</code>. When a plugin calls <code>Emit</code>, the bus constructs an <code>Event</code> with a UUID, timestamp, and the provided fields, then fans it out to all matching subscribers.</p>
+<p>The critical property: <strong>non-blocking emit with drop semantics.</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">PluginBus</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Emit</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    eventType</span><span style="color: #F9E2AF;font-style: italic;"> ares_events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">EventType</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> moduleName</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> payload</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    evt</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">ares_events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">{</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> s</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> subs</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span style="color: #89B4FA;font-style: italic;">matchFilter</span><span style="color: #9399B2;">(</span><span>evt</span><span style="color: #9399B2;">,</span><span> s</span><span style="color: #9399B2;">.</span><span>filter</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            continue</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            defer func</span><span style="color: #9399B2;">() {</span><span> _</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> recover</span><span style="color: #9399B2;">() }()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            case</span><span> s</span><span style="color: #9399B2;">.</span><span>ch</span><span style="color: #94E2D5;"> &lt;-</span><span> evt</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            case</span><span style="color: #94E2D5;"> &lt;-</span><span>ctx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Done</span><span style="color: #9399B2;">():</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                return</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            default</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">                // Drop event if buffer full.</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Three protections in one: the <code>select</code> with <code>default</code> drops events when the subscriber's 64-element buffer is full. The <code>defer recover()</code> catches send-on-closed-channel when a subscriber's cleanup goroutine races with the emit. The <code>ctx.Done()</code> check prevents blocking on cancelled contexts.</p>
+<p>This means a slow plugin cannot backpressure the entire event pipeline. If the ObserverPlugin's store is slow and its buffer fills up, events are dropped — not queued, not blocked. The alternative (unbounded buffering) would cause memory leaks. The alternative (backpressure) would cause cascading slowdowns. Drop is the least bad option.</p>
+<p>Subscribe returns a channel that automatically closes when the context is cancelled:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">PluginBus</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Subscribe</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    filter</span><span style="color: #F9E2AF;font-style: italic;"> ares_events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">EventFilter</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">&lt;-</span><span style="color: #CBA6F7;">chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ares_events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    ch</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ares_events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 64</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    sub</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">subscriber</span><span style="color: #9399B2;">{</span><span>ch</span><span style="color: #9399B2;">:</span><span> ch</span><span style="color: #9399B2;">,</span><span> filter</span><span style="color: #9399B2;">:</span><span> filter</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span>    b</span><span style="color: #9399B2;">.</span><span>subscribers</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>b</span><span style="color: #9399B2;">.</span><span>subscribers</span><span style="color: #9399B2;">,</span><span> sub</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    go func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        &lt;-</span><span>ctx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Done</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Remove subscriber and close channel</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> ch</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The filter matches on <code>Types</code> and <code>StreamIDs</code>. Empty filter fields mean "match all." Non-empty fields mean "match any of these." The ObserverPlugin subscribes to seven event types (workflow started/completed/failed, step started/completed/failed, checkpoint.saved). The ArenaPlugin subscribes to fault events. Each plugin sees exactly what it needs.</p>
+<hr />
+<h2 id="6-the-built-in-plugins">6. The Built-in Plugins</h2>
+<h3 id="observerplugin">ObserverPlugin</h3>
+<p>The simplest plugin. It subscribes to lifecycle events and persists them to an <code>EventStore</code>. In <code>Start</code>, it derives an independent context from <code>context.Background()</code> (so it survives the <code>Start</code> call's timeout), spawns a goroutine that drains the channel, and calls <code>store.Append</code> for each event. In <code>Stop</code>, it cancels the context, which removes the subscription and exits the goroutine.</p>
+<p>No hooks, no capabilities beyond <code>CapObserver</code>. Pure event sink.</p>
+<h3 id="checkpointplugin">CheckpointPlugin</h3>
+<p>The heavyweight. It implements <code>RuntimePlugin</code>, <code>WorkflowHook</code>, and <code>Flusher</code>. Before each step, it creates or updates an <code>ExperienceCheckpoint</code> snapshot. After each step, it records the result. It supports batched writes via <code>WithFlushInterval(n)</code> — save every N hook calls instead of every call.</p>
+<p>The <code>ExperienceCheckpoint</code> is a rich struct:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ExperienceCheckpoint</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    SchemaVersion</span><span style="color: #CBA6F7;">    int</span></span>
+<span class="giallo-l"><span>    ExecutionID</span><span style="color: #CBA6F7;">      string</span></span>
+<span class="giallo-l"><span>    WorkflowID</span><span style="color: #CBA6F7;">       string</span></span>
+<span class="giallo-l"><span>    StateVersion</span><span style="color: #CBA6F7;">     int64</span></span>
+<span class="giallo-l"><span>    StepStates</span><span style="color: #9399B2;">       []</span><span style="color: #F9E2AF;font-style: italic;">StepStateSnapshot</span></span>
+<span class="giallo-l"><span>    Variables</span><span style="color: #CBA6F7;">        map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">interface</span><span style="color: #9399B2;">{}</span></span>
+<span class="giallo-l"><span>    DAGNodes</span><span style="color: #9399B2;">         []</span><span style="color: #CBA6F7;">string</span></span>
+<span class="giallo-l"><span>    DAGEdges</span><span style="color: #9399B2;">         []</span><span style="color: #F9E2AF;font-style: italic;">DAGEdge</span></span>
+<span class="giallo-l"><span>    RouteHistory</span><span style="color: #9399B2;">     []</span><span style="color: #F9E2AF;font-style: italic;">RouteEntry</span></span>
+<span class="giallo-l"><span>    ToolHistory</span><span style="color: #9399B2;">      []</span><span style="color: #F9E2AF;font-style: italic;">ToolEntry</span></span>
+<span class="giallo-l"><span>    MemoryHits</span><span style="color: #9399B2;">       []</span><span style="color: #F9E2AF;font-style: italic;">MemoryEntry</span></span>
+<span class="giallo-l"><span>    InterruptHistory</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">InterruptEntry</span></span>
+<span class="giallo-l"><span>    ErrorHistory</span><span style="color: #9399B2;">     []</span><span style="color: #F9E2AF;font-style: italic;">ErrorEntry</span></span>
+<span class="giallo-l"><span>    ScoringSignals</span><span style="color: #9399B2;">   []</span><span style="color: #F9E2AF;font-style: italic;">ScoringSignal</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... more fields</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Six history arrays, DAG topology, variables, scoring signals — everything needed to reconstruct an execution or feed the evolution system. The checkpoint is the plugin system's collective memory.</p>
+<h3 id="toolplugin">ToolPlugin</h3>
+<p>Records tool invocations via the <code>ExecutionCollector</code>. In <code>AfterStep</code>, it inspects <code>result.Metadata["tool_name"]</code> for tool invocation info. If present, it calls <code>collector.RecordTool(...)</code>. Also maintains a tool registry with <code>RegisterTool</code> and <code>IsRegistered</code> for validation.</p>
+<h3 id="memoryrouter">MemoryRouter</h3>
+<p>The most interesting router. It embeds <code>ExpressionRouter</code> for rule-based fallback, but adds memory-aware routing with <strong>async pre-fetch</strong>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">r </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MemoryRouter</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> BeforeStep</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> _</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> step</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Step</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    state</span><span style="color: #94E2D5;"> :=</span><span style="color: #F9E2AF;font-style: italic;"> RouteState</span><span style="color: #9399B2;">{</span><span>CurrentStepID</span><span style="color: #9399B2;">:</span><span> step</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    go func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>        advice</span><span style="color: #94E2D5;"> :=</span><span> r</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">queryMemory</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> state</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        r</span><span style="color: #9399B2;">.</span><span>prefetch</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>        r</span><span style="color: #9399B2;">.</span><span>prefetch</span><span style="color: #9399B2;">.</span><span>advice</span><span style="color: #94E2D5;"> =</span><span> advice</span></span>
+<span class="giallo-l"><span>        r</span><span style="color: #9399B2;">.</span><span>prefetch</span><span style="color: #9399B2;">.</span><span>stepID</span><span style="color: #94E2D5;"> =</span><span> step</span><span style="color: #9399B2;">.</span><span>ID</span></span>
+<span class="giallo-l"><span>        r</span><span style="color: #9399B2;">.</span><span>prefetch</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>BeforeStep</code> launches a background goroutine that queries memory while the step executes. When <code>Route()</code> is called after the step completes, the pre-fetched advice is used immediately — zero latency. If the pre-fetch hasn't completed, <code>Route()</code> falls through to a synchronous query.</p>
+<p>Service discovery happens via type assertion:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>pb</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> r</span><span style="color: #9399B2;">.</span><span>bus</span><span style="color: #9399B2;">.(</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">PluginBus</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>memPlugins</span><span style="color: #94E2D5;"> :=</span><span> pb</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">PluginsByCap</span><span style="color: #9399B2;">(</span><span>CapMemory</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>mp</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> memPlugins</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">].(</span><span style="color: #F9E2AF;font-style: italic;">MemoryPlugin</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>advice</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> mp</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">AdviseRoute</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> state</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>The router casts the <code>EventBus</code> to <code>*PluginBus</code> to access <code>PluginsByCap</code>. This is a deliberate tight coupling to the concrete type — the <code>EventBus</code> interface doesn't expose <code>PluginsByCap</code>. We'll discuss this tradeoff in the honest reflection section.</p>
+<h3 id="evolutionrouter">EvolutionRouter</h3>
+<p>Similar pattern to MemoryRouter, but consults <code>EvolutionPlugin.Recommend</code> instead. If the evolution plugin returns a recommendation with confidence &gt;= 0.3 and a <code>PreferredAgent</code>, and an <code>AgentStepResolver</code> is configured, it maps the agent name to a step ID. Falls through to expression rules otherwise.</p>
+<h3 id="fallbackrouter">FallbackRouter</h3>
+<p>Chain of Responsibility. Tries multiple <code>RouterPlugin</code> instances in order, returns the first non-nil decision. If all return nil, returns a fallback decision with <code>Source: "fallback"</code> and empty <code>NextStepID</code>, which tells the executor to continue with default DAG traversal.</p>
+<h3 id="loopplugin">LoopPlugin</h3>
+<p>Manages the evolutionary loop lifecycle. Does NOT drive the loop — the executor does that. Provides <code>ShouldExecuteRound(nextRound, vars)</code> for round boundary decisions and <code>OnRoundEnd(ctx, round, executionID)</code> for between-round orchestration.</p>
+<p><code>OnRoundEnd</code> is where the plugin system's collective intelligence comes together:</p>
+<ol>
+<li>Find <code>CapCheckpoint</code> plugins, call <code>Flush</code> on those implementing <code>Flusher</code></li>
+<li>Find <code>CapMemory</code> plugins, call <code>AdviseRoute</code></li>
+<li>Find <code>CapEvolution</code> plugins, call <code>RecordOutcome</code></li>
+</ol>
+<p>Three different plugin types, discovered by capability, coordinated at a single boundary point. No direct references between them.</p>
+<h3 id="basicrecoveryplugin">BasicRecoveryPlugin</h3>
+<p>Allowlist-based recovery policy. Steps whose IDs are in the allowlist are eligible for recovery. <code>ShouldRecover</code> checks the allowlist. <code>AllowStep</code> and <code>RevokeStep</code> manage it at runtime.</p>
+<h3 id="interruptplugin">InterruptPlugin</h3>
+<p>Observes HITL (Human-In-The-Loop) lifecycle events. In <code>AfterStep</code>, it inspects <code>result.Metadata</code> for interrupt actions, emits <code>EventInterruptCreated</code>, and records via the collector. It doesn't handle interrupts itself — that's the executor's job. It just watches and records.</p>
+<h3 id="arenaplugin">ArenaPlugin</h3>
+<p>Fault injection for chaos engineering. It can inject three fault types into any plugin:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    FaultPluginPanic</span><span style="color: #F9E2AF;font-style: italic;">   FaultType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;plugin_panic&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    FaultPluginTimeout</span><span style="color: #F9E2AF;font-style: italic;"> FaultType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;plugin_timeout&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    FaultPluginError</span><span style="color: #F9E2AF;font-style: italic;">   FaultType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;plugin_error&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p><code>ScheduleFault(pluginName, faultType)</code> schedules a fault. On the next <code>BeforeStep</code> call, it triggers: <code>panic(...)</code> for panic faults, <code>select{}</code> for timeout faults (the bus's <code>invokeWithTimeout</code> catches this), or <code>return ErrFaultInjected</code> for error faults.</p>
+<p>This is how we test the bus's resilience. The ArenaPlugin deliberately misbehaves, and we verify that the bus catches every failure mode — panics, timeouts, and errors — without crashing.</p>
+<hr />
+<h2 id="7-executioncollector-thread-safe-data-aggregation">7. ExecutionCollector: Thread-Safe Data Aggregation</h2>
+<p>Multiple plugins generate data during execution — routing decisions, tool invocations, memory hits, interrupt actions, errors. The <code>ExecutionCollector</code> aggregates all of it:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ExecutionCollector</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">           sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Mutex</span></span>
+<span class="giallo-l"><span>    executionID</span><span style="color: #CBA6F7;">  string</span></span>
+<span class="giallo-l"><span>    routeHistory</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">RouteRecord</span></span>
+<span class="giallo-l"><span>    toolHistory</span><span style="color: #9399B2;">  []</span><span style="color: #F9E2AF;font-style: italic;">ToolRecord</span></span>
+<span class="giallo-l"><span>    memoryHits</span><span style="color: #9399B2;">   []</span><span style="color: #F9E2AF;font-style: italic;">MemoryHitRecord</span></span>
+<span class="giallo-l"><span>    interruptLog</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">InterruptRecord</span></span>
+<span class="giallo-l"><span>    errorLog</span><span style="color: #9399B2;">     []</span><span style="color: #F9E2AF;font-style: italic;">ErrorRecord</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Every <code>Record*</code> method appends under lock. Every getter returns a copy. <code>Export()</code> returns a deep copy as a <code>map[string]any</code> for serialization.</p>
+<p>The critical integration point is <code>MergeInto</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ExecutionCollector</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> MergeInto</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ckpt</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ExperienceCheckpoint</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    c</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> c</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> c</span><span style="color: #9399B2;">.</span><span>routeHistory</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        ckpt</span><span style="color: #9399B2;">.</span><span>RouteHistory</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>ckpt</span><span style="color: #9399B2;">.</span><span>RouteHistory</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> RouteEntry</span><span style="color: #9399B2;">{</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">})</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> t</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> c</span><span style="color: #9399B2;">.</span><span>toolHistory</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        ckpt</span><span style="color: #9399B2;">.</span><span>ToolHistory</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>ckpt</span><span style="color: #9399B2;">.</span><span>ToolHistory</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> ToolEntry</span><span style="color: #9399B2;">{</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">})</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... memory, interrupt, error</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The <code>CheckpointPlugin.saveLocked</code> calls <code>collector.MergeInto(ckpt)</code> then <code>collector.Reset()</code> before each save. This drains collected data into the checkpoint exactly once. No duplicates, no data loss. The collector is the funnel; the checkpoint is the bucket.</p>
+<hr />
+<h2 id="8-honest-reflection-what-we-got-right-and-what-we-didn-t">8. Honest Reflection: What We Got Right and What We Didn't</h2>
+<h3 id="what-works-well">What works well</h3>
+<p><strong>Auto-hook registration</strong> is the single best design decision in the system. A plugin author implements two interfaces, registers once, and both lifecycle and hook behavior are wired automatically. No glue code, no configuration, no ceremony. Six of the ten built-in plugins use this pattern.</p>
+<p><strong>Log-and-continue for hooks</strong> is the right call for a system where plugins are optional enhancements, not critical path components. A failing checkpoint save shouldn't prevent the step from executing. A timing out tool recorder shouldn't hang the pipeline. We log it, we aggregate it, we move on.</p>
+<p><strong>LIFO teardown</strong> prevents the class of bugs where plugin B tries to use plugin A after A has been stopped. Registration order is dependency order, and teardown reverses it.</p>
+<p><strong>The ArenaPlugin</strong> proved its worth in testing. We discovered that the bus's <code>invokeWithTimeout</code> correctly handles all three fault types — panics via <code>recover()</code>, timeouts via <code>context.WithTimeout</code>, and errors via normal return. Without the ArenaPlugin, we'd be testing this manually or not at all.</p>
+<h3 id="what-we-got-wrong">What we got wrong</h3>
+<p><strong>The <code>PluginsByCap</code> type assertion.</strong> Routers cast <code>bus</code> to <code>*PluginBus</code> to access <code>PluginsByCap</code>. This breaks the <code>EventBus</code> abstraction. If someone wraps the bus in a decorator or uses a different implementation, routers silently fail to find peer plugins. The alternative — extending <code>EventBus</code> with <code>PluginsByCap</code> — would bloat the interface for plugins that only need emit/subscribe. We chose the lesser evil, but it's still an evil.</p>
+<p><strong>Hook execution order is implicit.</strong> Hooks execute in registration order. If plugin A needs to run before plugin B's hook, A must be registered first. This coupling is invisible — there's no declaration, no dependency graph, no error if the order is wrong. It works because we control the registration order in the bootstrap code. But if a user registers plugins in the wrong order, they get subtle bugs with no error messages.</p>
+<p><strong>No hook result propagation.</strong> Hooks return errors, but the errors are aggregated and logged — they don't influence step execution. This means a hook can't say "don't execute this step" or "change the step's input." The hook is an observer, not an interceptor. For some use cases (like access control), this is too weak. We'd need a richer return type — maybe a <code>HookResult</code> with <code>Abort bool</code> and <code>ModifiedStep *Step</code>. But that would complicate the simple log-and-continue contract.</p>
+<p><strong>The collector is a shared mutable state bottleneck.</strong> Every plugin that writes to the collector contends on the same mutex. Under high concurrency (many steps, many hooks), this could become a contention point. We haven't measured it yet, but the design smells. A per-plugin collector with a merge step would be better.</p>
+<hr />
+<h2 id="9-the-architecture-at-a-glance">9. The Architecture at a Glance</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
+<span class="giallo-l"><span>    subgraph &quot;PluginBus&quot;</span></span>
+<span class="giallo-l"><span>        REG[Register] --&gt; PLUGINS[plugins[]]</span></span>
+<span class="giallo-l"><span>        REG --&gt; CAPS[caps map]</span></span>
+<span class="giallo-l"><span>        REG --&gt; HOOKS[hooks[]]</span></span>
+<span class="giallo-l"><span>        START[Start] --&gt; |&quot;LIFO order&quot;| STOP[Stop]</span></span>
+<span class="giallo-l"><span>        EMIT[Emit] --&gt; SUBS[subscribers[]]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Built-in Plugins&quot;</span></span>
+<span class="giallo-l"><span>        OBS[ObserverPlugin&lt;br/&gt;CapObserver]</span></span>
+<span class="giallo-l"><span>        CPK[CheckpointPlugin&lt;br/&gt;CapCheckpoint]</span></span>
+<span class="giallo-l"><span>        TPL[ToolPlugin&lt;br/&gt;CapTool]</span></span>
+<span class="giallo-l"><span>        MRT[MemoryRouter&lt;br/&gt;CapRouter]</span></span>
+<span class="giallo-l"><span>        ERT[EvolutionRouter&lt;br/&gt;CapRouter]</span></span>
+<span class="giallo-l"><span>        FRT[FallbackRouter&lt;br/&gt;CapRouter]</span></span>
+<span class="giallo-l"><span>        LPP[LoopPlugin&lt;br/&gt;CapLoop]</span></span>
+<span class="giallo-l"><span>        RCV[BasicRecoveryPlugin&lt;br/&gt;CapRecovery]</span></span>
+<span class="giallo-l"><span>        IRP[InterruptPlugin]</span></span>
+<span class="giallo-l"><span>        ARN[ArenaPlugin]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Data Flow&quot;</span></span>
+<span class="giallo-l"><span>        COL[ExecutionCollector] --&gt;|MergeInto| CKPT[ExperienceCheckpoint]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    PLUGINS --&gt; OBS &amp; CPK &amp; TPL &amp; MRT &amp; ERT &amp; FRT &amp; LPP &amp; RCV &amp; IRP &amp; ARN</span></span>
+<span class="giallo-l"><span>    CAPS --&gt;|PluginsByCap| MRT</span></span>
+<span class="giallo-l"><span>    CAPS --&gt;|PluginsByCap| ERT</span></span>
+<span class="giallo-l"><span>    CAPS --&gt;|PluginsByCap| LPP</span></span>
+<span class="giallo-l"><span>    HOOKS --&gt;|BeforeStep/AfterStep| CPK &amp; TPL &amp; MRT &amp; IRP &amp; ARN</span></span>
+<span class="giallo-l"><span>    CPK --&gt; COL</span></span>
+<span class="giallo-l"><span>    TPL --&gt; COL</span></span>
+<span class="giallo-l"><span>    MRT --&gt; COL</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant Exec as Executor</span></span>
+<span class="giallo-l"><span>    participant Bus as PluginBus</span></span>
+<span class="giallo-l"><span>    participant CPK as CheckpointPlugin</span></span>
+<span class="giallo-l"><span>    participant TPL as ToolPlugin</span></span>
+<span class="giallo-l"><span>    participant MRT as MemoryRouter</span></span>
+<span class="giallo-l"><span>    participant COL as ExecutionCollector</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Exec-&gt;&gt;Bus: BeforeStep(execID, step)</span></span>
+<span class="giallo-l"><span>    Bus-&gt;&gt;CPK: BeforeStep(step)</span></span>
+<span class="giallo-l"><span>    CPK-&gt;&gt;CPK: Create checkpoint snapshot</span></span>
+<span class="giallo-l"><span>    Bus-&gt;&gt;TPL: BeforeStep(step)</span></span>
+<span class="giallo-l"><span>    TPL--&gt;&gt;Bus: no-op</span></span>
+<span class="giallo-l"><span>    Bus-&gt;&gt;MRT: BeforeStep(step)</span></span>
+<span class="giallo-l"><span>    MRT-&gt;&gt;MRT: Launch async memory query</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Exec-&gt;&gt;Exec: Execute step</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Exec-&gt;&gt;Bus: AfterStep(execID, result)</span></span>
+<span class="giallo-l"><span>    Bus-&gt;&gt;CPK: AfterStep(result)</span></span>
+<span class="giallo-l"><span>    CPK-&gt;&gt;CPK: Update checkpoint, conditionally save</span></span>
+<span class="giallo-l"><span>    Bus-&gt;&gt;TPL: AfterStep(result)</span></span>
+<span class="giallo-l"><span>    TPL-&gt;&gt;COL: RecordTool(...)</span></span>
+<span class="giallo-l"><span>    Bus-&gt;&gt;MRT: AfterStep(result)</span></span>
+<span class="giallo-l"><span>    MRT--&gt;&gt;Bus: no-op</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    Note over CPK,COL: On checkpoint save:&lt;br/&gt;COL.MergeInto(ckpt) + COL.Reset()</span></span></code></pre>
+<hr />
+<h2 id="10-design-patterns-summary">10. Design Patterns Summary</h2>
+<table><thead><tr><th>Pattern</th><th>Location</th><th>Purpose</th></tr></thead><tbody>
+<tr><td>Auto-registration</td><td><code>bus.go:82-84</code></td><td>Type assertion for WorkflowHook — zero glue code</td></tr>
+<tr><td>Capability map</td><td><code>bus.go:271-281</code></td><td>Runtime service discovery by functional area</td></tr>
+<tr><td>Non-blocking emit</td><td><code>bus.go:226-235</code></td><td>Drop events for slow subscribers, never block</td></tr>
+<tr><td>Async pre-fetch</td><td><code>router_memory.go:68-86</code></td><td>Hide memory latency behind step execution</td></tr>
+<tr><td>Collector-Checkpoint drain</td><td><code>collector.go:227-264</code></td><td>MergeInto + Reset for exactly-once data transfer</td></tr>
+<tr><td>LIFO teardown</td><td><code>bus.go:121</code></td><td>Reverse-order stop prevents dependency violations</td></tr>
+<tr><td>Log-and-continue</td><td><code>bus.go:156-175</code></td><td>Hook failures don't abort step execution</td></tr>
+<tr><td>Chain of Responsibility</td><td><code>router_fallback.go</code></td><td>Try routers in order, first non-nil wins</td></tr>
+<tr><td>Chaos engineering</td><td><code>arena.go</code></td><td>Inject faults to test bus resilience</td></tr>
+</tbody></table>
+<hr />
+<h2 id="11-conclusion">11. Conclusion</h2>
+<p>The plugin system started as a refactoring exercise — get features out of the executor. It became something more: a framework for composing independent behaviors through a shared bus, discovered by capability, coordinated at lifecycle boundaries.</p>
+<p>What surprised me most was how little code the bus itself is. The <code>PluginBus</code> is maybe 350 lines. The <code>invokeWithTimeout</code> function is 25 lines. The <code>Emit</code> implementation is 30 lines. The entire system — bus, hooks, events, collector — is under 1000 lines. But the behaviors it enables — checkpointing, routing, memory, evolution, recovery, fault injection — would be thousands of lines if wired directly into the executor.</p>
+<p>The lesson isn't "use plugins." The lesson is: <strong>when a file keeps growing, the problem isn't that you need more code. The problem is that you need more boundaries.</strong> The plugin system is a boundary. The executor doesn't know about checkpoints. The checkpoint plugin doesn't know about the tool recorder. The tool recorder doesn't know about the memory router. They all know about the bus, and the bus knows about nothing.</p>
+<p>That's the real win. Not the abstractions, not the interfaces, not the capability map. The win is that adding a new feature means writing a new file, not editing an existing one.</p>
+<hr />
+<p><strong>Appendix: Key File Index</strong></p>
+<table><thead><tr><th>Component</th><th>File Path</th></tr></thead><tbody>
+<tr><td>RuntimePlugin interface</td><td><code>internal/ares_runtime/plugin.go</code></td></tr>
+<tr><td>PluginBus</td><td><code>internal/ares_runtime/bus.go</code></td></tr>
+<tr><td>EventBus implementation</td><td><code>internal/ares_runtime/bus.go</code></td></tr>
+<tr><td>WorkflowHook interface</td><td><code>internal/ares_runtime/plugin.go</code></td></tr>
+<tr><td>invokeWithTimeout</td><td><code>internal/ares_runtime/bus.go</code></td></tr>
+<tr><td>ExecutionCollector</td><td><code>internal/ares_runtime/collector.go</code></td></tr>
+<tr><td>CheckpointPlugin</td><td><code>internal/ares_runtime/checkpoint.go</code></td></tr>
+<tr><td>ObserverPlugin</td><td><code>internal/ares_runtime/observer.go</code></td></tr>
+<tr><td>ToolPlugin</td><td><code>internal/ares_runtime/tool.go</code></td></tr>
+<tr><td>ExpressionRouter</td><td><code>internal/ares_runtime/router.go</code></td></tr>
+<tr><td>MemoryRouter</td><td><code>internal/ares_runtime/router_memory.go</code></td></tr>
+<tr><td>EvolutionRouter</td><td><code>internal/ares_runtime/router_evolution.go</code></td></tr>
+<tr><td>FallbackRouter</td><td><code>internal/ares_runtime/router_fallback.go</code></td></tr>
+<tr><td>LoopPlugin</td><td><code>internal/ares_runtime/loop.go</code></td></tr>
+<tr><td>BasicRecoveryPlugin</td><td><code>internal/ares_runtime/recovery.go</code></td></tr>
+<tr><td>InterruptPlugin</td><td><code>internal/ares_runtime/interrupt.go</code></td></tr>
+<tr><td>ArenaPlugin</td><td><code>internal/ares_runtime/arena.go</code></td></tr>
+<tr><td>Error types</td><td><code>internal/ares_runtime/errors.go</code></td></tr>
+<tr><td>Event types</td><td><code>internal/ares_runtime/events.go</code></td></tr>
+</tbody></table>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/15-mcp-integration/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">MCP Integration — Teaching Agents to Use Tools</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/13-bootstrap-api/">
+                                <span class="button__text">Bootstrap &amp; API Layer — Wiring Without the Pain</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>
