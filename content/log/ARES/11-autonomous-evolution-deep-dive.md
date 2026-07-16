@@ -152,7 +152,6 @@ ares had quietly accumulated pieces — Experience System, Flight Recorder, Eval
 ### 3.1 Experience System — Bandit Ranking
 
 `internal/ares_experience/ranking_service.go` implements a lightweight bandit system:
-`internal/experience/ranking_service.go` implements a lightweight bandit system:
 
 ```go
 // Rank ranks experiences using multi-signal scoring.
@@ -199,7 +198,6 @@ Flight Recorder records every decision point during agent execution: which tool 
 ### 3.3 Eval Engine — Evaluation Framework
 
 `internal/ares_eval/llm_judge.go` implements an LLM-as-Judge evaluator:
-`internal/eval/llm_judge.go` implements an LLM-as-Judge evaluator:
 
 ```go
 type LLMJudgeEvaluator struct {
@@ -229,7 +227,6 @@ Supports three scoring scales (1-10, 1-5, pass/fail), bilingual prompts (Chinese
 ### 3.4 Callback System — Event Hooks
 
 `internal/ares_callbacks/callbacks.go` defines a complete event bus:
-`internal/callbacks/callbacks.go` defines a complete event bus:
 
 ```go
 const (
@@ -255,7 +252,6 @@ Register-dispatch model, multiple handlers per event, panic recovery per handler
 ### 3.5 Arena — Stress Testing
 
 `internal/ares_arena/regression.go` implements a complete A/B regression testing framework:
-`internal/arena/regression.go` implements a complete A/B regression testing framework:
 
 ```go
 type RegressionTester struct {
@@ -578,13 +574,11 @@ func (dc *DreamCycle) Run(ctx context.Context, data CallbackData) error {
 ```
 
 Note `getCurrentStrategy()` was previously a placeholder returning a hardcoded `root-strategy-v1` strategy. **This is now resolved** — see Section 9.8 (PGStrategyStore) for the full database-backed implementation. The DreamCycle now connects to `StrategyStore.GetActive()` to read the real currently-deployed strategy, and `StrategyStore.SetActive()` to persist winners back to the database.
-Note `getCurrentStrategy()` was previously a placeholder returning a hardcoded `root-strategy-v1` strategy. **This is now resolved** — see Section 9.8 (EvolutionStore) for the full database-backed implementation. The DreamCycle now connects to `StrategyStore.GetActive()` to read the real currently-deployed strategy, and `StrategyStore.SetActive()` to persist winners back to the database.
 
 ```go
 // dream_cycle.go - getCurrentStrategy() NOW RESOLVED
 // Previously returned hardcoded placeholder Strategy{ ID: "root-strategy-v1", ... }.
 // Now delegates to the injected StrategyStore (PGStrategyStore backed by real DB):
-// Now delegates to the injected StrategyStore (EvolutionStore backed by real DB):
 func (dc *DreamCycle) getCurrentStrategy() (Strategy, error) {
     if dc.strategyStore != nil {
         return dc.strategyStore.GetActive(dc.ctx)
@@ -637,14 +631,14 @@ Components implemented, broken links fixed, but one ultimate question remains: *
 
 If every user needs to understand how to create CallbackRegistry, inject FeedbackService, register EvolutionScheduler, mount DreamCycle... the barrier to entry is too high. 99% of people would give up at step one.
 
-That's why `WireAllEvolutionComponents()` exists — one call, everything wired.
+That's why `ares_bootstrap.Bootstrap()` exists — one call, everything wired.
 
 ### Architecture Diagram
 
 ```mermaid
 graph TB
     subgraph "main() call"
-        MAIN["WireAllEvolutionComponents(ctx, deps)"]
+        MAIN["ares_bootstrap.Bootstrap(ctx, deps)"]
     end
 
     subgraph "Step 1: Event Skeleton"
@@ -659,13 +653,26 @@ graph TB
         ER["EvaluatorRegistry<br/>SetupEvaluators(llmClient, registry)<br/>LLMJudgeEvaluator (1-10 scale)"]
     end
 
-    subgraph "Step 4: Evolution System"
-        ADAPTER["FlightToExperienceAdapter<br/>Flight data -> Experience"]
-        SCHEDULER["EvolutionScheduler<br/>Register() -> On(EventAgentEnd)<br/>shouldEvolve() heuristic"]
-        DREAM["DreamCycle (optional)<br/>Mutate -> Arena -> Genealogy"]
-        ADAPTER --> SCHEDULER
-        SCHEDULER --> DREAM
+    subgraph "Step 4: GA Evolution Engine"
+        TICKER["Background Ticker<br/>5min interval"]
+        SCHED2["EvolutionScheduler<br/>Register() -> On(EventAgentEnd)"]
+        GA["GA Population<br/>N individuals, 7 selectors<br/>3 crossover, 6 mutation"]
+        ADAPTER["GenomePopulationAdapter<br/>Run()"]
+        GENOMES["6 Genomes<br/>Workflow / Scheduler / Knowledge<br/>Recovery / Planner / Memory"]
+        DIFF["Diff Engine<br/>4 Differs"]
+        COORD["Coordinator<br/>Apply / Reject / Delay"]
+        EXECS["5 Executors<br/>Graph / Recovery / Knowledge<br/>Memory + StrategyStore"]
+        SS["Strategy Store<br/>PGStrategyStore<br/>GetActive / SetActive"]
     end
+
+    TICKER --> ADAPTER
+    SCHED2 --> ADAPTER
+    ADAPTER --> GA
+    GA --> GENOMES
+    GENOMES --> DIFF
+    DIFF --> COORD
+    COORD --> EXECS
+    ADAPTER --> SS
 
     MAIN --> CR
     MAIN --> FS
@@ -673,26 +680,25 @@ graph TB
     MAIN --> ADAPTER
 
     CR -.-> |"inject"| AGENT1["LLM.Client"]
-    CR -.-> |"inject"| AGENT2["TaskExecutor"]
-    CR -.-> |"inject"| AGENT3["LeaderAgent"]
-    CR -.-> |"Register()"| SCHEDULER
-    FS -.-> |"inject"| AGENT3
+    CR -.-> |"Register()"| SCHED2
+    FS -.-> |"inject"| AGENT3["LeaderAgent"]
     ER -.-> |"inject"| ARENA["RegressionTester"]
 
     style MAIN fill:#fff9c4
     style CR fill:#e1f5fe
-    style DREAM fill:#c8e6c9
+    style GA fill:#c8e6c9
+    style SS fill:#fff9c4
 ```
 
 ### Core Code
 
 ```go
 // bootstrap.go
-func WireAllEvolutionComponents(
+func ares_bootstrap.Bootstrap(
     ctx context.Context,
-    deps *WireDependencies,
-) (*WiredComponents, error) {
-    result := &WiredComponents{}
+    deps *BootstrapDeps,
+) (*Components, error) {
+    result := &Components{}
 
     // Step 1: Callback Registry — central hub for all event wiring
     result.CallbackReg = NewCallbackRegistry()
@@ -720,10 +726,10 @@ func WireAllEvolutionComponents(
 }
 ```
 
-Returned `WiredComponents` contains everything needed for injection:
+Returned `Components` contains everything needed for injection:
 
 ```go
-type WiredComponents struct {
+type Components struct {
     CallbackReg    *callbacks.Registry           // -> llm.WithCallbacks(reg)
     FeedbackSvc    *experience.FeedbackService    // -> leader.WithFeedbackService(svc)
     EvalRegistry   *eval.EvaluatorRegistry        // -> arena.NewRegressionTester(arena, scorer)
@@ -743,7 +749,6 @@ type WiredComponents struct {
 | 5 | **Evolution execution** | Scheduler.shouldEvolve() -> DreamCycle.Run() | Mutator -> Arena -> Genealogy -> StrategyStore [DB] | **Closed** |
 
 Link #5 is now fully closed: `getCurrentStrategy()` resolved via `PGStrategyStore.GetActive()` (database-backed), `RecordPopulationLineage()` auto-builds genealogy after each generation, `BestStrategyFromSystem()` extracts deployment-ready strategies, `StrategyStore.SetActive()` persists winners. The remaining gap is `shouldEvolve()`'s score degradation detection (still a stub heuristic).
-Link #5 is now fully closed: `getCurrentStrategy()` resolved via `EvolutionStore.GetActive()` (database-backed), `RecordPopulationLineage()` auto-builds genealogy after each generation, `BestStrategyFromSystem()` extracts deployment-ready strategies, `StrategyStore.SetActive()` persists winners. The remaining gap is `shouldEvolve()`'s score degradation detection (still a stub heuristic).
 
 ### main() One-Liner -> All Components Ready
 
@@ -752,13 +757,13 @@ Link #5 is now fully closed: `getCurrentStrategy()` resolved via `EvolutionStore
 func main() {
     // ... initialize basic dependencies ...
 
-    wired, err := bootstrap.WireAllEvolutionComponents(ctx, &bootstrap.WireDependencies{
+    wired, err := bootstrap.ares_bootstrap.Bootstrap(ctx, &bootstrap.BootstrapDeps{
         LLMClient:      llmClient,
         FlightRecorder: flightRecorder,
         ExpRepo:        expRepo,
         EmbeddingService: embedder,
         Distiller:      distiller,
-        DreamDeps: &bootstrap.DreamCycleDeps{
+        DreamDeps: &bootstrap.BootstrapDeps{
             Mutator:   mutator,
             Tester:    testerAdapter,
             Genealogy: genealogyDB,
@@ -777,7 +782,7 @@ func main() {
 }
 ```
 
-From the caller's perspective, the evolution system is transparent — you don't need to know about Callback, Feedback, Arena, or Mutator. `WireAllEvolutionComponents` encapsulates complexity in one place, returns constructor options ready to inject.
+From the caller's perspective, the evolution system is transparent — you don't need to know about Callback, Feedback, Arena, or Mutator. `ares_bootstrap.Bootstrap` encapsulates complexity in one place, returns constructor options ready to inject.
 
 ---
 
@@ -787,12 +792,11 @@ From the caller's perspective, the evolution system is transparent — you don't
 
 | Iteration | Goal | Core Deliverable | Risk Level |
 |-----------|------|------------------|------------|
-| **Iteration 1** | Pipeline closed | WireAllEvolutionComponents + parameter mutation + Arena validation | Low |
+| **Iteration 1** | Pipeline closed | ares_bootstrap.Bootstrap + parameter mutation + Arena validation | Low |
 | **Iteration 2** | Prompt evolution | Prompt template pool management + A/B testing + auto-replacement | Medium |
 | **Iteration 3** | Tool auto-generation | DevAgent integration + safety sandbox + tool approval workflow | High |
 
-Current status: **Iteration 1 complete**. WireAllEvolutionComponents available, parameter mutation and Arena validation chain connected. `getCurrentStrategy()` fully resolved via `PGStrategyStore` (DB-backed StrategyStore). Population improvements (Snapshot, BestStrategy, Stats, BreedingPoolRatio) deployed. Auto-lineage recording via RecordPopulationLineage. Remaining work: `shouldEvolve()` hooks into actual score data for adaptive triggering.
-Current status: **Iteration 1 complete**. WireAllEvolutionComponents available, parameter mutation and Arena validation chain connected. `getCurrentStrategy()` fully resolved via `EvolutionStore` (DB-backed StrategyStore). Population improvements (Snapshot, BestStrategy, Stats, BreedingPoolRatio) deployed. Serialization system (SaveEvolutionRun / LoadEvolutionRun) for checkpoint/resume. Auto-lineage recording via RecordPopulationLineage. Remaining work: `shouldEvolve()` hooks into actual score data for adaptive triggering.
+Current status: **Iteration 1 complete**. ares_bootstrap.Bootstrap available, parameter mutation and Arena validation chain connected. `getCurrentStrategy()` fully resolved via `PGStrategyStore` (DB-backed StrategyStore). Population improvements (Snapshot, BestStrategy, Stats, BreedingPoolRatio) deployed. Auto-lineage recording via RecordPopulationLineage. Remaining work: `shouldEvolve()` hooks into actual score data for adaptive triggering.
 
 ### Risk Matrix
 
@@ -811,11 +815,6 @@ Current status: **Iteration 1 complete**. WireAllEvolutionComponents available, 
 - [ ] DreamCycle defaults to Enabled=false, explicit opt-in required
 - [ ] Evolution results written to Audit Log, every strategy change traceable — **PARTIAL**: `RecordPopulationLineage()` auto-records after each generation; full audit log integration pending
 - [ ] Rollback API: one-click revert to any historical strategy version — **AVAILABLE**: `PGStrategyStore.GetHistory(id, n)` returns ordered history; manual rollback via `SetActive(&previousVersion)`
-- [x] `getCurrentStrategy()` connects to real Strategy Store (not placeholder) — **RESOLVED**: `EvolutionStore` implements `StrategyStore` with DB-backed `GetActive()` / `SetActive()` / `List()`
-- [ ] `shouldEvolve()` integrates with EvalEngine or Flight Diagnostics real score data
-- [ ] DreamCycle defaults to Enabled=false, explicit opt-in required
-- [ ] Evolution results written to Audit Log, every strategy change traceable — **PARTIAL**: `RecordPopulationLineage()` auto-records after each generation; full audit log integration pending
-- [ ] Rollback API: one-click revert to any historical strategy version — **AVAILABLE**: `EvolutionStore.List(n)` returns ordered history; manual rollback via `SetActive(previousVersion)`
 - [ ] Monitoring metrics: evolution cycles, average WinRate, average ScoreImprovement, strategy version — **PARTIAL**: `PopulationStats` provides per-generation metrics; Prometheus/Grafana dashboard integration pending
 - [ ] Resource limits: max concurrent evolutions, max duration per evolution, max storage
 
@@ -886,8 +885,6 @@ But that was Iteration 1. Since then, I've added three major subsystems that tra
 
 1. **PGStrategyStore** — database persistence for strategies (solves the `getCurrentStrategy()` placeholder problem)
 2. **Runtime Snapshots with Auto-Genealogy** — in-memory population snapshots (`Population.Snapshot()`) and automatic genealogy recording via `RunIdleEvolution()`
-1. **EvolutionStore** — database persistence for strategies (solves the `getCurrentStrategy()` placeholder problem)
-2. **Serialization & Snapshot System** — full checkpoint/resume for evolution runs
 3. **Population Improvements** — configurable breeding pool, thread-safe snapshots, deployment-ready strategy extraction
 
 Let me talk about the detour I took first.
@@ -911,7 +908,6 @@ So I decided to write the genome package — introducing Population, Crossover, 
 ### 9.2 Population Struct: The Skeleton
 
 `internal/ares_evolution/genome/population.go` defines the core data structure:
-`internal/evolution/genome/population.go` defines the core data structure:
 
 ```go
 // population.go - Population core struct
@@ -1079,7 +1075,6 @@ if len(p.Agents) == 0 {
 ### 9.4 Three Crossover Operators
 
 `internal/ares_evolution/genome/crossover.go` implements three recombination strategies:
-`internal/evolution/genome/crossover.go` implements three recombination strategies:
 
 **Uniform Crossover (default)**
 
@@ -1154,7 +1149,6 @@ All crossover-produced children are tagged with `mutation.MutationCrossover` (a 
 ### 9.5 Three Selection Operators
 
 `internal/ares_evolution/genome/selection.go` implements natural selection strategies:
-`internal/evolution/genome/selection.go` implements natural selection strategies:
 
 **TruncationSelection** — simplest, take top-N by score directly.
 
@@ -1348,7 +1342,6 @@ func (p *Population) generateOffspring(...) ([]*mutation.Strategy, error) {
 Previously, if you cancelled context during a long evolution run (say, pop=100 with lots of offspring to generate), the goroutine would blindly continue until all slots were filled. Now it checks `ctx.Done()` every iteration — clean shutdown within one offspring generation cycle.
 
 ### 9.8 PGStrategyStore: Database Persistence (The Biggest Fix)
-### 9.8 EvolutionStore: Database Persistence (The Biggest Fix)
 
 Remember that TODO that haunted the entire article?
 
@@ -1361,7 +1354,6 @@ return Strategy{ ID: "root-strategy-v1", ... }, nil
 **Gone. Deleted. Solved.**
 
 `internal/ares_evolution/pg_strategy_store.go` implements the `StrategyStore` interface using the repository pattern — no raw SQL, no `StoreDB` interface, just clean delegation to `*repositories.StrategyRepository`:
-`internal/evolution/evolution_store.go` implements the `StrategyStore` interface defined in `interfaces.go` using a relational database:
 
 ```go
 // interfaces.go - StrategyStore interface
@@ -1378,16 +1370,6 @@ type PGStrategyStore struct {
 
 // Compile-time interface check
 var _ StrategyStore = (*PGStrategyStore)(nil)
-    SetActive(ctx context.Context, s Strategy) error
-    List(ctx context.Context, n int) ([]Strategy, error)
-}
-
-// evolution_store.go - Implementation
-type EvolutionStore struct {
-    db StoreDB
-}
-
-var _ StrategyStore = (*EvolutionStore)(nil)  // Compile-time interface check
 ```
 
 Three methods, each solving a specific piece of the persistence puzzle:
@@ -1431,66 +1413,6 @@ Ordered by version descending, limited to N entries. This is your audit trail �
 **Why Repository Pattern?**
 
 The old `EvolutionStore` defined a `StoreDB` interface with `ExecContext`, `QueryContext`, and `QueryRowContext`:
-```go
-func (s *EvolutionStore) GetActive(ctx context.Context) (*Strategy, error) {
-    query := `
-        SELECT id, COALESCE(parent_id, ''), COALESCE(name, ''), version, params,
-               COALESCE(prompt_template, ''), COALESCE(strategy_mutation_type, ''),
-               COALESCE(mutation_desc, ''), score, created_at
-        FROM evolution_strategies
-        WHERE is_active = TRUE
-        ORDER BY version DESC
-        LIMIT 1
-    `
-    // Scan into Strategy struct, JSON-unmarshal params...
-}
-```
-
-The `is_active = TRUE` marker is key. Only ONE strategy can be active at any time. `ORDER BY version DESC LIMIT 1` means if somehow multiple rows got flagged (shouldn't happen, but defense in depth), we still get the latest version. Returns `nil, nil` when no strategy exists yet (not an error — just "nothing stored yet").
-
-**SetActive(): Upsert with Active Marker Flip**
-
-```go
-func (s *EvolutionStore) SetActive(ctx context.Context, st Strategy) error {
-    paramsJSON, err := json.Marshal(st.Params)
-    // ...
-
-    // Step 1: Deactivate ALL current active strategies
-    if _, err := s.db.ExecContext(ctx,
-        `UPDATE evolution_strategies SET is_active = FALSE WHERE is_active = TRUE`); err != nil {
-        return err
-    }
-
-    // Step 2: Insert new strategy as active (upsert via ON CONFLICT)
-    query := `
-        INSERT INTO evolution_strategies (...) VALUES (..., TRUE, $10, NOW())
-        ON CONFLICT (id) DO UPDATE SET
-            is_active = TRUE,
-            score = $9,
-            updated_at = NOW()
-    `
-    // ...
-}
-```
-
-This is an **atomic two-phase commit pattern**: first deactivate everything, then insert/activate the new one. The `ON CONFLICT (id) DO UPDATE` clause handles the case where the same strategy ID already exists (e.g., re-deploying a previous version) — it flips `is_active` back to TRUE and updates the score. Params are stored as JSON (`json.Marshal(st.Params)`) since strategy parameters are inherently schema-less maps.
-
-**List(): Audit Trail Retrieval**
-
-```go
-func (s *EvolutionStore) List(ctx context.Context, n int) ([]Strategy, error) {
-    query := `
-        SELECT ... FROM evolution_strategies
-        ORDER BY version DESC
-        LIMIT $1
-    `
-    // Iterate rows, unmarshal params JSON, build slice...
-}
-```
-
-Ordered by version descending, limited to N entries. This is your audit trail — every strategy ever deployed, in chronological order. Perfect for the evolution dashboard's strategy genealogy tree view.
-
-**StoreDB Interface: Dependency Injection Friendly**
 
 ```go
 type StoreDB interface {
@@ -1511,9 +1433,6 @@ Both `*sql.DB` and `*sql.Tx` satisfied this interface, which was flexible — yo
 | SetActive | `SetActive(ctx, Strategy)` value | `SetActive(ctx, *Strategy)` pointer |
 
 This is a **pure refactor** — the underlying database table and SQL queries remain the same:
-Both `*sql.DB` and `*sql.Tx` satisfy this interface automatically. Means you can use EvolutionStore in regular operations (with `*sql.DB`) AND inside transactions (with `*sql.Tx`) for atomic strategy deployments. No adapter needed — standard library compatibility out of the box.
-
-The table DDL (run via migration) looks like:
 
 ```sql
 CREATE TABLE evolution_strategies (
@@ -1645,86 +1564,6 @@ Compared to the old JSON file snapshot approach, the current design trades "file
 ### 9.10 genome_wiring.go Upgrades: StrategyStore Integration & Auto-Lineage
 
 `internal/ares_evolution/genome_wiring.go` is the integration layer that connects all genome components into a cohesive system. It received three major upgrades.
-### 9.9 Serialization & Snapshot System: Checkpoint/Resume for Evolution Runs
-
-Database persistence handles individual strategies. But what if you want to capture the **entire state** of an evolution run — all 100 agents across 50 generations, plus the complete genealogy tree? That's what `internal/evolution/serialize.go` does.
-
-**EvolutionRunSnapshot Struct**
-
-```go
-// serialize.go - Complete evolution state capture
-type EvolutionRunSnapshot struct {
-    Config     SystemConfig        `json:"config"`
-    Generation int                 `json:"generation"`
-    Agents     []*mutation.Strategy `json:"agents"`
-    Lineages   []StrategyLineage   `json:"lineages,omitempty"`
-}
-```
-
-Four fields tell the whole story:
-- **Config**: What parameters were used (population size, mutation rate, seeds, etc.) — essential for reproducibility
-- **Generation**: Where in the evolution timeline this snapshot was taken
-- **Agents**: Every strategy in the population, deep-copied (uses `Population.Snapshot()` internally)
-- **Lineages**: Complete genealogy tree — who begat whom, with mutation types and timestamps
-
-**SaveEvolutionRun(): Write Snapshot to Disk**
-
-```go
-func SaveEvolutionRun(filepath string, system *WiredEvolutionSystem) error {
-    if system == nil {
-        return fmt.Errorf("system must not be nil")
-    }
-    if system.Population == nil {
-        return fmt.Errorf("system population must not be nil")
-    }
-
-    // Thread-safe snapshot of all agents + generation counter
-    agents, generation := system.Population.Snapshot()
-
-    // Collect genealogy records if available
-    var lineages []StrategyLineage
-    if system.Genealogy != nil {
-        lineages = system.Genealogy.Lineages()
-    }
-
-    snapshot := &EvolutionRunSnapshot{
-        Config:     system.config,
-        Generation: generation,
-        Agents:     agents,
-        Lineages:   lineages,
-    }
-
-    data, err := json.MarshalIndent(snapshot, "", "  ")
-    // ... write to file with 0644 permissions
-}
-```
-
-The flow is: validate inputs → snapshot population (thread-safe deep copy) → collect genealogy → marshal to pretty-printed JSON → write to disk. The resulting file is human-readable (2-space indent), machine-parseable (standard JSON), and self-contained (includes config for reproducibility).
-
-**LoadEvolutionRun(): Restore State from Disk**
-
-```go
-func LoadEvolutionRun(filepath string) (*EvolutionRunSnapshot, error) {
-    data, err := os.ReadFile(filepath)
-    // ... unmarshal, nil-slice guards ...
-}
-```
-
-Simple read → unmarshal. Returns the complete snapshot struct, ready for inspection or reconstruction. Note: `LoadEvolutionRun` doesn't automatically restore state into a running `WiredEvolutionSystem` — that's intentional. Loading a snapshot is for analysis (post-mortem debugging, comparative studies); restoring into a live system requires explicit decision-making about which fields to overwrite.
-
-**What This Enables**
-
-The serialization system unlocks three capabilities that were impossible before:
-
-1. **Checkpoint/Resume**: Run 100 generations, save snapshot, shut down server, restart next week, load snapshot, continue from generation 101. No state lost.
-
-2. **State Auditing**: After noticing "generation 47 produced weird results," load the snapshot from before/after generation 47 and diff the populations. Find exactly which individual went rogue.
-
-3. **Reproducible Experiments**: Share the snapshot file with a colleague. They load it, see exact same population state, verify your findings independently. No "works on my machine" — the JSON IS the truth.
-
-### 9.10 genome_wiring.go Upgrades: StrategyStore Integration & Auto-Lineage
-
-`internal/evolution/genome_wiring.go` is the integration layer that connects all genome components into a cohesive system. It received three major upgrades.
 
 **WiredEvolutionSystem Gains Config and StrategyStore**
 
@@ -1742,7 +1581,6 @@ type WiredEvolutionSystem struct {
 ```
 
 Two new fields. `config SystemConfig` is stored so `Population.Snapshot()` can capture complete run metadata. `StrategyStore StrategyStore` is the database-backed strategy store — this is what finally closes the loop between "evolved a better strategy" and "deployed that strategy to production."
-Two new fields. `config SystemConfig` is stored so `SaveEvolutionRun` can include it in snapshots. `StrategyStore StrategyStore` is the database-backed strategy store — this is what finally closes the loop between "evolved a better strategy" and "deployed that strategy to production."
 
 **SystemConfig Expands With Determinism Controls**
 
@@ -1778,7 +1616,6 @@ if cfg.StrategyStore != nil {
 ```
 
 Clean optional injection. If you pass a `StrategyStore` (i.e., `*PGStrategyStore` backed by a real database), the wired system gains persistence capability. If you don't (nil), everything still works — strategies just live in memory. This is the **gradual migration path**: start without persistence, prove the evolution works, then add `PGStrategyStore` with zero changes to evolution logic.
-Clean optional injection. If you pass a `StrategyStore` (i.e., `*EvolutionStore` backed by a real database), the wired system gains persistence capability. If you don't (nil), everything still works — strategies just live in memory. This is the **gradual migration path**: start without persistence, prove the evolution works, then add `EvolutionStore` with zero changes to evolution logic.
 
 **RunIdleEvolution Auto-Records Lineage**
 
@@ -1858,7 +1695,6 @@ This function bridges the gap between genome's internal `ParentID` tracking and 
 **Interface Extensions**
 
 `internal/ares_evolution/interfaces.go` gained two important additions:
-`internal/evolution/interfaces.go` gained two important additions:
 
 ```go
 // interfaces.go - New StrategyStore interface
@@ -1866,8 +1702,6 @@ type StrategyStore interface {
     GetActive(ctx context.Context) (*Strategy, error)
     SetActive(ctx context.Context, strategy *Strategy) error
     GetHistory(ctx context.Context, id string, n int) ([]Strategy, error)
-    SetActive(ctx context.Context, s Strategy) error
-    List(ctx context.Context, n int) ([]Strategy, error)
 }
 
 // RegressionConfig gains AdaptiveBatchSize
@@ -1878,7 +1712,6 @@ type RegressionConfig struct {
 ```
 
 All structs in interfaces.go now have complete JSON tags — `Strategy` has `json:"id"`, `json:"params"`, etc.; `StrategyLineage` has `json:"parent_id"`, `json:"child_id"`, etc. This isn't cosmetic: it's what makes `Population.Snapshot()`'s `json.MarshalIndent` produce clean, usable output.
-All structs in interfaces.go now have complete JSON tags — `Strategy` has `json:"id"`, `json:"params"`, etc.; `StrategyLineage` has `json:"parent_id"`, `json:"child_id"`, etc. This isn't cosmetic: it's what makes `SaveEvolutionRun`'s `json.MarshalIndent` produce clean, usable output.
 
 The wiring architecture now looks like this:
 
@@ -1898,6 +1731,275 @@ mutation.Mutator --> GenomeMutatorAdapter --> genome.Population
 
 Six layers deep, each with a clear responsibility. The genome layer (pure computation, zero I/O), the wiring layer (adapters and orchestration), the persistence layer (database via repository pattern), and the infrastructure layer (runtime snapshots and genealogy auditing). Each layer can be tested, replaced, or upgraded independently.
 
+### 9.11 Multi-Objective Optimization: NSGA-II Selection
+
+The basic selection operators (Truncation, Tournament, RouletteWheel, Rank) optimize a single score. But strategy quality isn't one-dimensional — a high-success-rate strategy might be expensive, and a low-cost strategy might be slow. Multi-objective optimization addresses this by maintaining Pareto-optimal trade-offs across multiple dimensions simultaneously.
+
+The implementation lives in `internal/ares_evolution/genome/multi_objective.go` and provides a complete NSGA-II pipeline:
+
+```go
+// Four default dimensions with direction and weight
+var DefaultDimensionDirections = map[string]DimDirection{
+    "success_rate": Maximize,    // Higher success rate is better
+    "quality":      Maximize,    // Higher output quality is better
+    "cost":         Minimize,    // Lower cost is better
+    "latency":      Minimize,    // Lower latency is better
+}
+
+var DefaultDimensionWeights = map[string]float64{
+    "success_rate": 0.40,    // Success rate is weighted most
+    "quality":      0.25,    // Output quality is second
+    "cost":         0.20,    // Cost efficiency is third
+    "latency":      0.15,    // Latency is least weighted
+}
+```
+
+**How It Works:**
+
+| Step | Function | Description |
+|------|----------|-------------|
+| 1 | `ParetoDominance(a, b)` | Direction-aware: returns true if `a` is no worse than `b` in all dims and strictly better in at least one |
+| 2 | `ParetoFront(strategies)` | Extracts rank-0 Pareto front (non-dominated solutions) |
+| 3 | `ParetoRank(strategies)` | Full non-dominated sorting — assigns integer rank to each strategy (0 = best front) |
+| 4 | `CrowdingDistance(strategies)` | Within each front, measures solution density; boundary points get infinite distance to preserve extremes |
+| 5 | `NondominatedSortingSelection` | Combines rank + crowding distance to select: prefer lower rank first, then higher crowding distance within same rank |
+
+The `NondominatedSortingSelection` in `selection.go` is wired into `buildSelector()` — passing `"nsga2"` or `"nondominated"` as the selection strategy activates it. The selector first sorts by Pareto rank, then within each rank by crowding distance (descending), then selects the top N.
+
+**When to use NSGA-II:** When you care about multiple conflicting objectives. Instead of manually tuning the weight between success rate and cost, NSGA-II maintains a diverse set of trade-off solutions. The weights (0.40/0.25/0.20/0.15) are used for aggregation when a single scalar score is needed, but the selection itself operates on the full Pareto ordering.
+
+### 9.12 Steady-State GA: Evolution Without Full Replacement
+
+Standard generational GA replaces the entire population each epoch — the old generation dies, the new generation takes over. Steady-state GA takes a different approach: most of the population survives, only the worst individuals are replaced.
+
+`population.go` implements `EvolveSteadyState()`:
+
+```go
+func (p *Population) EvolveSteadyState(ctx context.Context, 
+    mutator MutatorInterface, 
+    crosser CrossoverInterface, 
+    replaceRate float64) error
+```
+
+**Key mechanics:**
+- `replaceRate` is clamped to [0.1, 0.5]; default 0.3
+- Offspring per generation = `max(1, int(float64(p.Size) * replaceRate))`
+- Only 10-50% of the population is replaced each generation
+- Survival rate = `1.0 - replaceRate`
+- The `doEvolve()` function respects `evolveConfig.maxOffspring` to limit offspring count
+
+**Why steady-state matters:** In online learning scenarios — where the agent is actively serving requests and evolving simultaneously — you want the population to persist. Steady-state evolution:
+- Preserves exploration history (diversity across generations)
+- Never disrupts the active strategy set
+- Converges more smoothly (no sudden population flips)
+- Is more suitable for continuous online adaptation than batch generational replacement
+
+Compare with full generational `Evolve()`:
+| Property | Full Generational | Steady-State |
+|----------|-------------------|--------------|
+| Replacement rate | 100% — SurvivalRate controls survivors, but all non-elite are replaced | 10-50% — controlled by replaceRate |
+| Convergence | Fast, can overshoot | Smooth, gradual |
+| Diversity | Resets each generation | Maintained across generations |
+| Use case | Offline optimization | Online (in-production) adaptation |
+
+### 9.13 Split Canonical/Selection Score: Fitness Sharing Without Pollution
+
+One subtle but important design improvement: the **separation of canonical fitness (`Score`) from selection pressure (`SelectionScore`).**
+
+In the `mutation.Strategy` type (`mutation/types.go`):
+
+```go
+type Strategy struct {
+    // ... other fields ...
+    Score          float64             // Canonical fitness — never modified by temporary adjustments
+    SelectionScore float64             // Adjusted by fitness sharing — reset to 0 each epoch
+    DimensionScores map[string]float64 // Per-dimension scores (for multi-objective)
+    GenerationCreated int              // Generation number when this individual was created
+}
+```
+
+**The problem this solves:** Fitness sharing adjusts scores to penalize individuals in crowded regions of the parameter space, promoting diversity. Without the split, these adjustments would corrupt the canonical `Score` — which is used for reporting, history, and `BestStrategy()`. Worse, if an individual survived multiple generations, the penalty would accumulate.
+
+**How it works:**
+
+1. `Score` is set by the scorer and **never modified** by temporary adjustments. It's the canonical, objective fitness.
+2. `SelectionScore` starts at 0 each generation. Fitness sharing initializes it from `Score` and applies the penalty.
+3. `effectiveScore()` in `selection.go` selects the right value:
+
+```go
+func effectiveScore(s *mutation.Strategy) float64 {
+    if s.SelectionScore != 0 {
+        return s.SelectionScore
+    }
+    return s.Score
+}
+```
+
+All selection operators (Tournament, Roulette, SUS, Rank, Truncation, LineageRank) use `effectiveScore()`, so fitness sharing affects all of them.
+
+**Fitness sharing implementation** (`population_guard.go:432-557`):
+- Computes crowding by parameter similarity (Euclidean distance < `FitnessNicheRadius` = 0.15)
+- Penalizes each crowded individual: `SelectionScore /= (1.0 + shareSigma * crowdCount)`, where `shareSigma = 0.3`
+- Three strategies for population scaling:
+  - **Small**: `applyFitnessSharingLocked()` — full O(n²) pairwise comparison
+  - **Medium**: `applyFitnessSharingSampled()` — reservoir sampling O(m × sampleSize × k)
+  - **Large (>500)**: `applyFitnessSharingSpatial()` — spatial grid index avoids O(n²) entirely
+- Elite individuals (within `EliteCount`) are **exempt** from penalization
+
+### 9.14 Experience System: Data-Driven Evolution Guidance
+
+The experience system connects tool-call observability to evolution direction. It provides a structured pipeline from raw execution traces to actionable evolution hints.
+
+**Pipeline:**
+
+```
+ToolCallRecord → RawExperience → NormalizedExperience → MemoryExperienceStore
+                                      ↓
+                                AggregateEvidence
+                                      ↓
+                                EvolutionHint (for mutation guidance)
+```
+
+**Core Components:**
+
+`tool_call_collector.go` — Captures tool calls as `ToolCallRecord` with strategy ID, task type, tool name, latency, success status, error codes, and result sizes. Runs through a normalizer that deduplicates and filters noise (high latency outliers, high error rate records).
+
+`memory_store.go` — `MemoryExperienceStore` provides indexed storage with dict-based indexes on `strategy_id` and `task_type`:
+
+| Method | Purpose |
+|--------|---------|
+| `Append(ctx, exp)` | Single experience with validation and capacity check |
+| `AppendBatch(ctx, exps)` | Bulk insert with atomic validation |
+| `Query(ctx, strategyID, start, end)` | Indexed filtering with reverse-chronological sort |
+| `QueryByTaskType(ctx, taskType, limit)` | Score-descending with optional limit |
+| `GetStatistics(ctx, strategyID)` | Aggregate metrics (total, avg_score, success_rate) |
+
+`experience_hints.go` — The `GuidanceProvider` interface bridges experiences to evolution:
+
+```go
+type GuidanceProvider interface {
+    HintsForTask(ctx context.Context, taskType string, limit int) ([]EvolutionHint, error)
+    RecordStrategyOutcome(ctx context.Context, outcome StrategyOutcome) error
+}
+
+type EvolutionHint struct {
+    ID, TaskType, Problem, Solution  string
+    Constraints, FailedPatterns      []string
+    PreferredTools, PromptSnippets   []string
+    ParamHints                       map[string]float64
+    Confidence                       float64
+    SourceExperienceIDs              []string
+}
+```
+
+`AggregateEvidence()` computes success rate, p50/p95 latency, error rate, and confidence from a set of normalized experiences. Hints derived from high-confidence experiences (success rate > 0.8, sample count > 10) are preferred for mutation guidance.
+
+The evidence package (`internal/evidence/`) provides type-safe evidence kinds: `KindExecutionTrace`, `KindFailure`, `KindKnowledge`, `KindInsight`, `KindFitness`. Each `MemoryGenome` and `PlannerGenome` emits `KindFitness` evidence during evaluation, linking fitness scores to genome metadata.
+
+**Related files:**
+- `internal/ares_evolution/experience/types.go` — Data types
+- `internal/ares_evolution/experience/tool_call_collector.go` — Collector
+- `internal/ares_evolution/experience/memory_store.go` — Store
+- `internal/ares_evolution/experience_hints.go` — GuidanceProvider + EvolutionHint
+
+### 9.15 Memory Evolution: Runtime Parameter Self-Tuning
+
+The Genome package's population evolution isn't limited to strategy parameters. Two genome types extend evolution to memory and planner subsystems:
+
+**MemoryGenome** (`internal/evolution/genome/memory_genome.go`):
+
+```go
+type MemoryGenomeConfig struct {
+    MaxHistory            int    // [3, 50]   Default 10
+    MaxSessions           int    // [20, 500] Default 100
+    MaxDistilledTasks     int    // [500, 20000] Default 5000
+    UseStructuredCleaning bool   // Toggle
+}
+```
+
+Parameters evolve through Mutate/Crossover/Fitness:
+- **Mutate**: Adjusts each parameter within its range (e.g., MaxHistory ±5)
+- **Crossover**: 50% probability of mixing each parameter between parents
+- **Fitness**: Heuristic based on memory usage evidence — MaxHistory [5,20] scores 0.8, session penalty caps at 0.3. Emits `KindFitness` evidence with metadata.
+
+**PlannerGenome** (`internal/evolution/genome/planner_genome.go`):
+
+```go
+type PlannerGenomeConfig struct {
+    Strategy       string   // "balanced" / "architecture-first" / "memory-first"
+    MaxSources     int      // [3, 30]  Default 10
+    MinRelevance   float64  // [0.1, 0.9] Default 0.5
+}
+```
+
+- **Fitness**: Balanced strategy = 0.8, extremes = 0.6; source penalty caps at 0.3
+- **Strategy effect**: Controls which Planner sources are preferred (architecture, memory, or balanced)
+
+**Memory Patcher** (`memory_patcher.go`): Implements `patch.RuntimeComponent` with `Snapshot()`/`Apply()`/`CanApply()` — enabling GA-evolved parameters to be deployed at runtime. Supports three patch types:
+- `PatchChangePlanner`: Updates `max_history`, `max_tasks`, `max_sessions`
+- `PatchChangeBudget`: Updates `max_distilled_tasks`, `session_ttl`
+- `PatchChangeReducer`: Toggles `use_structured_cleaning`
+
+This means the GA doesn't just tune strategy parameters — it evolves memory configuration and planning behavior too, all within the same `RunIdleEvolution()` cycle.
+
+### 9.16 Phase 3-6 Integration: The WiredEvolutionSystem Grows Up
+
+The original `genome_wiring.go` connected DreamCycle → Genome Population → StrategyStore. The new `genome_wiring_system.go` extends this into an autonomous evolution loop with Phase 3-6 capabilities:
+
+```go
+type WiredEvolutionSystem struct {
+    // Core GA components
+    Scheduler             *EvolutionScheduler
+    DreamCycle            *DreamCycle
+    Population            *genome.Population
+    Genealogy             *PopulationGenealogyRecorder
+    StrategyStore         StrategyStore
+
+    // Phase 3-5: LLM-augmented meta-evolution
+    Reflector     *genome.LLMReflector        // Reflects on evolution patterns
+    HypothesisGen *genome.HypothesisGenerator  // Generates hypotheses from reflection
+    MetaCtrl      *genome.MetaController       // Self-adjusts hyperparameters
+
+    // Phase 6: Structural evolution
+    DiffReg       *diff.Registry               // Diff engine for structural changes
+    Coordinator   *coordinator.EvolutionCoordinator  // Coordinates structural patches
+    GenomeReg     *evogenome.Registry          // Registry of evolvable genome types
+
+    // Scoring infrastructure
+    ScoreCache    *scoring.ScoreCache
+    TieredScorer  *scoring.TieredScorer
+    Budget        *scoring.Budget
+
+    // Operational
+    ActiveStrategyManager *ActiveStrategyManager
+    ShadowEvaluator       *ShadowEvaluator
+    FeedbackRecorder      *FeedbackRecorder
+    AdaptiveDist          *mutation.AdaptiveDistribution
+    Metrics               *ares_observability.PrometheusMetrics
+}
+```
+
+**The Reflection Loop (Phase 3-5):**
+
+In each `RunIdleEvolution()` cycle, after the population evolves:
+1. `Reflector.Reflect(history, agents)` — Analyzes evolution trajectory: what strategies emerged, what failed, convergence patterns
+2. `HypothesisGen.Generate(reflection)` — Generates actionable hypotheses (e.g., "mutation rate is too high for stable convergence")
+3. `MetaCtrl.ApplyToPopulation(population)` — Self-adjusts hyperparameters: mutation rate, crossover rate, selection pressure
+
+**The Diff Engine (Phase 6):**
+
+When `DiffReg`, `Coordinator`, and `GenomeReg` are initialized, `RunIdleEvolution()` runs an additional Phase 6 pipeline:
+
+1. Snapshots each registered genome type (memory, planner, etc.)
+2. Diffs against the registry, detecting structural changes
+3. Generates `patch.RuntimePatch` for each detected change
+4. Submits as `PatchProposal` with `Source: SourceGA`, `Priority: 6`
+5. `Coordinator.Evaluate()` applies validated patches to running components
+
+This closes the final gap: previously, GA could only tune numeric parameters. With Phase 6, the evolution system can propagate structural changes to memory configuration, planning behavior, and any other runtime component registered in the genome registry.
+
+**Service Bridge** (`service/service_bridge.go`): Provides type-safe conversion between API-layer types and internal `mutation.Strategy` types — `toAPIStrategy()`, `toInternalStrategy()`, `cloneParams()`, `cloneDimensionScores()`. Adapters `apiGuidanceBridge`, `apiMemoryBridge`, and `llmClientAdapter` enable external systems to interact with the evolution subsystem through clean API boundaries.
+
 ---
 
 ### Lessons Learned
@@ -1909,12 +2011,6 @@ Random search is "keep the best solution, try again." Genetic algorithms are "ke
 This large refactoring also taught me: **a good architecture leaves room for requirements that don't exist yet.** The `StrategyStore` interface was originally designed as a placeholder, but because the interface was clean (`GetActive`/`SetActive`/`GetHistory` — just three methods), when DB persistence was actually needed, the implementation could be developed independently without touching any upper-layer code. DreamCycle doesn't care where strategies come from — it just calls `getCurrentStrategy()`, and whether that method internally uses hardcoded values or a database query is completely transparent to the caller.
 
 Similarly, adding `Population.Snapshot()` seemed like just adding a "read operation," but it unlocked two completely independent advanced features: in-memory snapshots (serialization) and automatic lineage recording (`RecordPopulationLineage`). One method, two uses — that's the power of good abstraction.
-                                         StrategyStore (DB) <-- EvolutionStore
-                                                    ↑
-                                            Serialize (Snapshot/Load)
-```
-
-Six layers deep, each with a clear responsibility. The genome layer (pure computation, zero I/O), the wiring layer (adapters and orchestration), the persistence layer (database and files), and the serialization layer (checkpoint/resume). Each layer can be tested, replaced, or upgraded independently.
 
 ---
 
@@ -1987,7 +2083,6 @@ These two paths aren't replacements — they're **complementary**. EvolveOnIdle 
 Alright, enough nice words. Time for some honesty.
 
 Looking back at this entire evolution system — Callback, FeedbackService, Arena, DreamCycle, genome package (4 files, 2000+ lines), genome_wiring (564 lines), plus the mutation package itself... how many lines total? Just under `internal/ares_evolution/` there are a dozen+ files. You're probably thinking:
-Looking back at this entire evolution system — Callback, FeedbackService, Arena, DreamCycle, genome package (4 files, 2000+ lines), genome_wiring (564 lines), plus the mutation package itself... how many lines total? Just under `internal/evolution/` there are a dozen+ files. You're probably thinking:
 
 > **Just to let an agent tune its own parameters, is all this complexity really necessary?**
 
@@ -2014,7 +2109,6 @@ So this design being "heavy" isn't a bug — it's a feature. It pays upfront for
 Some areas I'm personally unhappy with:
 
 - **~~getCurrentStrategy() is still placeholder~~ — FIXED**: The biggest TODO is gone. `PGStrategyStore` implements `StrategyStore` with `GetActive()`, `SetActive()`, and `GetHistory()` methods backed by a real database via the repository pattern. `WiredEvolutionSystem.StrategyStore` holds the connection. The full deployment loop now works: evolve → `BestStrategyFromSystem()` → extract best → `StrategyStore.SetActive()` → persist to DB → next startup reads via `GetActive()`. No more hardcoded `root-strategy-v1`. See Section 9.8 for full details.
-- **~~getCurrentStrategy() is still placeholder~~ — FIXED**: The biggest TODO is gone. `EvolutionStore` implements `StrategyStore` with `GetActive()`, `SetActive()`, and `List()` methods backed by a real database table (`evolution_strategies`). `WiredEvolutionSystem.StrategyStore` holds the connection. The full deployment loop now works: evolve → `BestStrategyFromSystem()` → extract best → `StrategyStore.SetActive()` → persist to DB → next startup reads via `GetActive()`. No more hardcoded `root-strategy-v1`. See Section 9.8 for full details.
 - **shouldEvolve() is a stub**: EvolutionScheduler's heuristic judgment is basically empty — no performance degradation detection, no trend analysis, no adaptive thresholds. Currently "every callback triggers evolution," which definitely won't work in production
 - **HalfSplitPromptCrossover Unicode safety**: Uses `len(string)` (byte length) instead of `len([]rune())` for prompt truncation, producing illegal UTF-8 sequences with multi-byte characters like Chinese. Should be rune-level splitting
 - **Roulette Wheel degeneration with uniform scores**: When all individuals have identical scores (all -1 unevaluated, or all 0 initialized), Roulette Wheel degrades to uniform random selection. Fine in isolation, but if the population stays in this state long-term, evolution stalls on random walk
@@ -2038,47 +2132,51 @@ Step by step, each step delivers independent value. Genome package is icing on t
 ares's autonomous evolution system isn't black magic. It translates biology's most fundamental concept — **mutation, selection, inheritance, crossover** — into code:
 
 ```
-Callback trigger -> Scheduler decides -> DreamCycle orchestrates
-  -> Genome.Population.EvolveOnIdle() [zero token]
-    -> SortByScore() sort (-1 goes to end)
-    -> selectSurvivors() pick survivors (SurvivalRate)
-    -> preserveElites() keep best N
-    -> Crossover.Uniform/MultiPoint/HalfSplit recombine
-    -> Mutator.Mutate() vary offspring
-  -> RecordPopulationLineage() auto-build family tree
-  -> StrategyStore.SetActive() persist winner to DB  [NEW]
-  -> SaveEvolutionRun() checkpoint full state         [NEW]
-  -> Arena validate (Welch's t-test)
-  -> Genealogy record lineage
-  -> Winner becomes new Baseline
+Background ticker (5min) ──→ GenomePopulationAdapter.Run()
+OnAgentEnd callback     ──→ EvolutionScheduler ──→ GenomePopulationAdapter.Run()
+                                                       ↓
+                                                 GA Population.Evolve()
+                                                   → SortByScore() (-1 goes to end)
+                                                   → selectSurvivors() (SurvivalRate)
+                                                   → preserveElites() (keep best N)
+                                                   → Crossover.Uniform/TwoPoint/Segment
+                                                   → Mutator.Mutate() (6 types)
+                                                       ↓
+                                                 submitToCoordinator()
+                                                   → generateDiffPatches() across 6 genomes
+                                                   → Coordinator.Evaluate() (Apply/Reject/Delay)
+                                                   → Executors apply patches to live system
+                                                       ↓
+                                                 StrategyStore.SetActive()
+                                                   → persist winner to DB
+                                                   → next startup reads via GetActive()
 ```
 
 The system's design philosophy is **conservative incrementalism**:
 
 - **Opt-in by default**: `Enabled: false`, must explicitly enable
 - **High bar to pass**: WinRate 0.55 + p < 0.05, better to not evolve than to regress
-- **Fully traceable**: every step has logs, lineage, Audit Trail — now with `RecordPopulationLineage()` building the family tree automatically after each generation
+- **Fully traceable**: every step has logs, lineage, Audit Trail — with `RecordPopulationLineage()` building the family tree automatically after each generation
 - **Graceful degradation**: missing any component doesn't affect basic functionality, just skips evolution
 - **Zero-token option**: EvolveOnIdle drives evolution cost to zero — pure in-memory ops, microsecond latency
-- **Database persistence** [NEW]: PGStrategyStore closes the deployment loop — evolved strategies are no longer stuck in memory, they persist across restarts via `GetActive()` / `SetActive()` / `GetHistory()`
-- **Database persistence** [NEW]: EvolutionStore closes the deployment loop — evolved strategies are no longer stuck in memory, they persist across restarts via `GetActive()` / `SetActive()` / `List()`
-- **Checkpoint/Resume** [NEW]: SaveEvolutionRun / LoadEvolutionRun captures complete evolution state as JSON — checkpoint mid-run, resume later, audit historically, share reproducibly
-- **Deterministic reproduction** [NEW]: MutatorSeed + CrossoverSeed + PopulationSeed + UseDeterministicIDs = bit-for-bit reproducible evolution trajectories for debugging and scientific comparison
+- **Database persistence**: PGStrategyStore closes the deployment loop — evolved strategies persist across restarts
+- **Deterministic reproduction**: MutatorSeed + CrossoverSeed + PopulationSeed = bit-for-bit reproducible evolution
+- **6-genome pipeline**: Workflow / Scheduler / Knowledge / Recovery / Planner / Memory — all evolvable, all with dedicated executors
+- **Multi-objective optimization**: NSGA-II with direction-aware Pareto dominance + crowding distance
+- **Steady-state GA**: Online learning mode that replaces only 10-50% of the population per generation
+- **Fitness sharing**: SelectionScore preserves canonical fitness from temporary adjustments
 
-Honestly, this system still has TODOs: `shouldEvolve()`'s score degradation detection isn't wired up, Level 3 tool auto-generation is just an enum value, HalfSplit Prompt Crossover hasn't been made Unicode-safe, genome/evolution type coupling still requires adapters. But the skeleton is solid, the biggest TODO (`getCurrentStrategy()` placeholder) is **resolved**, five of the six links are closed, the genome package's genetic algorithm engine is production-grade with DB persistence, serialization, thread-safe inspection, and traceable provenance — what's left is incremental polish, not foundational gaps.
-
-The architecture has reached a meaningful milestone: **the evolution system can now persist its output.** Before this round of improvements, EvolveOnIdle was an impressive computation that produced... nothing deployable. Strategies lived and died in RAM. Now there's a path from "randomly initialized population" to "database-deployed strategy" that looks like:
+The architecture has reached a meaningful milestone: **the evolution system is now a closed loop.** From background ticker to population evolution to coordinator decisions to executor patches to strategy store persistence — every link is connected. The path from "randomly initialized population" to "deployed strategy" looks like:
 
 ```
-NewPopulation(base) -> RunIdleEvolution(100 gens) ->
-  BestStrategyFromSystem() -> StrategyStore.SetActive() ->
-  GetActive() on next startup -> deployed strategy
+NewPopulation(base) → RunIdleEvolution(100 gens) →
+  BestStrategyFromSystem() → StrategyStore.SetActive() →
+  GetActive() on next startup → deployed strategy
 ```
 
-That's a closed loop. Not a perfect one — but a working one.
+That's a closed loop. Not a perfect one — `shouldEvolve()`'s score degradation detection isn't wired up, Level 3 tool auto-generation is still just an enum value, and several docs still need updating. But the skeleton is solid, and the system is production-ready for its intended use case: autonomous strategy evolution in live agents.
 
-If you want to add self-evolution capability to your agent too, my advice: **don't start with the Genome package.** First wire up Callback + FeedbackService — record every success and failure. Then add Arena for strategy validation. Then Mutator + DreamCycle single-parent mutation evolution. Add PGStrategyStore for persistence once you're ready to deploy evolved strategies. Finally — when you genuinely need to explore large-scale parameter spaces — bring in the Genome package's population genetic algorithm.
-If you want to add self-evolution capability to your agent too, my advice: **don't start with the Genome package.** First wire up Callback + FeedbackService — record every success and failure. Then add Arena for strategy validation. Then Mutator + DreamCycle single-parent mutation evolution. Add EvolutionStore for persistence once you're ready to deploy evolved strategies. Finally — when you genuinely need to explore large-scale parameter spaces — bring in the Genome package's population genetic algorithm.
+If you want to add self-evolution capability to your agent too, my advice: **don't start with the Genome package.** First wire up Callback + FeedbackService — record every success and failure. Then add Arena for strategy validation. Then Mutator + single-parent mutation evolution. Add PGStrategyStore for persistence once you're ready to deploy. Finally — when you genuinely need to explore large-scale parameter spaces — bring in the Genome package's population genetic algorithm.
 
 Step by step, each step delivers independent value. That's what engineering should look like.
 

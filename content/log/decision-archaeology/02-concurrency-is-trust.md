@@ -200,4 +200,4 @@ fn record_event(event: Event) {
 
 ---
 
-*Next: [错误是设计的镜子](@/log/decision-archaeology/03-errors-are-mirrors.md) -- goagent 的 Agent Recovery + CodeTribunal 的 Troublemaker：系统怎么对待失败，暴露了什么设计哲学？*
+*Next: [错误是设计的镜子](@/log/decision-archaeology/03-errors-are-mirrors.md) -- ARES 的 Agent Recovery + CodeTribunal 的 Troublemaker：系统怎么对待失败，暴露了什么设计哲学？*

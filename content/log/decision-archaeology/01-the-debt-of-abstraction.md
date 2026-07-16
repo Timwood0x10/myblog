@@ -1,7 +1,7 @@
 +++
 title = "抽象的债务"
 date = 2026-06-12
-description = "goagent 需要对接四个 LLM 提供商。接口抽象该做到什么程度？从 LLMService 接口的设计决策出发，拆解抽象层的隐性成本。"
+description = "ARES 需要对接四个 LLM 提供商。接口抽象该做到什么程度？从 LLMService 接口的设计决策出发，拆解抽象层的隐性成本。"
 weight = 1
 [taxonomies]
 tags = ["Go", "LLM", "Architecture", "decision-archaeology"]
@@ -12,7 +12,7 @@ series = "decision-archaeology"
 
 # 抽象的债务
 
-> **Problem**: goagent 需要对接 OpenRouter、Ollama、OpenAI、Anthropic 四个 LLM 提供商。接口抽象该做到什么程度？做少了，改一个 provider 要动 N 处代码；做多了，接口本身变成维护负担。这篇文章考古的是那条线到底画在哪里。
+> **Problem**: ARES 需要对接 OpenRouter、Ollama、OpenAI、Anthropic 四个 LLM 提供商。接口抽象该做到什么程度？做少了，改一个 provider 要动 N 处代码；做多了，接口本身变成维护负担。这篇文章考古的是那条线到底画在哪里。
 
 ## 如果不做抽象，最简单的方案长什么样？
 
@@ -38,9 +38,9 @@ func callLLM(provider string, prompt string) (string, error) {
 
 有人告诉你"要面向接口编程"。于是你开始设计抽象层。问题来了：**抽象到什么粒度？**
 
-## goagent 的 LLMService 做了什么选择？
+## ARES 的 LLMService 做了什么选择？
 
-goagent 的答案是定义一个 `LLMService` 接口，抽象行为，不抽象数据：
+ARES 的答案是定义一个 `LLMService` 接口，抽象行为，不抽象数据：
 
 ```go
 // api/core/llm.go:170-208
@@ -102,7 +102,7 @@ LangChain Go 的方式是为每个 provider 写一个完整的 struct 实现统�
 
 LiteLLM 走另一个极端：用配置文件描述 provider 差异，运行时动态分发。Python 的动态性让这招可行，但调试时你面对的是一个黑盒——错误信息经过适配层的包装，常常丢失原始上下文。
 
-goagent 选了中间路线：接口抽象核心行为，switch 处理协议细节。不追求运行时动态性，也不追求完全的策略隔离。
+ARES 选了中间路线：接口抽象核心行为，switch 处理协议细节。不追求运行时动态性，也不追求完全的策略隔离。
 
 但 LangChain Go 的接口膨胀问题值得展开。假设你的接口定义了 `Generate`、`Stream`、`FunctionCall`、`CountTokens` 四个方法，四个 provider 各自实现，相安无事。现在你要加第五个 provider——比如一个支持 streaming 但不支持 function calling 的国产模型。问题来了：接口要求你实现 `FunctionCall` 方法，但你没有这个能力。你只能返回 `ErrNotSupported`。调用方拿到这个 error 之前，编译器不会给出任何警告——接口签名骗它说"我能做"，运行时才告诉你"我做不了"。这就是接口膨胀的经典症状：**接口承诺的能力超过了实现的实际能力，类型系统无法表达"部分实现"**。你被迫在文档里写"Provider X 不支持 FunctionCall"，而这正是类型系统应该帮你解决的问题。每加一个 provider，这份文档就长一截，直到没人记得哪个 provider 到底支持什么。
 
@@ -128,11 +128,11 @@ type UniversalRequest struct {
 
 这个 struct 会不断膨胀，每次有 provider 加新特性就得加字段。最终它不再是你的模型，而是所有 provider 的最小公分母。
 
-goagent 的做法是定义自己的 `GenerateRequest` 和 `GenerateResponse`，它们是 goagent 业务逻辑需要的数据结构，不是任何 provider 的 API 模型。序列化差异留给底层的 `generateOpenRouter`、`generateOllama` 各自处理。
+ARES 的做法是定义自己的 `GenerateRequest` 和 `GenerateResponse`，它们是 ARES 业务逻辑需要的数据结构，不是任何 provider 的 API 模型。序列化差异留给底层的 `generateOpenRouter`、`generateOllama` 各自处理。
 
 这是对的。**你的抽象层应该表达你的领域概念，不是别人的 API 设计。**
 
-具体看一个例子：OpenAI 的响应体是 `choices[0].message.content`，一个字符串；Anthropic 的响应体是 `content[0].text`，一个数组的第一个元素的 text 字段。如果定义一个 `UniversalResponse`，你要么用 `map[string]any` 做逃生舱，把解析逻辑推给调用方；要么定义一个 `Choice` struct 试图兼容两家，结果发现 Anthropic 的 `content` 数组里除了 `text` 还有 `tool_use` 类型，而 OpenAI 的 tool call 在 `message.tool_calls` 里——结构完全不同，你的 `Choice` 变成了一个塞满可选字段的怪物。所以 goagent 选择让 `GenerateResponse` 只包含自己需要的字段（text、usage、finish reason），在底层的 `generateOpenRouter` 和 `generateAnthropic` 里各自做映射。这个映射代码是冗余的，但它是可控的冗余——每一处映射都只服务于一个 provider，改一个不影响其他。
+具体看一个例子：OpenAI 的响应体是 `choices[0].message.content`，一个字符串；Anthropic 的响应体是 `content[0].text`，一个数组的第一个元素的 text 字段。如果定义一个 `UniversalResponse`，你要么用 `map[string]any` 做逃生舱，把解析逻辑推给调用方；要么定义一个 `Choice` struct 试图兼容两家，结果发现 Anthropic 的 `content` 数组里除了 `text` 还有 `tool_use` 类型，而 OpenAI 的 tool call 在 `message.tool_calls` 里——结构完全不同，你的 `Choice` 变成了一个塞满可选字段的怪物。所以 ARES 选择让 `GenerateResponse` 只包含自己需要的字段（text、usage、finish reason），在底层的 `generateOpenRouter` 和 `generateAnthropic` 里各自做映射。这个映射代码是冗余的，但它是可控的冗余——每一处映射都只服务于一个 provider，改一个不影响其他。
 
 ## 这个抽象已经欠了什么债？
 
@@ -165,7 +165,7 @@ flowchart TD
     B -->|功能集不同| D[接口 + Capability 枚举]
     B -->|流式协议不同| E[每个 provider 独立 stream adapter]
     B -->|所有差异| F[分层：接口层 + 适配器层 + 传输层]
-    C --> G[goagent 的选择]
+    C --> G[ARES 的选择]
     G --> H[债务：接口粒度不够细]
 {% end %}
 

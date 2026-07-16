@@ -12,8 +12,6 @@ series = "ARES"
 
 # ares Architecture Deep Dive (IV): Workflow Engine -- From DAG to Dynamic Orchestration
 
-> > > > > > > pd
-
 > I used to hardcode workflows. If step 1 finishes, run step 2. If step 2 finishes, run step 3.
 > Then requirements changed. Logic got tangled. Code turned into spaghetti.
 > I thought: **workflows shouldn't be hardcoded. They should be like LEGO — snap together, pull apart, swap pieces at runtime.**
@@ -34,7 +32,7 @@ Now the project carries two workflow systems:
 
 They coexist, serving different users. Codebase doubled, but I avoided the "one-size-fits-all" compromise. Was it worth it? I think so.
 
-***
+---
 
 ## 1. The Workflow Engine: Configuration-Driven Orchestration
 
@@ -104,7 +102,9 @@ Construction via `NewDAG(steps []*Step)` performs the following in sequence:
        return nil, fmt.Errorf("duplicate step ID %q: %w", step.ID, ErrDuplicateID)
    }
    ```
+
 2. **Edge Construction**: For each step, every `DependsOn` entry is validated as an existing node. If a dependency references a nonexistent step, `ErrInvalidDependency` is returned immediately.
+
 3. **Cycle Detection**: The private `hasCycle()` method runs a DFS-based cycle detection using a recursion stack:
    ```go
    func (d *DAG) hasCycle() bool {
@@ -113,6 +113,7 @@ Construction via `NewDAG(steps []*Step)` performs the following in sequence:
        // ... standard DFS cycle detection
    }
    ```
+
 4. **Topological Sort**: `GetExecutionOrder()` implements Kahn's algorithm (BFS-based in-degree removal). This produces a linear ordering that respects all dependency constraints while identifying parallelizable steps (nodes at the same topological level).
 
 ### 1.3 The Retry Policy
@@ -174,9 +175,9 @@ func (e *Executor) replaceTemplateVariables(input, initialInput string, complete
 }
 ```
 
-This design is intentionally simple: it uses `strings.ReplaceAll` rather than a full template engine (like Go's `text/template`). The tradeoff is reduced expressiveness in exchange for zero runtime dependencies and predictable O(n\*m) behavior.
+This design is intentionally simple: it uses `strings.ReplaceAll` rather than a full template engine (like Go's `text/template`). The tradeoff is reduced expressiveness in exchange for zero runtime dependencies and predictable O(n*m) behavior.
 
-***
+---
 
 ## 2. Parallel Execution Model
 
@@ -249,7 +250,7 @@ This loop design addresses a subtle concurrency challenge: when a step cannot ex
 
 A 5-second timeout on the `stepDone` channel acts as a deadlock detector. If no goroutine completes within 5 seconds while a step is waiting for dependencies, the workflow is aborted with a `"workflow deadlock detected"` error. This is a pragmatic compromise between responsiveness and false positives.
 
-***
+---
 
 ## 3. Human-in-the-Loop (HITL)
 
@@ -299,7 +300,7 @@ The HITL flow in the `Executor` works as follows:
 4. **Decide**: If rejected, the step is marked `Skipped`. If approved, the step proceeds.
 5. **Cleanup**: The interrupt state is deleted from the store after resolution.
 
-***
+---
 
 ## 4. Configuration Loading and Hot Reload
 
@@ -338,6 +339,7 @@ The `DirectoryLoader` iterates over directory entries, loads all valid JSON/YAML
 The `FileWatcher` (`internal/workflow/engine/reloader.go`) provides hot reloading with a dual strategy:
 
 1. **Event-driven (primary)**: Uses `fsnotify` to receive real-time file change events. If initialization fails (e.g., on systems without `inotify`), it logs a warning and falls back to polling.
+
 2. **Polling (fallback)**: Periodically scans the directory every 5 seconds, comparing file modification times against the cached workflow `UpdatedAt` timestamps.
 
 The `scanAndLoad` method uses a compare-and-swap pattern protected by a mutex to prevent TOCTOU (Time-of-Check-Time-of-Use) races:
@@ -363,7 +365,7 @@ type WorkflowReloader struct {
 
 Callbacks receive a deep copy of the workflows map to prevent mutation of internal state by external code (marked as "M7 fix").
 
-***
+---
 
 ## 5. Dynamic Execution: Runtime DAG Mutation
 
@@ -385,7 +387,7 @@ Key operations:
 
 - **`AddNode`**: Validates dependencies, performs incremental cycle detection via `wouldCreateCycle`, and supports atomic rollback on failure.
 - **`RemoveNode`**: Checks for dependent nodes before removal to prevent orphaned references.
-- **`AddEdge`** **/** **`RemoveEdge`**: Fine-grained edge operations with cycle detection.
+- **`AddEdge` / `RemoveEdge`**: Fine-grained edge operations with cycle detection.
 
 Each mutation increments a `version` counter, enabling consumers to detect changes without polling.
 
@@ -545,10 +547,10 @@ func (m *MutableDAG) ReplaceNode(oldID string, newStep *Step) error {
 
 **Two scenarios:**
 
-| Scenario                   | oldID == newStep.ID | Behavior                                                                                         |
-| -------------------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
-| **Same-ID update**         | Yes                 | In-place replacement. Edges preserved via `recalculateDegrees()`. No simulated remapping needed. |
-| **Different-ID migration** | No                  | Complete edge migration. Old node's edges are atomically transferred to the new node.            |
+| Scenario | oldID == newStep.ID | Behavior |
+|----------|---------------------|----------|
+| **Same-ID update** | Yes | In-place replacement. Edges preserved via `recalculateDegrees()`. No simulated remapping needed. |
+| **Different-ID migration** | No | Complete edge migration. Old node's edges are atomically transferred to the new node. |
 
 **Cycle detection via simulated adjacency list:** Before any mutation, `ReplaceNode` constructs an adjacency list that mirrors the *post-replacement* topology — the old node's edges are remapped to the new node. The three-color DFS (`hasCycleInAdjList`) runs on this simulated graph:
 
@@ -647,11 +649,11 @@ type StepRecoveryHandler interface {
 }
 ```
 
-| Strategy              | When                                             | Effect                                 |
-| --------------------- | ------------------------------------------------ | -------------------------------------- |
-| `RecoveryRetry`       | Transient errors (network timeout, rate-limit)   | Re-execute the same step after delay   |
+| Strategy | When | Effect |
+|----------|------|--------|
+| `RecoveryRetry` | Transient errors (network timeout, rate-limit) | Re-execute the same step after delay |
 | `RecoveryReplaceNode` | Semantic failure (wrong LLM output, logic error) | Swap the failed step via `ReplaceNode` |
-| `RecoveryFailFast`    | Fatal errors (invalid config, auth failure)      | Propagate error up, abort workflow     |
+| `RecoveryFailFast` | Fatal errors (invalid config, auth failure) | Propagate error up, abort workflow |
 
 #### 5.7.2 RecoveryReplaceNode Flow
 
@@ -683,7 +685,7 @@ Key implementation details:
 - **`handleStepFailure`** checks if a `StepRecoveryHandler` is configured and the step still exists in the DAG (not already replaced by a concurrent recovery)
 - **`recoveryCh`** is a dedicated channel that wakes the scheduler loop, which then resets `stepIndex = 0` and re-fetches the full execution order via `GetExecutionOrder()`
 - **5-round cap**: The `processed` map prevents infinite recovery loops — each step ID can be recovered at most once (with 5 total recovery rounds as a safety limit)
-- **`recomputeOrder`** **now replaces the entire order**: Instead of appending new steps, it re-fetches the full topological sort from `GetExecutionOrder()`, critical for ensuring the replacement node is correctly positioned before downstream steps
+- **`recomputeOrder` now replaces the entire order**: Instead of appending new steps, it re-fetches the full topological sort from `GetExecutionOrder()`, critical for ensuring the replacement node is correctly positioned before downstream steps
 
 #### 5.7.3 Memory Distillation Integration
 
@@ -706,7 +708,7 @@ The `WithRecoveryEventSink` option on `DynamicExecutor` connects recovery events
 
 > "如果你的 Agent 挂了……Runtime Manager 能够带着刚才的认知记忆，瞬间在 DAG 图上秽土转生"
 
-***
+---
 
 ## 6. The Agent Registry and Output Store
 
@@ -753,7 +755,7 @@ func (s *OutputStore) GetMultiple(stepIDs []string) map[string]*StepOutput {
 }
 ```
 
-***
+---
 
 ## 7. The Graph System: Programmatic Orchestration
 
@@ -787,11 +789,11 @@ Constructor panics on invalid input (empty ID, nil tracer) -- a deliberate desig
 
 Three node types are available (`internal/workflow/graph/node.go`):
 
-| Type        | Wraps                                 | Use Case       |
-| ----------- | ------------------------------------- | -------------- |
-| `AgentNode` | `base.Agent`                          | AI agent tasks |
-| `ToolNode`  | `core.Tool`                           | Tool execution |
-| `FuncNode`  | `func(context.Context, *State) error` | Custom logic   |
+| Type | Wraps | Use Case |
+|------|-------|----------|
+| `AgentNode` | `base.Agent` | AI agent tasks |
+| `ToolNode` | `core.Tool` | Tool execution |
+| `FuncNode` | `func(context.Context, *State) error` | Custom logic |
 
 All three implement the `Node` interface:
 
@@ -824,11 +826,11 @@ type Scheduler interface {
 }
 ```
 
-| Scheduler           | Selection Strategy            | Use Case                     |
-| ------------------- | ----------------------------- | ---------------------------- |
-| `DefaultScheduler`  | FIFO (first-in-first-out)     | Simple, predictable ordering |
-| `PriorityScheduler` | Highest priority first        | Critical-path prioritization |
-| `ShortJobScheduler` | Shortest estimated time first | Throughput optimization      |
+| Scheduler | Selection Strategy | Use Case |
+|-----------|-------------------|----------|
+| `DefaultScheduler` | FIFO (first-in-first-out) | Simple, predictable ordering |
+| `PriorityScheduler` | Highest priority first | Critical-path prioritization |
+| `ShortJobScheduler` | Shortest estimated time first | Throughput optimization |
 
 The `ShortJobScheduler` uses a reasonable default estimate of 1000ms for unknown nodes, ensuring they are still schedulable while preferring known short jobs.
 
@@ -866,7 +868,6 @@ for len(readyQueue) > 0 {
 ```
 
 Key characteristics:
-
 - **Single-threaded**: No goroutines or mutexes needed for shared state.
 - **Deterministic execution**: Given the same scheduler and graph, execution is reproducible.
 - **Observability**: Integrated with `observability.Tracer` for agent step recording and error tracking.
@@ -874,31 +875,30 @@ Key characteristics:
 
 The "C7 fix" ensures correct in-degree decrement semantics for conditional edges, preventing silent node loss when a node has multiple predecessors with mixed conditional edges.
 
-***
+---
 
 ## 8. Comparative Analysis: Workflow Engine vs. Graph System
 
-| Aspect                 | Workflow Engine                                                 | Graph System                                                    |
-| ---------------------- | --------------------------------------------------------------- | --------------------------------------------------------------- |
-| **Configuration**      | YAML/JSON files                                                 | Code (Fluent Builder API)                                       |
-| **Execution Model**    | Parallel (errgroup + semaphore)                                 | Single-threaded BFS                                             |
-| **Concurrency**        | Concurrent steps up to `maxParallel`                            | Sequential node execution                                       |
-| **Dependency**         | Declarative `DependsOn`                                         | Programmatic edges with conditions                              |
-| **Scheduling**         | Topological order (fixed)                                       | Pluggable (FIFO, Priority, SJF)                                 |
-| **HITL**               | Native (InterruptHandler + InterruptStore)                      | Not supported                                                   |
-| **Retry**              | Native (exponential backoff)                                    | Not supported                                                   |
-| **Hot Reload**         | Native (fsnotify + polling)                                     | Not supported                                                   |
-| **Runtime Mutation**   | MutableDAG.ReplaceNode + DynamicExecutor                        | Not supported                                                   |
-| **Recovery**           | RecoveryReplaceNode + StepRecoveryHandler + Memory Distillation | Not supported                                                   |
-| **Template Variables** | `{{.input}}` + `{{.step_id}}`                                   | Not supported                                                   |
-| **State Passing**      | OutputStore (key-value)                                         | State (key-value)                                               |
-| **Observability**      | Basic logging                                                   | Integrated tracer                                               |
-| **Primary Use Case**   | Production workflows, HITL workflows, config-driven pipelines   | In-code orchestration, conditional branching, custom scheduling |
+| Aspect | Workflow Engine | Graph System |
+|--------|----------------|--------------|
+| **Configuration** | YAML/JSON files | Code (Fluent Builder API) |
+| **Execution Model** | Parallel (errgroup + semaphore) | Single-threaded BFS |
+| **Concurrency** | Concurrent steps up to `maxParallel` | Sequential node execution |
+| **Dependency** | Declarative `DependsOn` | Programmatic edges with conditions |
+| **Scheduling** | Topological order (fixed) | Pluggable (FIFO, Priority, SJF) |
+| **HITL** | Native (InterruptHandler + InterruptStore) | Not supported |
+| **Retry** | Native (exponential backoff) | Not supported |
+| **Hot Reload** | Native (fsnotify + polling) | Not supported |
+| **Runtime Mutation** | MutableDAG.ReplaceNode + DynamicExecutor | Not supported |
+| **Recovery** | RecoveryReplaceNode + StepRecoveryHandler + Memory Distillation | Not supported |
+| **Template Variables** | `{{.input}}` + `{{.step_id}}` | Not supported |
+| **State Passing** | OutputStore (key-value) | State (key-value) |
+| **Observability** | Basic logging | Integrated tracer |
+| **Primary Use Case** | Production workflows, HITL workflows, config-driven pipelines | In-code orchestration, conditional branching, custom scheduling |
 
 ### 8.1 When to Use Each
 
 **Choose the Workflow Engine when:**
-
 - Workflows need to be defined or modified without recompilation
 - Human approval is required at specific steps
 - Steps need automatic retry with backoff
@@ -906,14 +906,13 @@ The "C7 fix" ensures correct in-degree decrement semantics for conditional edges
 - Maximum parallelism is desired
 
 **Choose the Graph System when:**
-
 - Workflow topology is constructed programmatically
 - Conditional branching based on runtime state is needed
 - Custom scheduling strategies are required
 - Observability tracing is desired
 - Simplicity and determinism are priorities
 
-***
+---
 
 ## 9. Design Patterns and Tradeoffs
 
@@ -924,7 +923,6 @@ The Graph System's builder methods (`Node()`, `Edge()`, `Start()`, `SetScheduler
 ### 9.2 errgroup + Semaphore for Concurrency
 
 The Workflow Engine uses `errgroup` for lifecycle management (first error cancels the group) and a buffered channel semaphore for concurrency limiting. This pattern:
-
 - Ensures that a single step failure cancels the entire workflow promptly
 - Prevents unlimited goroutine creation
 - Maintains bounded resource usage (default 10 concurrent steps)
@@ -953,7 +951,7 @@ Workflow Files (YAML/JSON) -> Loader -> Workflow -> DAG -> Executor -> Result
 
 Each layer has a single responsibility: loading, parsing, graph construction, execution orchestration, and agent dispatch.
 
-***
+---
 
 ## 10. Honest Reflections — The Price of Breaking Paradigms
 
@@ -1013,7 +1011,7 @@ What caught me off guard was the cross-platform gap. inotify (Linux) and kqueue 
 
 This made me question whether "no restart" was worth the complexity. If your SLA allows a few seconds of downtime, restarting is probably the simpler, better choice. It's not a technical decision — it's an SLA decision.
 
-***
+---
 
 These are the choices I keep revisiting. I'm writing them down not because I think they're right, but because the thinking process itself might be useful to someone facing similar problems.
 
@@ -1040,7 +1038,7 @@ const (
 
 These constants establish a conservative baseline: workflows of up to 100 steps with up to 10 dependencies each, a step timeout of 10 seconds, and a workflow-level timeout of 5 minutes.
 
-***
+---
 
 ## 12. Summary
 
@@ -1072,4 +1070,3 @@ The concurrency model (errgroup + WaitGroup + semaphore + stepDone channels), th
 - Executor: `internal/workflow/graph/executor.go`
 - Schedulers: `internal/workflow/graph/scheduler.go`
 - State: `internal/workflow/graph/state.go`
-

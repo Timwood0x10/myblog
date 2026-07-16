@@ -48,25 +48,41 @@ graph TB
         Leader["Leader Agent"]
         Sub["Sub Agents"]
         PluginBus["PluginBus"]
+        Strategy["Active Strategy<br/>evolved params"]
     end
 
     subgraph Workflow ["Layer 3: Workflow"]
-        DAG["MutableDAG"]
+        DAG["MutableDAG<br/>evolvable topology"]
         Exec["DynamicExecutor"]
         Checkpoint["Checkpoint Resume"]
+        GraphPatch["GraphPatchExecutor<br/>insert/remove/replace nodes"]
     end
 
     subgraph Memory ["Layer 4: Memory"]
         Session["Session Memory"]
         Distilled["Distilled Memory"]
         Retrieval["Vector Retrieval"]
+        MemConfig["Memory Config<br/>max_history, session_ttl..."]
+        MemPatch["MemoryPatchExecutor<br/>runtime config evolution"]
     end
 
-    subgraph Infra ["Layer 5: Infrastructure"]
+    subgraph Evolution ["Layer 5: Evolution Engine"]
+        GA["GA Population<br/>N individuals, 7 selectors<br/>3 crossover, 6 mutation"]
+        Tick["Background Ticker<br/>5min interval"]
+        Sched["Scheduler<br/>OnAgentEnd callback"]
+        Adapter["GenomePopulationAdapter<br/>Run()"]
+        Genomes["6 Genomes<br/>Workflow / Scheduler / Knowledge<br/>Recovery / Planner / Memory"]
+        Diff["Diff Engine<br/>4 Differs"]
+        Coord["Coordinator<br/>Apply / Reject / Delay"]
+        Execs["5 Executors<br/>Graph / Recovery / Knowledge<br/>Memory + StrategyStore"]
+    end
+
+    subgraph Infra ["Layer 6: Infrastructure"]
         Events["EventStore"]
         Storage["VectorStore"]
         LLM["LLM Adapters"]
         Tools["Tool Registry"]
+        Evidence["Evidence Store"]
     end
 
     Bootstrap --> RT
@@ -75,23 +91,40 @@ graph TB
     Leader --> DAG
     DAG --> Exec
     Exec --> PluginBus
+    Exec --> GraphPatch
     Session --> Distilled
     Distilled --> Retrieval
     RT --> Events
     DAG --> Events
     Leader --> LLM
     Sub --> Tools
+
+    Tick --> Adapter
+    Sched --> Adapter
+    Adapter --> GA
+    GA --> Genomes
+    Genomes --> Diff
+    Diff --> Coord
+    Coord --> Execs
+    Execs --> DAG
+    Execs --> MemConfig
+    Adapter --> Strategy
+    Strategy --> RT
+    DAG --> Events
+    Exec --> Events
 ```
 
 **Layer 1: API Contract** — What the outside world sees. Interfaces only, no implementations. The Bootstrap factory wires everything together. You call `bootstrap.New()` and get a fully connected system.
 
-**Layer 2: Runtime** — Who does the work. The Runtime Manager owns agent lifecycles: birth, death, resurrection. The Leader plans and delegates. Sub Agents execute. The PluginBus connects everything.
+**Layer 2: Runtime** — Who does the work. The Runtime Manager owns agent lifecycles: birth, death, resurrection. The Leader plans and delegates. Sub Agents execute. The PluginBus connects everything. The **Active Strategy** carries evolved parameters (tool selection, search depth, scheduler strategy) that the GA engine produces.
 
-**Layer 3: Workflow** — How work flows. The MutableDAG defines task dependencies. The DynamicExecutor runs them in topological order. Checkpoint Resume lets you pick up where you left off after a crash.
+**Layer 3: Workflow** — How work flows. The MutableDAG defines task dependencies. The DynamicExecutor runs them in topological order. The **GraphPatchExecutor** can insert, remove, or replace nodes at runtime — this is how DAG topology evolution works. Checkpoint Resume lets you pick up where you left off after a crash.
 
-**Layer 4: Memory** — What agents remember. Session memory is short-term. Distilled memory is long-term compressed knowledge. Retrieval finds relevant memories via vector search.
+**Layer 4: Memory** — What agents remember. Session memory is short-term. Distilled memory is long-term compressed knowledge. Retrieval finds relevant memories via vector search. The **MemoryPatchExecutor** adjusts memory configuration (max_history, session_ttl, etc.) at runtime via coordinator patches.
 
-**Layer 5: Infrastructure** — What holds it all up. EventStore records everything. VectorStore indexes memories. LLM Adapters talk to providers. Tool Registry manages capabilities.
+**Layer 5: Evolution Engine** — How agents improve themselves. The GA Population holds N individuals with different strategy parameters. A background ticker (5-minute interval) and an agent-completion scheduler both trigger evolution cycles. The adapter runs selection → crossover → mutation → scoring, then submits the best strategies to **6 Genomes** (Workflow, Scheduler, Knowledge, Recovery, Planner, Memory). The Diff Engine compares old vs new snapshots, producing patches. The Coordinator decides Apply/Reject/Delay. **5 Executors** apply the approved patches to the live system, and the **Strategy Store** makes the evolved strategy available to running agents.
+
+**Layer 6: Infrastructure** — What holds it all up. EventStore records everything. VectorStore indexes memories. LLM Adapters talk to providers. Tool Registry manages capabilities. Evidence Store feeds evolution decisions.
 
 ---
 
@@ -128,7 +161,7 @@ Most Agent frameworks are "LLM orchestration engines" — they focus on prompt c
 | Failure handling | Try/catch | Automatic resurrection with state recovery |
 | Observability | Logs | Logs + Events + Metrics + Traces |
 | Extensibility | Subclass | Plugin system with capability discovery |
-| Self-improvement | None | Genetic algorithm + Dream Cycle |
+| Self-improvement | None | GA engine with 7 selectors, 3 crossover, 6 mutation operators, 6 evolvable genomes (Workflow/Scheduler/Knowledge/Recovery/Planner/Memory), multi-objective scoring, and background ticker-driven evolution cycles |
 
 ---
 
@@ -162,6 +195,17 @@ This series walks through each layer in detail:
 | X | Retrieval System | How to find relevant memories |
 | XI | Autonomous Evolution | How agents improve themselves |
 | XII | Security Hardening | How to defend against threats |
+| XIII | Bootstrap & API Layer | How to wire without pain |
+| XIV | Plugin System | How to extend without touching |
+| XV | MCP Integration | How to teach agents to use tools |
+| XVI | Flight Recorder | How to record and replay execution |
+| 00 | SDK Layer | One line of code to start an agent |
+| 00 | Knowledge Graph Build | From markdown to 27K edges (AKG) |
+| 00 | Storage Layer | postgres/embedding/models/query/repositories/services |
+| 00 | LLM Client Layer | Failover, DeepSeek Reasoning, multi-provider abstraction |
+| 00 | Evaluation Framework | EvaluatorRegistry, LLMJudge, Bench |
+| 00 | Config System | ares.yaml schema, YAML-driven flags |
+| 00 | Quant Trading Module | The experiment we keep honest about |
 
 Each article follows the same pattern: **the problem → the design journey → the trade-offs → the honest reflection.**
 

@@ -60,13 +60,13 @@ template = "pages.html"
 </li>
 <li class="proj" data-pillar="ai">
 <div class="proj-head">
-<a class="proj-name" href="https://github.com/Timwood0x10/GoAgentX">go-agent</a>
+<a class="proj-name" href="https://github.com/Timwood0x10/ARES">ARES</a>
 <span class="proj-meta">
 <span class="tag lang-go">go</span>
 <span class="tag status-active">active</span>
 </span>
 </div>
-<div class="proj-desc">Multi-agent framework in Go with PGVector memory distillation and embedding-based retrieval.</div>
+<div class="proj-desc">ARES is a self-healing multi-agent runtime that combines event sourcing, memory distillation, chaos engineering, and evolutionary workflow optimization.</div>
 </li>
 <li class="proj" data-pillar="ai">
 <div class="proj-head">
