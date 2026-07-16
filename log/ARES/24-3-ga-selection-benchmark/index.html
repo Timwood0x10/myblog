@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Selection Operator Benchmark — Truncation vs Tournament vs Roulette | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="Real measured benchmarks of the three major GA selection operators on Apple M3 Max.">
+
+    <meta property="og:description" content="Real measured benchmarks of the three major GA selection operators on Apple M3 Max.">
+    <meta property="og:title" content="Selection Operator Benchmark — Truncation vs Tournament vs Roulette | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/24-3-ga-selection-benchmark/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Real measured benchmarks of the three major GA selection operators on Apple M3 Max.">
+    <meta name="twitter:title" content="Selection Operator Benchmark — Truncation vs Tournament vs Roulette | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/24-3-ga-selection-benchmark/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/24-3-ga-selection-benchmark/">Selection Operator Benchmark — Truncation vs Tournament vs Roulette</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/benchmark/">#Benchmark</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/genetic-algorithm/">#Genetic Algorithm</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="selection-operator-benchmark-performance-comparison-truncation-vs-tournament-vs-roulette-measured">Selection Operator Benchmark Performance Comparison——Truncation vs Tournament vs Roulette Measured</h1>
+<blockquote>
+<p>This article is based on actual measured data from Apple M3 Max, providing a comprehensive performance comparison of the three major selection operators in the ARES GA framework. It covers ns/op, memory allocation, complexity scaling with population size, 3-run variance analysis, and practical guidance on choosing the optimal operator based on the scenario. All data comes from real <code>go test -bench</code> output and 3-run multi-round tests.</p>
+</blockquote>
+<h2 id="1-test-environment-and-methodology">1. Test Environment and Methodology</h2>
+<h3 id="1-1-hardware-platform">1.1 Hardware Platform</h3>
+<table><thead><tr><th>Item</th><th>Value</th></tr></thead><tbody>
+<tr><td>CPU</td><td>Apple M3 Max</td></tr>
+<tr><td>OS</td><td>Darwin 24.6.0 (macOS 15)</td></tr>
+<tr><td>Go</td><td>go1.26.4</td></tr>
+<tr><td>Architecture</td><td>darwin/arm64</td></tr>
+</tbody></table>
+<h3 id="1-2-data-sources">1.2 Data Sources</h3>
+<p>This article analyzes two independently run benchmark results:</p>
+<ul>
+<li><strong><code>evolution_bench.txt</code></strong>: Single run (<code>-count=1</code>), covering the full evolution system + selection operators</li>
+<li><strong><code>genome_bench.txt</code></strong>: 3 runs (<code>-count=3</code>), providing variance information, genome package only</li>
+<li><strong><code>benchmark_results.json</code></strong>: Summary of 47 benchmarks with performance ratings (excellent/good/acceptable)</li>
+</ul>
+<h3 id="1-3-subjects-under-test">1.3 Subjects Under Test</h3>
+<table><thead><tr><th>Operator</th><th>File</th><th>Function</th><th>Complexity</th></tr></thead><tbody>
+<tr><td><strong>TruncationSelection</strong></td><td><code>benchmark_test.go:169-197</code></td><td><code>BenchmarkTruncationSelection</code></td><td>O(n log n) dominated by sorting</td></tr>
+<tr><td><strong>TournamentSelection</strong></td><td><code>benchmark_test.go:199-233</code></td><td><code>BenchmarkTournamentSelection</code></td><td>O(k) per select, k=2,3,5,10</td></tr>
+<tr><td><strong>RouletteWheelSelection</strong></td><td><code>benchmark_test.go:235-266</code></td><td><code>BenchmarkRouletteWheelSelection</code></td><td>O(n) per spin</td></tr>
+<tr><td><strong>SortByScore</strong></td><td><code>benchmark_test.go:268-300</code></td><td><code>BenchmarkSortByScore</code></td><td>O(n log n) baseline sorting</td></tr>
+</tbody></table>
+<p>All tests use <code>b.ReportAllocs()</code> to report memory allocation, with controlled RNG seeds for reproducibility.</p>
+<h2 id="2-detailed-benchmark-data">2. Detailed Benchmark Data</h2>
+<h3 id="2-1-truncationselection">2.1 TruncationSelection</h3>
+<p>Selection strategy: sort by score descending → take top N% (top 30% in the test). Total cost is almost entirely dominated by sorting.</p>
+<p><strong>Single run results</strong>:</p>
+<table><thead><tr><th>Population</th><th>ns/op</th><th>Relative to pop=10</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>10</td><td>183.2</td><td>1.0×</td><td>136</td><td>3</td></tr>
+<tr><td>100</td><td>5,490</td><td>30.0×</td><td>952</td><td>3</td></tr>
+<tr><td>500</td><td>46,136</td><td>252×</td><td>4,152</td><td>3</td></tr>
+<tr><td>1,000</td><td>129,687</td><td>708×</td><td>8,248</td><td>3</td></tr>
+</tbody></table>
+<p><strong>3-run variance analysis</strong>:</p>
+<table><thead><tr><th>Population</th><th>Run 1</th><th>Run 2</th><th>Run 3</th><th>Mean</th><th>Std Dev</th><th>CV</th></tr></thead><tbody>
+<tr><td>pop_10</td><td>189.6</td><td>189.1</td><td>189.3</td><td>189.3</td><td>0.25</td><td>0.1%</td></tr>
+<tr><td>pop_100</td><td>6,280</td><td>6,445</td><td>5,986</td><td>6,237</td><td>229</td><td>3.7%</td></tr>
+<tr><td>pop_500</td><td>96,348</td><td>47,130</td><td>47,460</td><td>63,646</td><td><strong>28,421</strong></td><td><strong>44.7%</strong></td></tr>
+<tr><td>pop_1000</td><td>129,447</td><td>128,635</td><td>127,716</td><td>128,599</td><td>865</td><td>0.7%</td></tr>
+</tbody></table>
+<p><strong>Key finding</strong>: Run 1 of pop_500 at 96,348 ns is clearly abnormal (about 2× the latter two runs). This is likely due to <strong>GC triggering + memory allocation from the sort operation causing first-run latency</strong>. Excluding run 1, the pop_500 mean is 47,295 ns, consistent with the scaling trend.</p>
+<h3 id="2-2-tournamentselection">2.2 TournamentSelection</h3>
+<p>Randomly draw k individuals from the population and select the best among them. The test selects half the population (25 out of 50 for pop=50, 100 out of 200 for pop=200).</p>
+<p><strong>pop=50 (select 25)</strong>:</p>
+<table><thead><tr><th>k</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>2</td><td>2,822</td><td>10,808</td><td>51</td></tr>
+<tr><td>3</td><td>2,972</td><td>10,808</td><td>51</td></tr>
+<tr><td>5</td><td>3,188</td><td>10,808</td><td>51</td></tr>
+<tr><td>10</td><td>3,917</td><td>10,808</td><td>51</td></tr>
+</tbody></table>
+<p><strong>pop=200 (select 100)</strong>:</p>
+<table><thead><tr><th>k</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>2</td><td>29,651</td><td>180,896</td><td>201</td></tr>
+<tr><td>3</td><td>30,221</td><td>180,897</td><td>201</td></tr>
+<tr><td>5</td><td>31,300</td><td>180,897</td><td>201</td></tr>
+<tr><td>10</td><td>33,662</td><td>180,897</td><td>201</td></tr>
+</tbody></table>
+<p><strong>k-value cost analysis</strong> (pop=200, 3-run mean):</p>
+<table><thead><tr><th>k</th><th>ns/op</th><th>Relative to k=2</th><th>Cost per Select</th></tr></thead><tbody>
+<tr><td>2</td><td>36,908</td><td>1.00×</td><td>369 ns/select ②</td></tr>
+<tr><td>3</td><td>36,712</td><td>0.99×</td><td>367 ns/select</td></tr>
+<tr><td>5</td><td>38,589</td><td>1.05×</td><td>386 ns/select</td></tr>
+<tr><td>10</td><td>41,018</td><td>1.11×</td><td>410 ns/select</td></tr>
+</tbody></table>
+<p>② Cost per Select = total time / number of selections. pop=200 with selectN=100, 100 selections total.</p>
+<p><strong>Key finding</strong>: Increasing k from 2 to 10 (5×) only results in approximately 11% performance degradation. This is because the <code>pickUniqueIndices()</code> implementation is O(poolSize) rather than O(k)——it randomly picks across the entire population, so the cost is largely independent of k.</p>
+<h3 id="2-3-roulettewheelselection">2.3 RouletteWheelSelection</h3>
+<p>Fitness-proportional selection: individuals with higher scores have a greater probability of being selected. Each selection traverses the entire population to compute cumulative probabilities.</p>
+<p><strong>Single run results</strong>:</p>
+<table><thead><tr><th>Population</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>10</td><td>204.9</td><td>320</td><td>4</td></tr>
+<tr><td>100</td><td>2,760</td><td>3,424</td><td>7</td></tr>
+<tr><td>500</td><td>41,703</td><td>15,424</td><td>9</td></tr>
+<tr><td>1,000</td><td>151,649</td><td>29,760</td><td>10</td></tr>
+</tbody></table>
+<p><strong>3-run variance analysis</strong>:</p>
+<table><thead><tr><th>Population</th><th>Mean ns/op</th><th>Std Dev</th><th>CV</th></tr></thead><tbody>
+<tr><td>pop_10</td><td>211.7</td><td>2.6</td><td>1.2%</td></tr>
+<tr><td>pop_100</td><td>2,905</td><td>9.0</td><td>0.3%</td></tr>
+<tr><td>pop_500</td><td>41,983</td><td>448</td><td>1.1%</td></tr>
+<tr><td>pop_1000</td><td>151,874</td><td>975</td><td>0.6%</td></tr>
+</tbody></table>
+<p><strong>Key finding</strong>: Roulette results are very stable, with the coefficient of variation consistently around 1%. This is because its computation path is highly predictable——each time it traverses the entire population to compute cumulative probabilities, with no branch prediction issues like sorting.</p>
+<h3 id="2-4-sortbyscore">2.4 SortByScore</h3>
+<p>Not an independent selection operator, but a foundational operation used by most selectors (truncation, rank, lineage rank, etc.).</p>
+<p><strong>Single run results</strong>:</p>
+<table><thead><tr><th>Population</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>10</td><td>229.0</td><td>136</td><td>3</td></tr>
+<tr><td>100</td><td>5,765</td><td>952</td><td>3</td></tr>
+<tr><td>500</td><td>44,288</td><td>4,152</td><td>3</td></tr>
+<tr><td>1,000</td><td>116,356</td><td>8,248</td><td>3</td></tr>
+</tbody></table>
+<p><strong>3-run mean</strong>:</p>
+<table><thead><tr><th>Population</th><th>mean ns/op</th><th>Std Dev</th><th>Theoretical O(n log n)</th></tr></thead><tbody>
+<tr><td>10</td><td>222.4</td><td>2.9</td><td>10·log₂10 ≈ 33</td></tr>
+<tr><td>100</td><td>5,741</td><td>24</td><td>100·log₂100 ≈ 664</td></tr>
+<tr><td>500</td><td>42,180</td><td>161</td><td>500·log₂500 ≈ 4,483</td></tr>
+<tr><td>1000</td><td>112,674</td><td>329</td><td>1000·log₂1000 ≈ 9,966</td></tr>
+</tbody></table>
+<p><strong>Key finding</strong>: SortByScore has extremely low 3-run variance (&lt;1%), making it the most predictable operation. The test includes 20% unevaluated strategies (Score=-1), which are placed at the end during sorting, not affecting the stable sorting property.</p>
+<h2 id="3-complexity-analysis-and-scaling-comparison">3. Complexity Analysis and Scaling Comparison</h2>
+<h3 id="3-1-algorithmic-complexity-vs-measured">3.1 Algorithmic Complexity vs Measured</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Complexity comparison (time unit: ns/op):</span></span>
+<span class="giallo-l"><span>                pop=10    pop=100   pop=500   pop=1000</span></span>
+<span class="giallo-l"><span>Truncation:       183      5,490    46,136    129,687    O(n log n)</span></span>
+<span class="giallo-l"><span>SortByScore:      229      5,765    44,288    116,356    O(n log n)  </span></span>
+<span class="giallo-l"><span>Roulette:         205      2,760    41,703    151,649    O(n²) ③</span></span>
+<span class="giallo-l"><span>Tournament(k=2):  -         -       2,822④    29,651⑤   O(k·n)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>③ Roulette selects n/2 individuals = executes n/2 traversals, each O(n), total complexity O(n²)</span></span>
+<span class="giallo-l"><span>④ pop=50, selectN=25</span></span>
+<span class="giallo-l"><span>⑤ pop=200, selectN=100</span></span></code></pre>
+<p><strong>Key insights</strong>:</p>
+<ul>
+<li><strong>Truncation and Roulette cross over around pop=500</strong>: Roulette is faster when pop&lt;500, but Truncation overtakes it when pop&gt;500. This is because the O(n log n) cost of sorting is not significant for small n, while the O(n²) cost of roulette accelerates as n grows.</li>
+<li><strong>Tournament's memory consumption is the biggest challenge</strong>: At pop=200, it uses up to 180KB/op, 22× that of truncation. This is because each Select creates a result slice.</li>
+</ul>
+<h3 id="3-2-partition-analysis-by-population-size">3.2 Partition Analysis by Population Size</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Small populations (pop &lt; 50):</span></span>
+<span class="giallo-l"><span>  Operator       ns/op    Recommendation</span></span>
+<span class="giallo-l"><span>  Truncation      183     ★★★★★  (Best)</span></span>
+<span class="giallo-l"><span>  Roulette        205     ★★★★☆  (Close)</span></span>
+<span class="giallo-l"><span>  Tournament      2,822   ★★★☆☆  (at pop=50)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Medium populations (pop 100-500):</span></span>
+<span class="giallo-l"><span>  Operator       ns/op    Recommendation  </span></span>
+<span class="giallo-l"><span>  Roulette(p=100) 2,760  ★★★★★  (Best, 4.1μs/select)</span></span>
+<span class="giallo-l"><span>  Truncation(p=100)5,490  ★★★★☆  (≈ 2× roulette)</span></span>
+<span class="giallo-l"><span>  Tournament(p=200)29,651 ★★★☆☆  (7× roulette)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Large populations (pop 1000+):</span></span>
+<span class="giallo-l"><span>  Operator       ns/op    Recommendation</span></span>
+<span class="giallo-l"><span>  Truncation    129,687   ★★★★★  (Best)</span></span>
+<span class="giallo-l"><span>  Roulette      151,649   ★★★★☆  (17% slower than truncation)</span></span>
+<span class="giallo-l"><span>  Tournament     ~33,662⑥ ★★★★★  (Selects half of all, but higher precision)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>⑥ Tournament(pop=200) conversion: selecting all 1000 individuals would require approximately 10× time ≈ 336,620 ns</span></span></code></pre><h2 id="4-in-depth-memory-allocation-analysis">4. In-depth Memory Allocation Analysis</h2>
+<h3 id="4-1-allocation-pattern-comparison">4.1 Allocation Pattern Comparison</h3>
+<table><thead><tr><th>Operator</th><th>pop=10</th><th>pop=100</th><th>pop=500</th><th>pop=1000</th><th>Allocation Source</th></tr></thead><tbody>
+<tr><td><strong>Truncation</strong></td><td>136 B / 3 allocs</td><td>952 B / 3</td><td>4,152 B / 3</td><td>8,248 B / 3</td><td>Copying slice for sorting</td></tr>
+<tr><td><strong>Tournament</strong></td><td>-</td><td>10,808 B / 51 allocs</td><td>-</td><td>180,897 B / 201</td><td>Selection result slice + dedup map</td></tr>
+<tr><td><strong>Roulette</strong></td><td>320 B / 4</td><td>3,424 B / 7</td><td>15,424 B / 9</td><td>29,760 B / 10</td><td>Cumulative probability + selection result</td></tr>
+</tbody></table>
+<p><strong>Key observations</strong>:</p>
+<ol>
+<li><strong>Truncation has the most stable allocation</strong>: Always 3 allocations, only copies the population slice. alloc count does not vary with scale.</li>
+<li><strong>Tournament allocation grows linearly with population</strong>: 201 allocations (pop=200)——approximately 1 map operation for deduplication per select. This is the biggest optimization opportunity.</li>
+<li><strong>Roulette allocation grows slowly</strong>: From 4 (pop=10) to 10 (pop=1000), primarily from the cumulative probability array.</li>
+</ol>
+<h3 id="4-2-average-cost-per-select">4.2 Average Cost per Select</h3>
+<p>Calculating the marginal cost of "selecting one individual" by dividing total time by the number of selected individuals:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>pop=500, selectN=250:</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>  Truncation:  46,136 ns / 250 = 184.5 ns/select</span></span>
+<span class="giallo-l"><span>  Roulette:    41,703 ns / 250 = 166.8 ns/select</span></span>
+<span class="giallo-l"><span>  Tournament⑦: 46,136 / (500×0.5) / 50 ≈ difficult to compare</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>⑦ Tournament&#39;s Select() returns n individuals, but the internal cost per select</span></span>
+<span class="giallo-l"><span>   is primarily determined by k (pickUniqueIndices → sort → pick best).</span></span></code></pre>
+<p><strong>Key insight</strong>: At medium scale (pop=500), Roulette's marginal cost per select (166.8 ns) is actually lower than Truncation's (184.5 ns). This is because truncation requires sorting all 500 individuals at once, while roulette's batch selection amortizes the cost of building the cumulative probability array.</p>
+<h2 id="5-overall-evolution-system-performance-data">5. Overall Evolution System Performance Data</h2>
+<h3 id="5-1-full-evolution-cycle-benchmarks">5.1 Full Evolution Cycle Benchmarks</h3>
+<p>End-to-end evolution system performance extracted from <code>benchmark_results.json</code>:</p>
+<table><thead><tr><th>Benchmark</th><th>ns/op</th><th>Allocs/op</th><th>Rating</th></tr></thead><tbody>
+<tr><td>DreamCycle single run</td><td>25,000</td><td>4,500 B / 65 allocs</td><td>good</td></tr>
+<tr><td>System creation pop=10</td><td>45,000</td><td>12,000 B / 180 allocs</td><td>good</td></tr>
+<tr><td>System creation pop=100</td><td>175,000</td><td>68,000 B / 920 allocs</td><td>acceptable</td></tr>
+<tr><td><strong>Idle evolution 10 generations</strong></td><td><strong>420,000</strong></td><td><strong>150,000 B / 5,000 allocs</strong></td><td><strong>acceptable</strong></td></tr>
+<tr><td>Idle evolution 100 generations</td><td>4,100,000</td><td>1,500,000 B / 50,000 allocs</td><td>acceptable</td></tr>
+<tr><td>Full pipeline</td><td>2,300,000</td><td>850,000 B / 28,000 allocs</td><td>acceptable</td></tr>
+<tr><td>Adaptive mutation (fixed)</td><td>1,600,000</td><td>600,000 B / 20,000 allocs</td><td>acceptable</td></tr>
+</tbody></table>
+<h3 id="5-2-selection-operator-share-of-total-evolution-time">5.2 Selection Operator Share of Total Evolution Time</h3>
+<p>Using idle evolution for 10 generations at pop=20 (420μs) as an example:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Total time: 420,000 ns</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Of which per generation:</span></span>
+<span class="giallo-l"><span>  Selection operation (tournament, select 50%): ~6,000 ns × 10 = 60,000 ns</span></span>
+<span class="giallo-l"><span>  Mutation operation: ~10,000 ns × 10 = 100,000 ns</span></span>
+<span class="giallo-l"><span>  Evaluation: ~30,000 ns × 10 = 300,000 ns</span></span>
+<span class="giallo-l"><span>  Other overhead (snapshots, lineage records, etc.): ~60,000 ns</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Selection operations account for approximately 14% of total time.</span></span></code></pre>
+<p><strong>Note</strong>: In actual LLM-driven evolution, <strong>LLM call cost accounts for 99%+</strong>. The computational overhead of selection operations (microseconds) is negligible compared to a single LLM API call's latency (seconds). Therefore, in real-world scenarios, the <strong>algorithmic effectiveness</strong> (solution quality) of the selection operator is far more important than its <strong>computational efficiency</strong>.</p>
+<h2 id="6-application-scenario-guide-for-each-operator">6. Application Scenario Guide for Each Operator</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>┌─────────────────────────────────────────────────────────┐</span></span>
+<span class="giallo-l"><span>│                  Selection Operator Matrix                │</span></span>
+<span class="giallo-l"><span>├────────────┬──────────┬──────────┬──────────┬───────────┤</span></span>
+<span class="giallo-l"><span>│  Scenario   │Truncation│Tournament│ Roulette │ Best Pick │</span></span>
+<span class="giallo-l"><span>├────────────┼──────────┼──────────┼──────────┼───────────┤</span></span>
+<span class="giallo-l"><span>│  Rapid proto│    ✓     │          │    ✓✓    │ Roulette  │</span></span>
+<span class="giallo-l"><span>│  LLM-driven │    ✓     │    ✓✓    │    ✓     │ Tournament│</span></span>
+<span class="giallo-l"><span>│  pop&lt;50     │    ✓✓    │          │    ✓✓    │ Truncation│</span></span>
+<span class="giallo-l"><span>│  pop 100-500│    ✓✓    │    ✓     │    ✓✓    │ Roulette  │</span></span>
+<span class="giallo-l"><span>│  pop&gt;1000   │    ✓     │    ✓✓    │          │ Tournament│</span></span>
+<span class="giallo-l"><span>│  Sorted output│   ✓✓   │          │          │ Truncation│</span></span>
+<span class="giallo-l"><span>│  Selection   │          │    ✓✓    │          │ Tournament│</span></span>
+<span class="giallo-l"><span>│  pressure ctl│          │          │          │           │</span></span>
+<span class="giallo-l"><span>│  Low memory  │    ✓✓    │          │    ✓✓    │ Truncation│</span></span>
+<span class="giallo-l"><span>│  Lineage     │          │    ✓✓    │          │ LineageRank│</span></span>
+<span class="giallo-l"><span>│  diversity   │          │          │          │           │</span></span>
+<span class="giallo-l"><span>└────────────┴──────────┴──────────┴──────────┴───────────┘</span></span></code></pre><h3 id="6-1-recommended-usage-conditions-for-each-operator">6.1 Recommended Usage Conditions for Each Operator</h3>
+<p><strong>TruncationSelection</strong>:</p>
+<ul>
+<li>When to use: Small to medium populations (pop ≤ 500), need deterministic output, memory-sensitive</li>
+<li>When not to use: When exploration is needed (truncation's elitism accelerates convergence), or when sorting cost is non-negligible at very large pop sizes</li>
+</ul>
+<p><strong>TournamentSelection</strong>:</p>
+<ul>
+<li>When to use: Need fine-grained control over selection pressure (via k value), very large populations (cost independent of size)</li>
+<li>When not to use: Sensitive to per-run memory allocation (201 allocs/op for pop=200), need deterministic scenarios (non-seeded non-deterministic)</li>
+</ul>
+<p><strong>RouletteWheelSelection</strong>:</p>
+<ul>
+<li>When to use: Medium populations (100 ≤ pop ≤ 500), want score differences to drive selection probability</li>
+<li>When not to use: Score differences are very small (all individuals have similar scores, making selection nearly random), O(n²) cost is significant at very large pop sizes</li>
+</ul>
+<h2 id="7-benchmark-code-analysis">7. Benchmark Code Analysis</h2>
+<h3 id="7-1-benchmark-test-design-quality">7.1 Benchmark Test Design Quality</h3>
+<p>Design considerations for the three selection operator benchmarks:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Truncation: sort + slice, excluding selector object creation</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Only measures the core operations of sorting and taking top-N</span></span>
+<span class="giallo-l"><span>b</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ResetTimer</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> i</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span><span> i</span><span style="color: #94E2D5;"> &lt;</span><span> b</span><span style="color: #9399B2;">.</span><span>N</span><span style="color: #9399B2;">;</span><span> i</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    sorted</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">mutation</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Strategy</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>population</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    copy</span><span style="color: #9399B2;">(</span><span>sorted</span><span style="color: #9399B2;">,</span><span> population</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    SortByScore</span><span style="color: #9399B2;">(</span><span>sorted</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    _</span><span style="color: #94E2D5;"> =</span><span> sorted</span><span style="color: #9399B2;">[:</span><span>selectN</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Tournament: includes selector creation, because NewTournamentSelection has parameter configuration</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Selector creation is outside ResetTimer, does not affect timing</span></span>
+<span class="giallo-l"><span>sel</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> NewTournamentSelection</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">WithTournamentSize</span><span style="color: #9399B2;">(</span><span>k</span><span style="color: #9399B2;">),</span><span style="color: #89B4FA;font-style: italic;"> WithTournamentSeed</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span>b</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ResetTimer</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> i</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span><span> i</span><span style="color: #94E2D5;"> &lt;</span><span> b</span><span style="color: #9399B2;">.</span><span>N</span><span style="color: #9399B2;">;</span><span> i</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    _</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> =</span><span> sel</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Select</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> population</span><span style="color: #9399B2;">,</span><span> selectN</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Roulette: similarly starts timing only after selector creation</span></span>
+<span class="giallo-l"><span>sel</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> NewRouletteWheelSelection</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">WithRouletteSeed</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span>b</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ResetTimer</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> i</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span><span> i</span><span style="color: #94E2D5;"> &lt;</span><span> b</span><span style="color: #9399B2;">.</span><span>N</span><span style="color: #9399B2;">;</span><span> i</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    _</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> =</span><span> sel</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Select</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> population</span><span style="color: #9399B2;">,</span><span> selectN</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Design differences</strong>:</p>
+<ul>
+<li>Truncation uses an inline implementation (not through the Select method) to reduce function call overhead, providing a purer measurement of sorting + truncation cost</li>
+<li>Tournament and Roulette both measure the full operator call path via the <code>sel.Select()</code> method</li>
+<li>All benchmarks complete RNG seeding and data generation before <code>ResetTimer()</code></li>
+</ul>
+<h3 id="7-2-3-run-variance-analysis-summary">7.2 3-Run Variance Analysis Summary</h3>
+<table><thead><tr><th>Benchmark</th><th>Best Case CV</th><th>Worst Case CV</th><th>Stability Rating</th></tr></thead><tbody>
+<tr><td>SortByScore</td><td>0.3% (pop=1000)</td><td>1.3% (pop=10)</td><td>★★★★★</td></tr>
+<tr><td>RouletteWheel</td><td>0.3% (pop=100)</td><td>1.2% (pop=10)</td><td>★★★★★</td></tr>
+<tr><td>Tournament</td><td>0.4% (k=3/pop=50)</td><td>2.6% (k=2/pop=200)</td><td>★★★★☆</td></tr>
+<tr><td>Truncation</td><td>0.1% (pop=10)</td><td><strong>44.7% (pop=500)</strong></td><td>★★☆☆☆</td></tr>
+</tbody></table>
+<p>Truncation's large variance stems from GC interference in the first run. Excluding the first run, pop=500's CV drops to 0.5%, comparable to SortByScore——which also confirms that Truncation's cost comes almost entirely from the sorting operation.</p>
+<h2 id="8-summary">8. Summary</h2>
+<ol>
+<li>
+<p><strong>Small populations (pop ≤ 50)</strong>: Truncation is the fastest selector (183ns), but Roulette is also close (205ns). The differences among the three are at the microsecond level, essentially negligible.</p>
+</li>
+<li>
+<p><strong>Medium populations (100 ≤ pop ≤ 500)</strong>: Roulette is the optimal choice——below 3μs (pop=100) to 42μs (pop=500), with extremely low variance (&lt;1.2%). Truncation requires about 2× the time at pop=100.</p>
+</li>
+<li>
+<p><strong>Large populations (pop ≥ 1000)</strong>: Truncation overtakes Roulette (129μs vs 152μs, 17% faster). Tournament becomes the best choice for very large populations due to its O(k) cost and selection pressure control that is independent of population size.</p>
+</li>
+<li>
+<p><strong>Tournament's k value has minimal impact</strong>: Increasing k from 2 to 10 (5× growth) produces only about an 11% performance difference. Larger k values can be safely used to increase selection pressure.</p>
+</li>
+<li>
+<p><strong>In modern evolution systems, computational efficiency is no longer the primary constraint</strong>: In LLM-driven evolution, a single API call takes seconds, while selection operations take only microseconds. Therefore, the <strong>algorithmic effectiveness</strong> (population diversity, convergence speed, solution quality) of the selection operator is far more important than its performance numbers.</p>
+</li>
+<li>
+<p><strong>Memory allocation is the most easily overlooked cost</strong>: Tournament allocates 180KB per operation (201 allocs) at pop=200, while Truncation allocates only 8KB (3 allocs). In high-frequency call scenarios, this will significantly increase GC pressure.</p>
+</li>
+</ol>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/24-4-ga-promoter/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Promoter — Champion&#x2F;Challenger Promotion and the Five-State State Machine</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/24-2-ga-tiered-scorer/">
+                                <span class="button__text">TieredScorer — Three-Layer Scoring Pipeline and LLM Budget Management</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

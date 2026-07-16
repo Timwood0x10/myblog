@@ -25,20 +25,20 @@
         
         <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/decision-archaeology/03-errors-are-mirrors/">&lt;h1 id=&quot;cuo-wu-shi-she-ji-de-jing-zi&quot;&gt;错误是设计的镜子&lt;&#x2F;h1&gt;
 &lt;blockquote&gt;
-&lt;p&gt;&lt;strong&gt;Problem&lt;&#x2F;strong&gt;: goagent 的 Leader Agent 崩溃了，整个会话就死了吗？CodeTribunal 的评审者故意说错话，系统该怎么判断？当你的系统出错时，你的第一反应是什么——重启、回滚、还是假装没看见？系统怎么对待失败，暴露了设计者对&quot;信任边界&quot;的定义。&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;Problem&lt;&#x2F;strong&gt;: ARES 的 Leader Agent 崩溃了，整个会话就死了吗？CodeTribunal 的评审者故意说错话，系统该怎么判断？当你的系统出错时，你的第一反应是什么——重启、回滚、还是假装没看见？系统怎么对待失败，暴露了设计者对&quot;信任边界&quot;的定义。&lt;&#x2F;p&gt;
 &lt;&#x2F;blockquote&gt;
 &lt;p&gt;两个项目，两种&quot;失败&quot;。&lt;&#x2F;p&gt;
-&lt;p&gt;goagent 的 Leader Agent 崩溃了——这是意外的失败，是机器不想死但还是死了。CodeTribunal 的 Troublemaker 说错了话——这是故意的失败，是设计者让它说错的。&lt;&#x2F;p&gt;
+&lt;p&gt;ARES 的 Leader Agent 崩溃了——这是意外的失败，是机器不想死但还是死了。CodeTribunal 的 Troublemaker 说错了话——这是故意的失败，是设计者让它说错的。&lt;&#x2F;p&gt;
 &lt;p&gt;前者考验的是恢复能力，后者考验的是检测能力。但它们指向同一个问题：你的系统信什么？不信什么？在哪里画线？&lt;&#x2F;p&gt;
 &lt;hr &#x2F;&gt;
 &lt;h2 id=&quot;liang-chong-shi-bai-liang-chong-she-ji-zhe-xue&quot;&gt;两种失败，两种设计哲学&lt;&#x2F;h2&gt;
-&lt;p&gt;我们通常把&quot;错误&quot;当成一个需要消灭的敌人。但如果你仔细看 goagent 和 CodeTribunal 的代码，会发现两种截然不同的态度。&lt;&#x2F;p&gt;
-&lt;p&gt;goagent 的态度是：失败不可避免，但历史不能丢失。所以它用事件溯源来恢复，用 checkpoint 来加速，用 HITL 来兜底。失败是线性的——发生、记录、恢复。&lt;&#x2F;p&gt;
+&lt;p&gt;我们通常把&quot;错误&quot;当成一个需要消灭的敌人。但如果你仔细看 ARES 和 CodeTribunal 的代码，会发现两种截然不同的态度。&lt;&#x2F;p&gt;
+&lt;p&gt;ARES 的态度是：失败不可避免，但历史不能丢失。所以它用事件溯源来恢复，用 checkpoint 来加速，用 HITL 来兜底。失败是线性的——发生、记录、恢复。&lt;&#x2F;p&gt;
 &lt;p&gt;CodeTribunal 的态度是：失败是信息，不是灾难。所以它故意制造一个&quot;错误的评审者&quot;，让系统在对抗中学到什么是对的。失败是结构化的——注入、暴露、检测。&lt;&#x2F;p&gt;
 &lt;p&gt;这不是技术选型的差异，是世界观的差异。&lt;&#x2F;p&gt;
 &lt;hr &#x2F;&gt;
-&lt;h2 id=&quot;goagent-de-hui-fu-shi-jian-su-yuan&quot;&gt;goagent 的恢复：事件溯源&lt;&#x2F;h2&gt;
-&lt;p&gt;goagent 最核心的恢复哲学，可以用一个数据结构概括：&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;ares-de-hui-fu-shi-jian-su-yuan&quot;&gt;ARES 的恢复：事件溯源&lt;&#x2F;h2&gt;
+&lt;p&gt;ARES 最核心的恢复哲学，可以用一个数据结构概括：&lt;&#x2F;p&gt;
 &lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;agents&#x2F;leader&#x2F;event_recovery.go:29-54&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; RecoveryState&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    SessionID&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    string&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
@@ -65,9 +65,9 @@
 &lt;p&gt;这段代码没有任何错误处理的魔法。它做的事情很简单：从头到尾读一遍事件，把状态&quot;演&quot;出来。Leader Agent 崩溃了？没关系，事件还在。把事件重放一遍，状态就回来了。&lt;&#x2F;p&gt;
 &lt;p&gt;这里有一个设计决策值得注意：它没有用数据库快照，而是用事件流。快照是&quot;某个时间点的完整状态&quot;，事件流是&quot;从头到尾发生了什么&quot;。快照更省空间，事件流更诚实——它记录了每一步，包括那些&quot;错误的&quot;步骤。&lt;&#x2F;p&gt;
 &lt;hr &#x2F;&gt;
-&lt;h2 id=&quot;goagent-de-hitl-ba-ren-la-hui-xun-huan&quot;&gt;goagent 的 HITL：把人拉回循环&lt;&#x2F;h2&gt;
+&lt;h2 id=&quot;ares-de-hitl-ba-ren-la-hui-xun-huan&quot;&gt;ARES 的 HITL：把人拉回循环&lt;&#x2F;h2&gt;
 &lt;p&gt;事件溯源解决了&quot;怎么恢复&quot;，但没有解决&quot;该不该继续&quot;。有些决策，机器做不了，或者不该让机器做。&lt;&#x2F;p&gt;
-&lt;p&gt;goagent 的 HITL（Human-In-The-Loop）机制定义了中断点的结构：&lt;&#x2F;p&gt;
+&lt;p&gt;ARES 的 HITL（Human-In-The-Loop）机制定义了中断点的结构：&lt;&#x2F;p&gt;
 &lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;workflow&#x2F;engine&#x2F;hitl.go:13-27&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; InterruptPoint&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    StepID&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;  string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;         `json:&amp;quot;step_id&amp;quot;`&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
@@ -84,8 +84,8 @@
 &lt;p&gt;在 &lt;code&gt;executor.go&lt;&#x2F;code&gt; 的 &lt;code&gt;handleInterrupt&lt;&#x2F;code&gt; 方法里（第 576-617 行），执行器会检查当前步骤是否有 &lt;code&gt;InterruptConfig&lt;&#x2F;code&gt;。如果有，它会暂停执行，把中断点持久化，然后调用 &lt;code&gt;InterruptHandler&lt;&#x2F;code&gt;。如果人类批准了，继续执行；如果拒绝了，返回 &lt;code&gt;ErrInterruptRejected&lt;&#x2F;code&gt;。&lt;&#x2F;p&gt;
 &lt;p&gt;这不是一个优雅的设计模式教科书里的东西。这是一个务实的工程决策：当你不确定的时候，停下来问人。HITL 不是系统的弱点，是系统承认自己能力的边界。&lt;&#x2F;p&gt;
 &lt;hr &#x2F;&gt;
-&lt;h2 id=&quot;goagent-de-san-ceng-hui-fu-ji-zhi&quot;&gt;goagent 的三层恢复机制&lt;&#x2F;h2&gt;
-&lt;p&gt;goagent 的恢复不是单一机制，而是三层递进：&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;ares-de-san-ceng-hui-fu-ji-zhi&quot;&gt;ARES 的三层恢复机制&lt;&#x2F;h2&gt;
+&lt;p&gt;ARES 的恢复不是单一机制，而是三层递进：&lt;&#x2F;p&gt;
 &lt;p&gt;&lt;strong&gt;第一层：Checkpoint（快照）&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
 &lt;p&gt;&lt;code&gt;leaderAgent.Snapshot()&lt;&#x2F;code&gt; 序列化当前状态。快照是最快速的恢复方式，但它是&quot;最近一次保存&quot;的状态，不是崩溃前一毫秒的状态。&lt;&#x2F;p&gt;
 &lt;p&gt;&lt;strong&gt;第二层：Event Sourcing（事件重放）&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
@@ -141,18 +141,18 @@
 &lt;li&gt;&lt;strong&gt;hard&lt;&#x2F;strong&gt;: &quot;mirror other reviewers&#x27; reasoning patterns&quot;, &quot;only let bias slip on critical decisions&quot; — 模仿其他评审者的思路，只在关键决策上暴露偏见&lt;&#x2F;li&gt;
 &lt;&#x2F;ul&gt;
 &lt;p&gt;难度越高，Troublemaker 越难被发现。easy 模式下它每轮都会犯错，玩家很容易注意到规律；hard 模式下它会模仿其他人的思考方式，只在最关键的时候偏离——这时候发现它需要真正的批判性思维，而不仅仅是&quot;谁说了不同意见&quot;。&lt;&#x2F;p&gt;
-&lt;p&gt;这和 goagent 的 HITL 形成了有趣的对比：goagent 的 HITL 是系统主动承认不确定，CodeTribunal 的 Troublemaker 是系统故意制造不确定。前者是谦逊，后者是挑衅。但它们都在推动同一个方向——让人参与决策，而不是把决策完全交给机器。&lt;&#x2F;p&gt;
+&lt;p&gt;这和 ARES 的 HITL 形成了有趣的对比：ARES 的 HITL 是系统主动承认不确定，CodeTribunal 的 Troublemaker 是系统故意制造不确定。前者是谦逊，后者是挑衅。但它们都在推动同一个方向——让人参与决策，而不是把决策完全交给机器。&lt;&#x2F;p&gt;
 &lt;p&gt;这五种伪装不是随便编出来的角色设定，它们是从真实的 code review 反模式里提炼出来的。&quot;Deep Thinker&quot; 对应的是学术派评审者的过度工程化倾向——一个简单的 bug fix 被要求补上形式化验证，一个 CRUD 接口被追问&quot;有没有考虑过 CQRS&quot;。这种评审不是在帮你看代码，是在用你的 PR 练习论文写作。&quot;It&#x27;s Perfect&quot; 对应的是 rubber-stamp approval 文化——评审者看到了问题，但选择轻描淡写，&quot;这个可以后面再改&quot;成了永远不会再改的承诺。这不是宽容，是放弃责任。&quot;Let AI Do It&quot; 对应的是近两年越来越明显的趋势：把 linter 输出当评审意见，把 AI suggestion 当代码规范。评审者不再思考&quot;这段代码对不对&quot;，而是问&quot;linter 有没有报错&quot;。工具从辅助变成了替代，人从判断者变成了传话筒。&lt;&#x2F;p&gt;
 &lt;p&gt;这三种反模式——过度工程化、回避问题、盲信工具——恰好覆盖了 code review 失败的三种典型路径。这不是巧合。decision-archaeology 这个系列一直在追问的是：设计决策背后的真实动机是什么？Troublemaker 的五种伪装，就是这个问题在 code review 场景下的答案——坏的评审不是随机发生的，它有模式，有规律，有迹可循。&lt;&#x2F;p&gt;
 &lt;hr &#x2F;&gt;
 &lt;h2 id=&quot;xing-ye-dui-bi&quot;&gt;行业对比&lt;&#x2F;h2&gt;
 &lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;失败处理策略&lt;&#x2F;th&gt;&lt;th&gt;代表&lt;&#x2F;th&gt;&lt;th&gt;哲学&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
 &lt;tr&gt;&lt;td&gt;重启 + checkpoint&lt;&#x2F;td&gt;&lt;td&gt;Kubernetes&lt;&#x2F;td&gt;&lt;td&gt;失败是常态，恢复比预防重要&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
-&lt;tr&gt;&lt;td&gt;事件溯源&lt;&#x2F;td&gt;&lt;td&gt;goagent&lt;&#x2F;td&gt;&lt;td&gt;失败不可怕，可怕的是丢失历史&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;事件溯源&lt;&#x2F;td&gt;&lt;td&gt;ARES&lt;&#x2F;td&gt;&lt;td&gt;失败不可怕，可怕的是丢失历史&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
 &lt;tr&gt;&lt;td&gt;故意注入错误&lt;&#x2F;td&gt;&lt;td&gt;CodeTribunal&lt;&#x2F;td&gt;&lt;td&gt;失败是信息，不是灾难&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
 &lt;tr&gt;&lt;td&gt;断路器&lt;&#x2F;td&gt;&lt;td&gt;Hystrix&lt;&#x2F;td&gt;&lt;td&gt;失败会传染，需要隔离&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
 &lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
-&lt;p&gt;Kubernetes 的哲学是&quot;容器死了就重启&quot;——它不关心为什么死，只关心能不能活过来。Hystrix 的哲学是&quot;一个服务挂了不能拖垮整个系统&quot;——它关心的是失败的传播路径。goagent 关心的是历史——死了没关系，历史不能丢。CodeTribunal 关心的是认知——你不试试犯错，怎么知道什么是犯错？&lt;&#x2F;p&gt;
+&lt;p&gt;Kubernetes 的哲学是&quot;容器死了就重启&quot;——它不关心为什么死，只关心能不能活过来。Hystrix 的哲学是&quot;一个服务挂了不能拖垮整个系统&quot;——它关心的是失败的传播路径。ARES 关心的是历史——死了没关系，历史不能丢。CodeTribunal 关心的是认知——你不试试犯错，怎么知道什么是犯错？&lt;&#x2F;p&gt;
 &lt;p&gt;这四种哲学不矛盾，它们适用于不同的场景。但它们都回答了同一个问题：你在哪里画信任边界？&lt;&#x2F;p&gt;
 &lt;hr &#x2F;&gt;
 &lt;h2 id=&quot;shi-bai-shi-de-jue-ce-shu&quot;&gt;失败时的决策树&lt;&#x2F;h2&gt;
@@ -169,11 +169,11 @@ flowchart TD
     B --&gt; J{错误是设计的一部分？}
     J --&gt;|是| K[故意注入 + 检测机制 ✓]
 &lt;&#x2F;div&gt;
-&lt;p&gt;这棵决策树不是理论推演，是从 goagent 和 CodeTribunal 的代码里提炼出来的。每一个分支都能在代码里找到对应的实现。&lt;&#x2F;p&gt;
+&lt;p&gt;这棵决策树不是理论推演，是从 ARES 和 CodeTribunal 的代码里提炼出来的。每一个分支都能在代码里找到对应的实现。&lt;&#x2F;p&gt;
 &lt;hr &#x2F;&gt;
 &lt;h2 id=&quot;zhong-xin-shen-shi-ru-guo-jin-tian-zhong-lai&quot;&gt;重新审视：如果今天重来&lt;&#x2F;h2&gt;
 &lt;p&gt;回看这些代码，有几个地方如果重新设计，我会做不同的选择。&lt;&#x2F;p&gt;
-&lt;p&gt;&lt;strong&gt;goagent 的三种恢复机制分散在三个文件里。&lt;&#x2F;strong&gt; &lt;code&gt;checkpoint.go&lt;&#x2F;code&gt;、&lt;code&gt;event_recovery.go&lt;&#x2F;code&gt;、&lt;code&gt;stale_task_recovery.go&lt;&#x2F;code&gt; 各自为政，没有统一的 &lt;code&gt;RecoveryStrategy&lt;&#x2F;code&gt; 接口。&lt;code&gt;doFailover&lt;&#x2F;code&gt; 方法里硬编码了调用顺序——先 checkpoint，再 event sourcing，再 stale cleanup。如果明天需要加第四种恢复机制，你得改 &lt;code&gt;doFailover&lt;&#x2F;code&gt; 的代码，而不是注册一个新的策略。&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;ARES 的三种恢复机制分散在三个文件里。&lt;&#x2F;strong&gt; &lt;code&gt;checkpoint.go&lt;&#x2F;code&gt;、&lt;code&gt;event_recovery.go&lt;&#x2F;code&gt;、&lt;code&gt;stale_task_recovery.go&lt;&#x2F;code&gt; 各自为政，没有统一的 &lt;code&gt;RecoveryStrategy&lt;&#x2F;code&gt; 接口。&lt;code&gt;doFailover&lt;&#x2F;code&gt; 方法里硬编码了调用顺序——先 checkpoint，再 event sourcing，再 stale cleanup。如果明天需要加第四种恢复机制，你得改 &lt;code&gt;doFailover&lt;&#x2F;code&gt; 的代码，而不是注册一个新的策略。&lt;&#x2F;p&gt;
 &lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; 理想中的设计&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; RecoveryStrategy&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; interface&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
 &lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    Name&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;()&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; string&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
@@ -211,9 +211,9 @@ flowchart TD
 &lt;p&gt;把难度策略从字符串变成代码——这样你可以写测试，可以做 A&#x2F;B 实验，可以让难度级别影响的不只是 prompt 的措辞，而是整个行为模式。&lt;&#x2F;p&gt;
 &lt;hr &#x2F;&gt;
 &lt;h2 id=&quot;jie-yu-xin-ren-bian-jie&quot;&gt;结语：信任边界&lt;&#x2F;h2&gt;
-&lt;p&gt;goagent 的事件溯源回答了一个问题：当机器崩溃时，我信什么？答案是：信历史。只要事件流还在，状态就能重建。&lt;&#x2F;p&gt;
+&lt;p&gt;ARES 的事件溯源回答了一个问题：当机器崩溃时，我信什么？答案是：信历史。只要事件流还在，状态就能重建。&lt;&#x2F;p&gt;
 &lt;p&gt;CodeTribunal 的 Troublemaker 回答了另一个问题：当机器说错话时，我信什么？答案是：信自己。你需要自己判断谁在说真话，而不是盲从多数。&lt;&#x2F;p&gt;
-&lt;p&gt;两个系统都在画一条线：线内是我信任的，线外是我需要验证的。goagent 把线画在&quot;事件流的完整性&quot;上——只要事件没丢，系统就是可信的。CodeTribunal 把线画在&quot;人类的判断力&quot;上——系统可以故意说错话，但人应该能发现。&lt;&#x2F;p&gt;
+&lt;p&gt;两个系统都在画一条线：线内是我信任的，线外是我需要验证的。ARES 把线画在&quot;事件流的完整性&quot;上——只要事件没丢，系统就是可信的。CodeTribunal 把线画在&quot;人类的判断力&quot;上——系统可以故意说错话，但人应该能发现。&lt;&#x2F;p&gt;
 &lt;p&gt;你的系统画在哪里？&lt;&#x2F;p&gt;
 &lt;hr &#x2F;&gt;
 &lt;p&gt;&lt;em&gt;Next: &lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;decision-archaeology&#x2F;04-tyranny-of-tools&#x2F;&quot;&gt;工具的暴政&lt;&#x2F;a&gt; -- garbage-code-hunter 的多语言适配：为什么工具总是想把一切问题变成锤子？&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;

@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Retrieval System — Hybrid Search and Scoring Pipeline | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="An agent's memory isn't about whether it has memory — it's about whether it can retrieve the right one.">
+
+    <meta property="og:description" content="An agent's memory isn't about whether it has memory — it's about whether it can retrieve the right one.">
+    <meta property="og:title" content="Retrieval System — Hybrid Search and Scoring Pipeline | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/10-retrieval-system-deep-dive/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="An agent's memory isn't about whether it has memory — it's about whether it can retrieve the right one.">
+    <meta name="twitter:title" content="Retrieval System — Hybrid Search and Scoring Pipeline | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/10-retrieval-system-deep-dive/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/10-retrieval-system-deep-dive/">Retrieval System — Hybrid Search and Scoring Pipeline</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rag/">#RAG</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/retrieval/">#Retrieval</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ares-architecture-deep-dive-x-retrieval-system-hybrid-search-and-scoring-pipeline">ares Architecture Deep Dive (X): Retrieval System — Hybrid Search and Scoring Pipeline</h1>
+<blockquote>
+<p>The agent says: "Based on your past experience, I suggest..." — but the suggestion is completely irrelevant.
+Even worse: the agent solved this exact problem before, but now it's starting from scratch.
+I realized back then: an agent's memory isn't about whether it has memory — it's about whether it can retrieve the right one.
+An agent without retrieval is a goldfish: 7-second memory, forever reinventing the wheel.</p>
+</blockquote>
+<h2 id="1-first-why-retrieval-determines-agent-iq">1. First, Why Retrieval Determines Agent IQ</h2>
+<p>There's a brutal truth about building agents: <strong>No matter how powerful the model, if you feed it the wrong context, the output is garbage.</strong></p>
+<p>GPT-5 can score in the top 10%, but if I feed it the wrong documents, irrelevant experience, outdated knowledge... the output is something that sounds reasonable but is actually nonsense. That's worse than saying "I don't know" — because the user will trust it.</p>
+<p>I made a classic mistake when I first worked with embeddings: dump everything into one vector store and take whatever comes back. The result?</p>
+<ul>
+<li>Searching for "Python dependency install error" returned a JavaScript tutorial snippet from three months ago — because it was all text embeddings, semantically mixed together</li>
+<li>Searching for "user login timeout" returned "How to optimize PostgreSQL connection pools" — relevant but not precise</li>
+<li>The agent took the irrelevant context and fabricated a plausible-looking solution, wasting 40 minutes of the user's time</li>
+</ul>
+<p>So I concluded: <strong>A retrieval system isn't something you build with a vector database and call it a day.</strong> It needs multi-strategy search, weighted scoring, signal amplification, time decay... a full combination punch that guarantees what goes into the LLM is genuinely useful.</p>
+<h2 id="2-architecture-overview-two-retrieval-systems-shared-infrastructure">2. Architecture Overview: Two Retrieval Systems + Shared Infrastructure</h2>
+<p>ares's retrieval system has two layers:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TB</span></span>
+<span class="giallo-l"><span>    subgraph &quot;API Layer (api/retrieval/service.go)&quot;</span></span>
+<span class="giallo-l"><span>        SRV[RetrievalServiceAPI]</span></span>
+<span class="giallo-l"><span>        SIMPLE[SimpleRetrievalService&lt;br/&gt;Pure Vector Search]</span></span>
+<span class="giallo-l"><span>        ADV[RetrievalService&lt;br/&gt;Hybrid Search + Scoring&lt;br/&gt;--- NOT WIRED ---]</span></span>
+<span class="giallo-l"><span>        SRV --&gt; SIMPLE</span></span>
+<span class="giallo-l"><span>        SRV -.-&gt; ADV</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    subgraph &quot;Shared Infrastructure&quot;</span></span>
+<span class="giallo-l"><span>        EP[EmbeddingPipeline&lt;br/&gt;Go+Python+Ollama]</span></span>
+<span class="giallo-l"><span>        QR[QueryRewriter&lt;br/&gt;Rule-based + LLM Rewrite]</span></span>
+<span class="giallo-l"><span>        RC[Redis + Memory Cache]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    SIMPLE --&gt; EP</span></span>
+<span class="giallo-l"><span>    ADV --&gt; EP</span></span>
+<span class="giallo-l"><span>    ADV --&gt; QR</span></span>
+<span class="giallo-l"><span>    ADV --&gt; RC</span></span></code></pre>
+<p><strong>SimpleRetrievalService</strong> is the retrieval solution actually wired into the current API layer — pure vector search, straightforward, suitable for scenarios where "don't mess up" is more important than extreme precision.</p>
+<p><strong>RetrievalService</strong> is the full hybrid search engine — 2069 lines of code covering vector search, BM25 keyword search, multi-layer weighted scoring, signal amplification, time decay, deduplication and merging... a complete production-grade retrieval pipeline.</p>
+<p>Guess what? <strong>advancedRetrieval has always been nil in the API layer.</strong> We'll unpack that in the "Honest Section."</p>
+<h2 id="3-data-classification-storage-not-redundancy-but-division-of-labor">3. Data Classification Storage: Not Redundancy, But Division of Labor</h2>
+<p>Before diving into the embedding and search details, we need to answer a fundamental question: <strong>Why use both pgvector and plain PostgreSQL tables?</strong></p>
+<p>First-time observers of ares's storage design often react: "Isn't this just vector retrieval? Why not use a dedicated vector database?" — I know that reaction well, because that's exactly what I thought when I started.</p>
+<h3 id="3-1-what-vector-dbs-can-and-can-t-do">3.1 What Vector DBs Can and Can't Do</h3>
+<p>Let's first demystify vector databases.</p>
+<p><strong>What vector DBs are good at:</strong> At moderate scale (tens to hundreds of thousands of entries), they bring semantically similar things together. "Apples" and "oranges" can be found together, and "Python language" and "Golang language" can be associated — something traditional keyword search truly can't do.</p>
+<p><strong>What vector DBs are not good at:</strong> As data volume grows, similarity in high-dimensional space gradually loses its discriminative power. This isn't a bug in any particular product — it's a mathematical property of high-dimensional geometry known as the <strong>Curse of Dimensionality</strong>, directly manifesting in retrieval.</p>
+<p>In a 1024-dimensional space (ares's embedding dimension), the cosine similarity between two random unrelated vectors is typically around 0.7-0.8. This means when you dump 100,000 entries into a single vector bucket and search for "Python dependency install error," your top-10 results might have five that look like:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Rank 1: &quot;pip freeze best practices&quot;                — cosine sim 0.91, precisely relevant</span></span>
+<span class="giallo-l"><span>Rank 2: &quot;JavaScript EventLoop deep dive&quot;            — cosine sim 0.87, completely irrelevant</span></span>
+<span class="giallo-l"><span>Rank 3: &quot;pip install inside Docker containers&quot;      — cosine sim 0.86, partially relevant</span></span>
+<span class="giallo-l"><span>Rank 4: &quot;Vue3 reactivity explained&quot;                 — cosine sim 0.84, completely irrelevant</span></span>
+<span class="giallo-l"><span>Rank 5: &quot;Node.js package management common errors&quot;   — cosine sim 0.83, seemingly relevant but not</span></span></code></pre>
+<p>Rank 2 and Rank 1 differ by only 0.04 in cosine similarity, but for an agent, one is a lifeline and the other is poison.</p>
+<p>This isn't a "failure" of vector search — it's the <strong>boundary of what vector search can do</strong>: it tells you "these texts are mathematically nearby," but mathematical proximity doesn't equal real relevance — especially when different data types are mixed in the same semantic space.</p>
+<h3 id="3-2-for-llms-more-is-worse">3.2 For LLMs, More Is Worse</h3>
+<p>Now go back to the example at the start of the article: searching "Python dependency install error" returns ten results, three of which are high-similarity JavaScript tutorials.</p>
+<p>What happens when the agent receives these ten results?</p>
+<p>It stuffs every single one into its context window. Then it sees Rank 2 — "JavaScript EventLoop deep dive" — does this have anything to do with "Python dependency error"? No. But the agent doesn't just ignore it. It <strong>tries to rationalize this information</strong>, because the LLM's training objective is to "generate the most coherent output given all available context."</p>
+<p>So it might produce: "Similar issues exist in Node.js. Consider checking whether the event loop is blocked..."</p>
+<p>This is the real path to hallucination: <strong>the agent isn't making things up — it's doing its best to use every input it's given, including the inputs that should never have been in the search results.</strong></p>
+<p>At larger scale (millions, tens of millions of entries), this problem's consequences compound:</p>
+<ul>
+<li>The absolute number of high-similarity false positives grows significantly</li>
+<li>Every retrieval cycle floods the context window with a new batch of noise</li>
+<li>Agent reasoning quality doesn't degrade linearly — it <strong>falls off a cliff</strong> once noise exceeds a certain fraction of the context window, and output reliability collapses</li>
+</ul>
+<h3 id="3-3-solution-data-type-split-routing">3.3 Solution: Data Type Split Routing</h3>
+<p>Once you understand vector DB boundaries and the damage false positives do to LLMs, the solution is clear: <strong>don't let a single vector bucket bear the retrieval burden for all data.</strong> Split data by type, route different types through different retrieval paths, so they don't interfere with each other.</p>
+<p>ares divides data into four domains:</p>
+<table><thead><tr><th>Data Domain</th><th>Storage Location</th><th>Retrieval Strategy</th><th>Weight</th><th>Core Signal</th></tr></thead><tbody>
+<tr><td><strong>Knowledge</strong></td><td>pgvector dedicated table</td><td>Pure vector search</td><td>0.4</td><td>Semantic similarity</td></tr>
+<tr><td><strong>Experience</strong></td><td>PostgreSQL + metadata columns</td><td>Vector search + signal weighting</td><td>0.3</td><td>Success/failure, speed, reuse rate</td></tr>
+<tr><td><strong>Tools</strong></td><td>PostgreSQL registry</td><td>Keyword primary, vector fallback</td><td>0.2</td><td>Exact match</td></tr>
+<tr><td><strong>TaskResults</strong></td><td>PostgreSQL archive table</td><td>Keyword + time decay</td><td>0.1</td><td>Recency</td></tr>
+</tbody></table>
+<p><strong>Knowledge</strong> is the "textbook" — curated and reviewed knowledge artifacts, highest quality. Its vector space contains only knowledge articles, unpolluted by other data types, so simple pure vector search is sufficiently reliable.</p>
+<p><strong>Experience</strong> is the "lab notebook" — records of problems the agent has solved in the past. The core value of this data isn't semantic similarity, but <strong>historical validation signals</strong>. So it adds signal weighting on top of vector search: successful experiences ×1.2, failed experiences ×0.7, fast execution ×1.2.</p>
+<p><strong>Tools</strong> are the "toolbox manuals" — short text, fixed format, limited semantic density. Pure vector search is mostly wasted on this kind of data — keyword exact matching + category filtering handles the vast majority of queries.</p>
+<p><strong>TaskResults</strong> are the "scratch paper" — raw records of every task the agent executed. Highest volume, noisiest, lowest quality. Weight is only 0.1, and it's most heavily affected by time decay — task results from 30 days ago barely participate in ranking.</p>
+<h3 id="3-4-how-classification-storage-reduces-hallucination">3.4 How Classification Storage Reduces Hallucination</h3>
+<p>Going back to the hallucination path, classification storage cuts it off at three levels:</p>
+<p><strong>1. Smaller vector space = higher discriminability</strong></p>
+<p>Each domain's data retrieves within its own independent vector space. The Knowledge domain contains only knowledge articles. Inside this restricted space, cosine similarity genuinely reflects semantic distance — there's no more "search Python dependency returns JavaScript" situations because the latter simply doesn't exist in the same vector space.</p>
+<p><strong>2. Different data types use different strategies, each playing to its strengths</strong></p>
+<p>Experience data doesn't need "the most similar" result — it needs "the most successful" one. So signal weighting is more effective than pure vector search. Tool descriptions don't need semantic search — they need exact matching. Every strategy operates in its optimal zone, without forcing one engine to solve all problems.</p>
+<p><strong>3. Context window protection mechanism</strong></p>
+<p>Through weight layering (Knowledge's weight is 4× that of TaskResults), time decay, and precision-mode priority strategies for key data types, the system ensures the LLM's context window is preferentially filled with high-quality, high-confidence content.</p>
+<h3 id="3-5-why-not-just-use-two-databases-milvus-pinecone">3.5 Why Not Just Use Two Databases (Milvus / Pinecone)?</h3>
+<p>A more radical question: pgvector plus PostgreSQL looks like "not using two databases but having four tables" — why not just use two dedicated databases?</p>
+<p>Two words: <strong>transactional consistency and operational simplicity.</strong></p>
+<p>Dedicated vector databases (Milvus, Pinecone, Qdrant) are indeed stronger at vector search performance, but at the cost of:</p>
+<ul>
+<li><strong>Eventual consistency</strong> — writes aren't guaranteed to be immediately readable</li>
+<li><strong>Cross-system JOIN impossible</strong> — can't simultaneously do vector search and structured filtering in a single query</li>
+<li><strong>Operational overhead</strong> — every additional independent database means another cluster to monitor, back up, and tune</li>
+</ul>
+<p>ares's choice: <strong>store vectors in the pgvector plugin, and structured metadata in related tables within the same PostgreSQL. One query completes vector + metadata combined filtering and sorting at the SQL level.</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="sql"><span class="giallo-l"><span style="color: #CBA6F7;">SELECT</span><span> e.content, e.metadata,</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">       1</span><span style="color: #94E2D5;"> -</span><span> (ke.embedding</span><span style="color: #94E2D5;"> &lt;=&gt;</span><span> $</span><span style="color: #FAB387;">1</span><span>) </span><span style="color: #CBA6F7;">AS</span><span> vector_score,</span></span>
+<span class="giallo-l"><span>       e.success_count, e.exec_time_ms</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">FROM</span><span> experience e</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">JOIN</span><span> knowledge_embeddings ke </span><span style="color: #CBA6F7;">ON</span><span> ke.content_id</span><span style="color: #94E2D5;"> =</span><span> e.id</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">WHERE</span><span> e.tenant_id</span><span style="color: #94E2D5;"> =</span><span> $</span><span style="color: #FAB387;">2</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">  AND</span><span> e.success_count</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 3</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">ORDER BY</span><span> (</span><span style="color: #FAB387;">1</span><span style="color: #94E2D5;"> -</span><span> (ke.embedding</span><span style="color: #94E2D5;"> &lt;=&gt;</span><span> $</span><span style="color: #FAB387;">1</span><span>)) </span><span style="color: #94E2D5;">*</span><span style="color: #FAB387;"> 1</span><span>.</span><span style="color: #FAB387;">1</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">         *</span><span style="color: #CBA6F7;"> CASE WHEN</span><span> e.exec_time_ms</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #FAB387;"> 1000</span><span style="color: #CBA6F7;"> THEN</span><span style="color: #FAB387;"> 1</span><span>.</span><span style="color: #FAB387;">2</span><span style="color: #CBA6F7;"> ELSE</span><span style="color: #FAB387;"> 1</span><span>.</span><span style="color: #FAB387;">0</span><span style="color: #CBA6F7;"> END</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">         DESC</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">LIMIT</span><span style="color: #FAB387;"> 10</span></span></code></pre>
+<p>In short: <strong>This isn't redundancy between pgvector and PostgreSQL, nor is it a replacement for vector databases — it's a data classification system where "data type determines retrieval strategy, retrieval strategy determines storage location" fully realized within the PostgreSQL ecosystem.</strong></p>
+<h2 id="4-embedding-pipeline">4. Embedding Pipeline</h2>
+<p>Let's start with the infrastructure — no matter which retrieval strategy you use, embedding is the unavoidable first step.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>sequenceDiagram</span></span>
+<span class="giallo-l"><span>    participant G as Go EmbeddingClient</span></span>
+<span class="giallo-l"><span>    participant C as Cache (Redis+Memory)</span></span>
+<span class="giallo-l"><span>    participant P as Python FastAPI</span></span>
+<span class="giallo-l"><span>    participant O as Ollama (qwen3-embedding)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    G-&gt;&gt;G: normalizeText&lt;br/&gt;(lowercase+trim+collapse)</span></span>
+<span class="giallo-l"><span>    G-&gt;&gt;G: BLAKE2b-128 cacheKey</span></span>
+<span class="giallo-l"><span>    G-&gt;&gt;C: Lookup cache</span></span>
+<span class="giallo-l"><span>    alt Cache Hit</span></span>
+<span class="giallo-l"><span>        C--&gt;&gt;G: Return cached vector</span></span>
+<span class="giallo-l"><span>    else Cache Miss</span></span>
+<span class="giallo-l"><span>        G-&gt;&gt;P: POST /embed (10s timeout)</span></span>
+<span class="giallo-l"><span>        P-&gt;&gt;P: normalize_text (NFKC)</span></span>
+<span class="giallo-l"><span>        P-&gt;&gt;O: /api/embed (qwen3-embedding)</span></span>
+<span class="giallo-l"><span>        O--&gt;&gt;P: 1024d vector</span></span>
+<span class="giallo-l"><span>        P-&gt;&gt;P: normalize_vector (L2)</span></span>
+<span class="giallo-l"><span>        P--&gt;&gt;G: Return vector</span></span>
+<span class="giallo-l"><span>        G-&gt;&gt;C: Store in Redis (24h TTL) + Memory LRU (1000)</span></span>
+<span class="giallo-l"><span>    end</span></span></code></pre><h3 id="4-1-text-normalization">4.1 Text Normalization</h3>
+<p>Go side entry point:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/embedding/client.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> normalizeText</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">input</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    input</span><span style="color: #94E2D5;"> =</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ToLower</span><span style="color: #9399B2;">(</span><span>input</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    input</span><span style="color: #94E2D5;"> =</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">TrimSpace</span><span style="color: #9399B2;">(</span><span>input</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Collapse multiple whitespace characters into a single space</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> regexp</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">MustCompile</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">`\s+`</span><span style="color: #9399B2;">).</span><span style="color: #89B4FA;font-style: italic;">ReplaceAllString</span><span style="color: #9399B2;">(</span><span>input</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot; &quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Python side goes further:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="python"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># services/embedding/app.py</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">import</span><span> unicodedata</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">def</span><span style="color: #89B4FA;font-style: italic;"> normalize_text</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">text</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;font-style: italic;"> str</span><span style="color: #9399B2;">) -&gt;</span><span style="color: #CBA6F7;font-style: italic;"> str</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span>    text</span><span style="color: #94E2D5;"> =</span><span> unicodedata</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;">normalize</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&#39;NFKC&#39;</span><span style="color: #9399B2;">,</span><span> text</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    # Remove control characters</span></span>
+<span class="giallo-l"><span>    text</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &#39;&#39;</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;">join</span><span style="color: #9399B2;">(</span><span>ch</span><span style="color: #CBA6F7;"> for</span><span> ch</span><span style="color: #CBA6F7;"> in</span><span> text</span><span style="color: #CBA6F7;"> if</span><span> unicodedata</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;">category</span><span style="color: #9399B2;">(</span><span>ch</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> !=</span><span style="color: #A6E3A1;"> &#39;Cc&#39;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    text</span><span style="color: #94E2D5;"> =</span><span> text</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;">lower</span><span style="color: #9399B2;">().</span><span style="color: #89B4FA;">strip</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> re</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;">sub</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;font-style: italic;">r</span><span style="color: #F5C2E7;">&#39;</span><span style="color: #A6E3A1;">\s</span><span style="color: #94E2D5;">+</span><span style="color: #F5C2E7;">&#39;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &#39; &#39;</span><span style="color: #9399B2;">,</span><span> text</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>Why two-stage normalization? Go's <code>strings.ToLower</code> and Python's <code>str.lower()</code> behave differently on certain Unicode characters (like İ, ı). Double normalization ensures that even if one side changes its logic, the other side catches it.</p>
+<h3 id="4-2-cache-strategy">4.2 Cache Strategy</h3>
+<p>Embedding calls are expensive — every request hits an external model. So cache is the first optimization:</p>
+<ul>
+<li><strong>Redis</strong>: 24-hour TTL, shared across processes</li>
+<li><strong>Memory LRU</strong>: 1000 entry limit, in-process hot cache</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/embedding/cache.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Cache</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> getCacheKey</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">input</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    hash</span><span style="color: #94E2D5;"> :=</span><span> blake2b</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sum128</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">byte</span><span style="color: #9399B2;">(</span><span>input</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;embed:%x&quot;</span><span style="color: #9399B2;">,</span><span> hash</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>BLAKE2b-128 is faster than MD5 and shorter than SHA-256 — a 16-byte digest is just right for a cache key.</p>
+<h3 id="4-3-model-and-vector-normalization">4.3 Model and Vector Normalization</h3>
+<p>The embedding model is <strong>qwen3-embedding:0.6b</strong>, outputting 1024-dimensional vectors. L2 normalization is applied before returning:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="python"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># services/embedding/app.py</span></span>
+<span class="giallo-l"><span>vectors</span><span style="color: #94E2D5;"> =</span><span> np</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;">array</span><span style="color: #9399B2;">(</span><span>vectors</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>norms</span><span style="color: #94E2D5;"> =</span><span> np</span><span style="color: #9399B2;">.</span><span>linalg</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;">norm</span><span style="color: #9399B2;">(</span><span>vectors</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> axis</span><span style="color: #94E2D5;">=</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> keepdims</span><span style="color: #94E2D5;">=</span><span style="color: #FAB387;">True</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>vectors</span><span style="color: #94E2D5;"> =</span><span> vectors</span><span style="color: #94E2D5;"> /</span><span> norms</span></span></code></pre>
+<p>Normalization is critical — it turns the vector inner product into a proxy for cosine similarity. This way, the result from the <code>&lt;=&gt;</code> operator is naturally a similarity value in the range [-1, 1].</p>
+<h3 id="4-4-degradation-strategy">4.4 Degradation Strategy</h3>
+<p>Embedding calls have three possible outcomes, each mapped to a degradation path:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/embedding/fallback.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    FallbackToCache</span><span style="color: #9399B2;font-style: italic;">   // Cache has old vector, return without updating</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    FallbackToKeyword</span><span style="color: #9399B2;font-style: italic;"> // Fallback to pure keyword search</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    FallbackToError</span><span style="color: #9399B2;font-style: italic;">   // Return error, let upper layer handle</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p>This prevents the vicious dependency where "embedding is down, so retrieval can't work." In production, the most common case is Ollama timing out occasionally. Degrading to keyword search loses precision, but at least it still works.</p>
+<h2 id="5-simpleretrievalservice-pure-vector-search">5. SimpleRetrievalService: Pure Vector Search</h2>
+<p>This is the service actually wired into the current API layer. Its logic is extremely straightforward:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/services/simple_retrieval_service.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">SimpleRetrievalService</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Search</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span> </span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    query</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> limit</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tenantID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">RetrievalResult</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    </span></span>
+<span class="giallo-l"><span>    queryVec</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>embedding</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">GenerateEmbedding</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> query</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;generate embedding: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    rows</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>db</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Query</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> `</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        SELECT content, metadata, </span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">               1 - (embedding &lt;=&gt; $1) AS similarity</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        FROM knowledge_embeddings</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        WHERE tenant_id = $2</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        ORDER BY embedding &lt;=&gt; $1</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">        LIMIT $3</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    `</span><span style="color: #9399B2;">,</span><span> queryVec</span><span style="color: #9399B2;">,</span><span> tenantID</span><span style="color: #9399B2;">,</span><span> limit</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Just three steps: generate vector → <code>&lt;=&gt;</code> cosine distance sort → return Top-K. No rewriting, no weighting, no deduplication. It's almost comically simple — but sufficient, as long as your knowledge base is high quality and queries are unambiguous.</p>
+<p>The downside is equally obvious: it's defenseless against short queries, ambiguous queries, and queries with typos. In these cases, the vector itself simply can't find anything relevant.</p>
+<h2 id="6-retrievalservice-the-hybrid-search-engine">6. RetrievalService: The Hybrid Search Engine</h2>
+<p>This is the real heavyweight — 2069 lines of code covering the <strong>full retrieval pipeline</strong>.</p>
+<h3 id="6-1-hybrid-search-strategy">6.1 Hybrid Search Strategy</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph LR</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Query Rewriting&quot;</span></span>
+<span class="giallo-l"><span>        Q1[Original Query]</span></span>
+<span class="giallo-l"><span>        Q2[Rule-based Rewrite]</span></span>
+<span class="giallo-l"><span>        Q3[LLM Rewrite]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Dual Search&quot;</span></span>
+<span class="giallo-l"><span>        V[Vector Search&lt;br/&gt;pgvector &lt;=&gt;]</span></span>
+<span class="giallo-l"><span>        K[Keyword Search&lt;br/&gt;BM25]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Fusion&quot;</span></span>
+<span class="giallo-l"><span>        S[Score Fusion]</span></span>
+<span class="giallo-l"><span>        D[Deduplication &amp; Merge]</span></span>
+<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"><span>    Q1 --&gt; V</span></span>
+<span class="giallo-l"><span>    Q1 --&gt; K</span></span>
+<span class="giallo-l"><span>    Q2 --&gt; V</span></span>
+<span class="giallo-l"><span>    Q2 --&gt; K</span></span>
+<span class="giallo-l"><span>    Q3 --&gt; V</span></span>
+<span class="giallo-l"><span>    Q3 --&gt; K</span></span>
+<span class="giallo-l"><span>    V --&gt; S</span></span>
+<span class="giallo-l"><span>    K --&gt; S</span></span>
+<span class="giallo-l"><span>    S --&gt; D</span></span></code></pre>
+<p>During a search, for <strong>each query variant</strong> (original + rewritten versions), it simultaneously runs both vector search and BM25 keyword search. All results flow into the scoring pipeline.</p>
+<h3 id="6-2-query-rewriting">6.2 Query Rewriting</h3>
+<p>Query rewriting has two approaches:</p>
+<p><strong>Rule-based</strong> — reads synonym mappings from config:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># configs/synonyms.yaml</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">synonyms</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;memory&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;memory&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;experience&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;distillation&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;memories&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;tool&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;tool&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;function&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;capability&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;skill&quot;</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  &quot;error&quot;</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> [</span><span style="color: #A6E3A1;">&quot;error&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;bug&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;failure&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;exception&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;crash&quot;</span><span style="color: #9399B2;">]</span></span></code></pre>
+<p><strong>LLM-based</strong> — calls the model for text rewriting, but with strict constraints:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/services/query_rewriter.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    maxRewrites</span><span style="color: #94E2D5;">      =</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;font-style: italic;">          // Generate at most 2 rewrites</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    llmTimeout</span><span style="color: #94E2D5;">       =</span><span style="color: #FAB387;"> 30</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Second</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    llmTemperature</span><span style="color: #94E2D5;">   =</span><span style="color: #FAB387;"> 0.3</span><span style="color: #9399B2;font-style: italic;">        // Low temperature for stability</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    jaccardThreshold</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.6</span><span style="color: #9399B2;font-style: italic;">        // Minimum similarity to original query</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    rewriteCacheTTL</span><span style="color: #94E2D5;">  =</span><span style="color: #FAB387;"> 10</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Minute</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p>The core logic:</p>
+<ol>
+<li>Check cache first — the same query within 10 minutes won't re-call the LLM</li>
+<li>After the LLM call, compute Jaccard similarity (character-level overlap)</li>
+<li>Rewrites below 0.6 similarity are discarded — prevents the LLM from drifting off</li>
+<li>Keep at most 2 rewrites</li>
+</ol>
+<p>Why 0.6? Empirically determined. Below 0.6, the rewrite no longer carries the same meaning as the original; above 0.6, most of the original semantic information is preserved.</p>
+<h3 id="6-3-query-weights">6.3 Query Weights</h3>
+<p>Different query variants carry different weights in scoring:</p>
+<table><thead><tr><th>Query Source</th><th>Weight</th><th>Rationale</th></tr></thead><tbody>
+<tr><td>Original query</td><td>1.0</td><td>What the user said is most important</td></tr>
+<tr><td>Rule-based rewrite</td><td>0.7</td><td>Synonym expansion, reliable but doesn't overstep</td></tr>
+<tr><td>LLM rewrite</td><td>0.5</td><td>Trust half, because LLMs have too many uncontrollable factors</td></tr>
+</tbody></table>
+<p>This weight distribution sends a clear signal: <strong>No matter how smart the machine guesses, it's not as important as the user's original query.</strong></p>
+<h3 id="6-4-source-weights">6.4 Source Weights</h3>
+<p>When multiple sources are active simultaneously (e.g., searching Knowledge + Experience + Tools), results need cross-source ranking. Source weights adjust the priority of different domains:</p>
+<table><thead><tr><th>Source</th><th>Weight</th><th>Rationale</th></tr></thead><tbody>
+<tr><td>Knowledge</td><td>0.4</td><td>Knowledge base is structured and high-quality</td></tr>
+<tr><td>Experience</td><td>0.3</td><td>Experience is historically validated</td></tr>
+<tr><td>Tools</td><td>0.2</td><td>Tool descriptions are usually short, limited semantic richness</td></tr>
+<tr><td>TaskResults</td><td>0.1</td><td>Task results have huge volume and lots of noise</td></tr>
+</tbody></table>
+<p>Note: <strong>When only one source is active, source weights don't apply</strong> (value is 1.0). This is by design because single-source scenarios don't need cross-domain ranking — internal scores are sufficient.</p>
+<h3 id="6-5-sub-source-weights">6.5 Sub-Source Weights</h3>
+<p>Within each source, the scores from vector search and keyword search also need to be reconciled:</p>
+<table><thead><tr><th>Sub-source</th><th>Weight</th></tr></thead><tbody>
+<tr><td>Vector</td><td>1.0</td></tr>
+<tr><td>Keyword</td><td>0.8</td></tr>
+</tbody></table>
+<p>Semantic matching takes priority over literal matching — but keyword search plays an irreplaceable role in scenarios like entity names and error messages. The 0.8 ratio strikes a balance between the two.</p>
+<h3 id="6-6-signal-weighting">6.6 Signal Weighting</h3>
+<p>Beyond static weights, the system introduces a set of <strong>dynamic signals</strong> that adjust scores based on the metadata of retrieved results:</p>
+<p><strong>Experience signals:</strong></p>
+<table><thead><tr><th>Signal</th><th>Condition</th><th>Multiplier</th></tr></thead><tbody>
+<tr><td>Successful experience</td><td><code>SuccessCount &gt; 0</code></td><td>1.2</td></tr>
+<tr><td>Failed experience</td><td><code>FailureCount &gt; 0</code></td><td>0.7</td></tr>
+<tr><td>Fast execution</td><td><code>ExecTime &lt; 1s</code></td><td>1.2</td></tr>
+<tr><td>Slow execution</td><td><code>ExecTime &gt; 5s</code></td><td>0.8</td></tr>
+<tr><td>Frequently reused</td><td><code>ReuseCount &gt; 3</code></td><td>1.1</td></tr>
+<tr><td>Has documentation</td><td><code>Documented == true</code></td><td>1.05</td></tr>
+</tbody></table>
+<p><strong>Tool signals:</strong></p>
+<table><thead><tr><th>Signal</th><th>Condition</th><th>Multiplier</th></tr></thead><tbody>
+<tr><td>Auth required</td><td><code>AuthRequired == true</code></td><td>0.9</td></tr>
+<tr><td>High success rate</td><td><code>SuccessRate &gt; 0.9</code></td><td>1.1</td></tr>
+<tr><td>Low success rate</td><td><code>SuccessRate &lt; 0.5</code></td><td>0.8</td></tr>
+</tbody></table>
+<p>The logic behind these signals is intuitive: <strong>Results with good historical performance, fast execution, and frequent reuse should rank higher.</strong> Conversely, results that keep failing or are slow to execute should be demoted.</p>
+<h3 id="6-7-time-decay">6.7 Time Decay</h3>
+<p>Information has a shelf life. An experience from three months ago may already be outdated. A tool version from six months ago may have been deprecated.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">RetrievalService</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> applyTimeDecay</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">score</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;">,</span><span> </span></span>
+<span class="giallo-l"><span style="color: #EBA0AC;font-style: italic;">    createdAt</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    </span></span>
+<span class="giallo-l"><span>    ageHours</span><span style="color: #94E2D5;"> :=</span><span> time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Since</span><span style="color: #9399B2;">(</span><span>createdAt</span><span style="color: #9399B2;">).</span><span style="color: #89B4FA;font-style: italic;">Hours</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>    decay</span><span style="color: #94E2D5;"> :=</span><span> math</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Exp</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">-</span><span style="color: #FAB387;">0.01</span><span style="color: #94E2D5;"> *</span><span> ageHours</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> decay</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #FAB387;"> 0.1</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        decay</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0.1</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> score</span><span style="color: #94E2D5;"> *</span><span> decay</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Time decay formula: <code>e^(-0.01 × age_hours)</code></p>
+<table><thead><tr><th>Age</th><th>Decay Coefficient</th></tr></thead><tbody>
+<tr><td>1 hour</td><td>0.990</td></tr>
+<tr><td>24 hours</td><td>0.787</td></tr>
+<tr><td>7 days</td><td>0.185</td></tr>
+<tr><td>30 days</td><td>0.011 → floor at 0.1</td></tr>
+<tr><td>Older</td><td>0.1 (floor)</td></tr>
+</tbody></table>
+<p><code>math.Exp(-0.01 * age_hours)</code> means: 78% after 1 day, 18% after 7 days, and after a month it's essentially at the 0.1 floor. The system naturally favors recent content.</p>
+<p>The 0.1 floor ensures that even ancient content can still be retrieved if other signals are strong enough — it won't completely vanish just because of age.</p>
+<h3 id="6-8-the-complete-scoring-formula">6.8 The Complete Scoring Formula</h3>
+<p>Putting all the factors together, the final scoring formula is:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>FinalScore = BaseScore × QueryWeight × SourceWeight × SubSourceWeight </span></span>
+<span class="giallo-l"><span>             × SourceSignals × TimeDecay</span></span></code></pre>
+<p>A concrete example: suppose a user searches for a problem about "Python dependency install error," and the LLM finds a relevant memory fragment based on historical experience:</p>
+<ul>
+<li>BaseScore = 0.85 (raw vector similarity)</li>
+<li>QueryWeight = 1.0 (using the original query, no rewrite)</li>
+<li>SourceWeight = 1.0 (single source, no cross-domain)</li>
+<li>SubSourceWeight = 1.0 (from vector search)</li>
+<li>SourceSignals = 1.2 × 1.1 × 1.05 (successful experience + frequently reused + has documentation)</li>
+<li>TimeDecay = 0.787 (created 24 hours ago)</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>FinalScore = 0.85 × 1.0 × 1.0 × 1.0 × (1.2 × 1.1 × 1.05) × 0.787</span></span>
+<span class="giallo-l"><span>           = 0.85 × 1.386 × 0.787</span></span>
+<span class="giallo-l"><span>           ≈ 0.927</span></span></code></pre>
+<p>Note: <strong>SourceSignals are multiplicative.</strong> This means multiple positive signals compound significantly — 1.2 × 1.1 × 1.05 ≈ 1.386, directly boosting the final score by 38.6%. Conversely, a single negative signal (like a failed experience at 0.7) can drag the score down by 30%.</p>
+<p>This is intentional: let "good evidence chains" and "bad indicators" both have a significant impact on the score, rather than getting averaged out.</p>
+<h3 id="6-9-deduplication-and-merging">6.9 Deduplication and Merging</h3>
+<p>Different search paths may return the same content. For example, both vector search and keyword search might hit the same piece of code. In this case, the system doesn't simply deduplicate — it <strong>accumulates the score</strong>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">RetrievalService</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> deduplicate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">results</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ScoredResult</span><span style="color: #9399B2;">) []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ScoredResult</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    seen</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ScoredResult</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> results</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> existing</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> seen</span><span style="color: #9399B2;">[</span><span>r</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">];</span><span> ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">            // Same content hit by multiple search paths — bonus points</span></span>
+<span class="giallo-l"><span>            existing</span><span style="color: #9399B2;">.</span><span>Score</span><span style="color: #94E2D5;"> +=</span><span> r</span><span style="color: #9399B2;">.</span><span>Score</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 0.3</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            seen</span><span style="color: #9399B2;">[</span><span>r</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> r</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is the "multi-path hit signal": when the same content is hit by both vector search and keyword search, it's genuinely relevant. The 30% bonus is an empirically tuned value — too high and one item dominates the rankings, too low and the multi-path hit signal doesn't carry its weight.</p>
+<h3 id="6-10-precision-mode">6.10 Precision Mode</h3>
+<p>For certain special queries, the system switches to exact-match mode:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> isPrecisionMode</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">query</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">rune</span><span style="color: #9399B2;">(</span><span>query</span><span style="color: #9399B2;">))</span><span style="color: #94E2D5;"> &lt;=</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    specialChars</span><span style="color: #94E2D5;"> :=</span><span style="color: #A6E3A1;"> &quot;=+-*/:&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> c</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> query</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ContainsRune</span><span style="color: #9399B2;">(</span><span>specialChars</span><span style="color: #9399B2;">,</span><span> c</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The retrieval path in precision mode: <strong>Exact match → Keyword search → Vector search</strong> (fallback).</p>
+<p>When does it trigger?</p>
+<ul>
+<li>Very short queries (&lt;= 10 characters) — short queries like "err 500" or "timeout" are problematic for vector search because too few words make the semantics ambiguous</li>
+<li>Queries with special characters — queries like "status=error" or "CPU&gt;90%" have inherent structure, and running semantic search directly would lose critical information</li>
+</ul>
+<h2 id="7-concurrency-model-and-gate-system">7. Concurrency Model and Gate System</h2>
+<h3 id="7-1-concurrency-control">7.1 Concurrency Control</h3>
+<p>The retrieval system involves multiple independent operations (multiple query variants × multiple search strategies), using <code>errgroup</code> for concurrency control:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>g</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #94E2D5;"> :=</span><span> errgroup</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithContext</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">SetLimit</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">2</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;"> // At most 2 concurrent goroutines</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> _</span><span style="color: #9399B2;">,</span><span> variant</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> queryVariants</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    variant</span><span style="color: #94E2D5;"> :=</span><span> variant</span></span>
+<span class="giallo-l"><span>    g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        ctx</span><span style="color: #9399B2;">,</span><span> cancel</span><span style="color: #94E2D5;"> :=</span><span> context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithTimeout</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #94E2D5;">*</span><span>time</span><span style="color: #9399B2;">.</span><span>Second</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        defer</span><span style="color: #89B4FA;font-style: italic;"> cancel</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">searchSingleVariant</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> variant</span><span style="color: #9399B2;">,</span><span> results</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    })</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>SetLimit(2)</code> limits concurrency to 2, preventing a flood of search requests hitting the database simultaneously. Each sub-search has a 2-second context timeout — any search path taking longer gets dropped without affecting the overall result.</p>
+<h3 id="7-2-gate-system">7.2 Gate System</h3>
+<p>The system integrates a three-layer gate:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Gate</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    rateLimiter</span><span style="color: #94E2D5;">      *</span><span style="color: #F9E2AF;font-style: italic;">RateLimiter</span><span style="color: #9399B2;font-style: italic;">   // 100 req/s</span></span>
+<span class="giallo-l"><span>    circuitBreaker</span><span style="color: #94E2D5;">   *</span><span style="color: #F9E2AF;font-style: italic;">CircuitBreaker</span><span style="color: #9399B2;font-style: italic;"> // Opens after 5 failures</span></span>
+<span class="giallo-l"><span>    dbTimeout</span><span style="color: #F9E2AF;font-style: italic;">        time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 30s</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<ul>
+<li><strong>RateLimiter</strong>: At most 100 retrieval requests per second. Excess requests return 429 directly, without hitting the database.</li>
+<li><strong>CircuitBreaker</strong>: After 5 consecutive retrieval failures, enters open (熔断) state. Attempts half-open recovery after 30 seconds. During the open state, errors are returned directly, wasting no resources.</li>
+<li><strong>DB Timeout</strong>: Each database query waits at most 30 seconds.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>stateDiagram-v2</span></span>
+<span class="giallo-l"><span>    [*] --&gt; Closed</span></span>
+<span class="giallo-l"><span>    Closed --&gt; Open: 5 failures</span></span>
+<span class="giallo-l"><span>    Open --&gt; HalfOpen: 30s timeout</span></span>
+<span class="giallo-l"><span>    HalfOpen --&gt; Closed: 1 success</span></span>
+<span class="giallo-l"><span>    HalfOpen --&gt; Open: 1 failure</span></span>
+<span class="giallo-l"><span>    Closed --&gt; Closed: success (reset counter)</span></span></code></pre>
+<p>This gate system is designed to be quite conservative — the retrieval system is the knowledge lifeline of the entire agent. If it goes down, the agent becomes brain-dead. Better to return empty results than to make the agent wait 60 seconds for a timeout.</p>
+<h2 id="8-debugging-and-observability">8. Debugging and Observability</h2>
+<p>Every retrieval request can generate detailed debug information:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> DebugInfo</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Query</span><span style="color: #CBA6F7;">           string</span></span>
+<span class="giallo-l"><span>    Rewrites</span><span style="color: #9399B2;">        []</span><span style="color: #CBA6F7;">string</span></span>
+<span class="giallo-l"><span>    TotalResults</span><span style="color: #CBA6F7;">    int</span></span>
+<span class="giallo-l"><span>    QueryTime</span><span style="color: #F9E2AF;font-style: italic;">       time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span></span>
+<span class="giallo-l"><span>    ScoreBreakdown</span><span style="color: #9399B2;">  []</span><span style="color: #F9E2AF;font-style: italic;">ScoreDebug</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ScoreDebug</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">              string</span></span>
+<span class="giallo-l"><span>    Content</span><span style="color: #CBA6F7;">         string</span></span>
+<span class="giallo-l"><span>    BaseScore</span><span style="color: #CBA6F7;">       float64</span></span>
+<span class="giallo-l"><span>    QueryWeight</span><span style="color: #CBA6F7;">     float64</span></span>
+<span class="giallo-l"><span>    SourceWeight</span><span style="color: #CBA6F7;">    float64</span></span>
+<span class="giallo-l"><span>    SubSourceWeight</span><span style="color: #CBA6F7;"> float64</span></span>
+<span class="giallo-l"><span>    SourceSignals</span><span style="color: #CBA6F7;">   map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">float64</span></span>
+<span class="giallo-l"><span>    TimeDecay</span><span style="color: #CBA6F7;">       float64</span></span>
+<span class="giallo-l"><span>    FinalScore</span><span style="color: #CBA6F7;">      float64</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>GenerateDebugInfo()</code> provides full scoring chain traceability — every weight factor for every result is recorded. This is invaluable when tuning scoring parameters or debugging "why is this bad result ranked first?"</p>
+<h2 id="9-honest-section">9. Honest Section</h2>
+<p>Now, time to address the elephant in the room.</p>
+<p><strong>The RetrievalService (this 2069-line hybrid search engine) has never been wired into the API layer.</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// api/retrieval/service.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewRetrievalService</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">cfg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Service</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    simpleRetrieval</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> NewSimpleRetrievalService</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // advancedRetrieval, err := NewAdvancedRetrievalService(...) // This line is commented out</span></span>
+<span class="giallo-l"><span>    </span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">Service</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        simpleRetrieval</span><span style="color: #9399B2;">:</span><span>   simpleRetrieval</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // advancedRetrieval: advancedRetrieval, // always nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    },</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Haha, feel like you just got clickbaited?</p>
+<p>I was incredibly excited when I wrote this thing — "Now THIS is a real retrieval system." Then I finished it and realized: SimpleRetrievalService was already running stable. Replacing it with this complex system requires extensive integration testing, A/B testing, and performance benchmarking. And so it keeps getting postponed.</p>
+<p>There's some logic to the decision: SimpleRetrievalService is good enough for 80% of scenarios. Complex scoring, signal weighting, time decay — the benefits aren't dramatic at small data volumes (&lt; 100k entries).</p>
+<p>But I also know: <strong>as user data and experience accumulate, this hybrid search engine will need to go live sooner or later.</strong> The code is already written. It just needs a spark.</p>
+<p>So this article isn't documentation for a feature you're already using — it's a blueprint for "the future you should know about." If you're truly hitting the ceiling of pure vector search (low short-query recall, poor cross-domain ranking, low experience reuse rates), this hybrid search pipeline is the answer.</p>
+<p>Anyway, the code is already written. We'll talk about it when someone actually comes knocking.</p>
+<h2 id="10-summary">10. Summary</h2>
+<p>ares's retrieval system in one sentence: <strong>The foundation is a simple pure-vector solution, the nuclear option is hybrid search + multi-layer scoring pipeline, but the launch button for the nuclear option hasn't been pressed yet.</strong></p>
+<p>Key design points:</p>
+<ol>
+<li><strong>Embedding pipeline</strong> — Go-Python-Ollama three-layer architecture, dual normalization + three-tier cache (Redis + LRU + Fallback)</li>
+<li><strong>Query rewriting</strong> — rule-based synonyms + LLM rewrites, Jaccard threshold filtering, 10-minute cache</li>
+<li><strong>Multi-layer scoring</strong> — static weights (query/source/sub-source) × dynamic signals (success/failure/speed/reuse) × time decay</li>
+<li><strong>Deduplication and merging</strong> — 30% score bonus for multi-path hits, identifying genuinely relevant content</li>
+<li><strong>Precision mode</strong> — short queries and structural queries go exact match + keyword + vector fallback</li>
+<li><strong>Gate system</strong> — RateLimit + CircuitBreaker + DB Timeout, preventing the retrieval system from being overwhelmed</li>
+</ol>
+<p>An agent's intelligence ≈ the quality of context fed into it. And context quality depends on whether the retrieval system can pull the right content, from the right place, with the right weight, at the right time.</p>
+<hr />
+<blockquote>
+<p>Information isn't power. Retrieval is. — My realization (still collecting dust) after building an entire retrieval pipeline.</p>
+</blockquote>
+<p><strong>Next up:</strong> No more articles planned for this series — this concludes the series for now. But if there's a module you're particularly curious about, just let me know.</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/11-autonomous-evolution-deep-dive/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Autonomous Evolution — When Agents Learn to Improve Themselves</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/09-arena-fault-injection-deep-dive/">
+                                <span class="button__text">Arena &#x2F; Fault Injection — Break It Deliberately, Watch It Self-Heal</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

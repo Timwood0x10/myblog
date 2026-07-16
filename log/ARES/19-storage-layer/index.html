@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Storage Layer — The Foundation Under Everything | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="The layer every module eventually hits: internal/storage — the foundation ares stands on.">
+
+    <meta property="og:description" content="The layer every module eventually hits: internal/storage — the foundation ares stands on.">
+    <meta property="og:title" content="Storage Layer — The Foundation Under Everything | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/19-storage-layer/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="The layer every module eventually hits: internal/storage — the foundation ares stands on.">
+    <meta name="twitter:title" content="Storage Layer — The Foundation Under Everything | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/19-storage-layer/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/19-storage-layer/">Storage Layer — The Foundation Under Everything</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/architecture/">#Architecture</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/storage/">#Storage</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ares-architecture-deep-dive-xix-storage-layer-the-foundation-under-everything">ares Architecture Deep Dive (XIX): Storage Layer — The Foundation Under Everything</h1>
+<p>Every module in ares — Memory, Evolution, Knowledge, Events — eventually hits storage. This is the story of <code>internal/storage/</code>: 14,112 lines across 57 files, the layer that everything else stands on.</p>
+<hr />
+<h2 id="the-problem-three-stores-three-bugs">The Problem: Three Stores, Three Bugs</h2>
+<p>Early ares had three separate storage paths:</p>
+<table><thead><tr><th>Module</th><th>Storage</th><th>Problem</th></tr></thead><tbody>
+<tr><td>Memory</td><td>Raw <code>database/sql</code> calls</td><td>Connection leaks under load</td></tr>
+<tr><td>Knowledge</td><td>Hand-rolled pgvector queries</td><td>Vector search timed out at 10K rows</td></tr>
+<tr><td>Evolution</td><td>In-memory map (no persistence)</td><td>Strategies lost on restart</td></tr>
+</tbody></table>
+<p>Three paths meant three places for bugs. The memory team hit "too many connections" at 50 concurrent agents. The knowledge team watched vector search degrade from 50ms to 8 seconds as the corpus grew. The evolution team just accepted that restarting wiped everything.</p>
+<p><strong>Honest reflection</strong>: We tried wrapping each path in its own retry logic. It worked — until a cascading failure made all three retry simultaneously and took down PostgreSQL. Centralized storage wasn't a design choice; it was survival.</p>
+<hr />
+<h2 id="the-design-pool-breaker-buffer-timeout">The Design: Pool, Breaker, Buffer, Timeout</h2>
+<p><code>internal/storage/postgres/</code> provides four layered protections:</p>
+<h3 id="1-pool-connection-management">1. Pool — Connection Management</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/pool.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Pool</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    cfg</span><span style="color: #94E2D5;">          *</span><span style="color: #F9E2AF;font-style: italic;">Config</span></span>
+<span class="giallo-l"><span>    db</span><span style="color: #94E2D5;">           *</span><span style="color: #F9E2AF;font-style: italic;">sql</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">DB</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">           sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span>    waitCount</span><span style="color: #CBA6F7;">    int</span></span>
+<span class="giallo-l"><span>    waitDuration</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The pool wraps <code>sql.DB</code> with usage tracking. <code>Get() → usage → Release()</code> pattern ensures connections return to the pool even on panic.</p>
+<p><strong>Key insight</strong>: <code>ErrMissingTenantID</code> is enforced at the pool level. Any tenant-aware query without a tenant ID fails fast — preventing silent cross-tenant data leaks (P1-11 security fix).</p>
+<h3 id="2-circuitbreaker-failure-isolation">2. CircuitBreaker — Failure Isolation</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/circuit_breaker.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> CircuitBreaker</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    state</span><span style="color: #F9E2AF;font-style: italic;">            CircuitBreakerState</span><span style="color: #9399B2;font-style: italic;">  // closed | open | half-open</span></span>
+<span class="giallo-l"><span>    failureCount</span><span style="color: #CBA6F7;">     int</span><span style="color: #9399B2;font-style: italic;">                  // consecutive failures in Closed</span></span>
+<span class="giallo-l"><span>    failureThreshold</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;font-style: italic;">                  // open after N consecutive failures</span></span>
+<span class="giallo-l"><span>    openTimeout</span><span style="color: #F9E2AF;font-style: italic;">      time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">        // how long to stay open</span></span>
+<span class="giallo-l"><span>    halfOpenInflight</span><span style="color: #F9E2AF;font-style: italic;"> atomic</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Int32</span><span style="color: #9399B2;font-style: italic;">         // probe limit in half-open</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Three states:</p>
+<ul>
+<li><strong>Closed</strong> — normal operation, <code>failureCount</code> tracks consecutive failures</li>
+<li><strong>Open</strong> — fail fast, no DB calls, wait <code>openTimeout</code></li>
+<li><strong>Half-Open</strong> — allow one probe, success → Closed, failure → Open</li>
+</ul>
+<p><strong>Honest reflection</strong>: The original breaker tracked <em>cumulative</em> failures. A brief network blip would trip it, and it stayed open for 30 seconds even though the DB was fine. Switching to <em>consecutive</em> failures (reset on each success) made it responsive without being twitchy.</p>
+<h3 id="3-writebuffer-batch-writes">3. WriteBuffer — Batch Writes</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/write_buffer.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> WriteBuffer</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    db</span><span style="color: #94E2D5;">            *</span><span style="color: #F9E2AF;font-style: italic;">Pool</span></span>
+<span class="giallo-l"><span>    buffer</span><span style="color: #CBA6F7;">        chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">WriteItem</span></span>
+<span class="giallo-l"><span>    batchSize</span><span style="color: #CBA6F7;">     int</span></span>
+<span class="giallo-l"><span>    flushInterval</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span></span>
+<span class="giallo-l"><span>    queue</span><span style="color: #94E2D5;">         *</span><span style="color: #F9E2AF;font-style: italic;">EmbeddingQueue</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Writes go to an in-memory channel. A background goroutine flushes when either <code>batchSize</code> items accumulate or <code>flushInterval</code> elapses.</p>
+<p>This cut embedding API calls by 80% — instead of one embedding request per write, the buffer batches 50 items and sends one embedding request for the batch.</p>
+<h3 id="4-timeout-operation-level-deadlines">4. Timeout — Operation-Level Deadlines</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/timeout.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> DefaultTimeouts</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Query</span><span style="color: #F9E2AF;font-style: italic;">        time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 30s</span></span>
+<span class="giallo-l"><span>    Insert</span><span style="color: #F9E2AF;font-style: italic;">       time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 20s</span></span>
+<span class="giallo-l"><span>    Update</span><span style="color: #F9E2AF;font-style: italic;">       time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 20s</span></span>
+<span class="giallo-l"><span>    Delete</span><span style="color: #F9E2AF;font-style: italic;">       time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 20s</span></span>
+<span class="giallo-l"><span>    Transaction</span><span style="color: #F9E2AF;font-style: italic;">  time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 60s</span></span>
+<span class="giallo-l"><span>    VectorSearch</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 10s</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}{}</span></span></code></pre>
+<p>Each operation type has its own timeout. Vector search gets 10s (fail fast, let the breaker trip). Transactions get 60s (complex operations need room).</p>
+<hr />
+<h2 id="the-embedding-subsystem">The Embedding Subsystem</h2>
+<p><code>internal/storage/postgres/embedding/</code> is the most complex part of storage:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>embedding/</span></span>
+<span class="giallo-l"><span>├── service.go      # EmbeddingClient — implements api/embedding.EmbeddingService</span></span>
+<span class="giallo-l"><span>├── client.go       # HTTP client for embedding API</span></span>
+<span class="giallo-l"><span>├── cache.go        # In-memory embedding cache</span></span>
+<span class="giallo-l"><span>├── fallback.go     # Fallback embedding when primary fails</span></span>
+<span class="giallo-l"><span>├── embedding_queue.go  # Async embedding queue</span></span>
+<span class="giallo-l"><span>└── log.go          # Scoped logger</span></span></code></pre>
+<p>The flow:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    W[Write] --&gt; B[WriteBuffer]</span></span>
+<span class="giallo-l"><span>    B --&gt; Q[EmbeddingQueue]</span></span>
+<span class="giallo-l"><span>    Q --&gt; C{Cache hit?}</span></span>
+<span class="giallo-l"><span>    C --&gt;|Yes| R[Return cached]</span></span>
+<span class="giallo-l"><span>    C --&gt;|No| H[HTTP embedding API]</span></span>
+<span class="giallo-l"><span>    H --&gt; F{Success?}</span></span>
+<span class="giallo-l"><span>    F --&gt;|Yes| C2[Cache + store]</span></span>
+<span class="giallo-l"><span>    F --&gt;|No| FB[Fallback embedding]</span></span></code></pre>
+<p><strong>Honest reflection</strong>: The embedding cache has a subtle bug we fixed in v0.2.7 — cache keys weren't model-aware. If you switched embedding models, you'd get stale vectors from the old model. The fix: include <code>embedding_model</code> in the cache key. Simple, but it took a production incident to find.</p>
+<hr />
+<h2 id="the-repository-pattern">The Repository Pattern</h2>
+<p>Storage is organized by domain:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>repositories/</span></span>
+<span class="giallo-l"><span>├── conversation_repository.go</span></span>
+<span class="giallo-l"><span>├── distilled_memory_repository.go</span></span>
+<span class="giallo-l"><span>├── experience_repository.go</span></span>
+<span class="giallo-l"><span>├── knowledge_repository.go</span></span>
+<span class="giallo-l"><span>├── secret_repository.go</span></span>
+<span class="giallo-l"><span>├── strategy_repository.go</span></span>
+<span class="giallo-l"><span>├── task_result_repository.go</span></span>
+<span class="giallo-l"><span>└── tool_repository.go</span></span></code></pre>
+<p>Each repository follows the same pattern:</p>
+<ol>
+<li>Interface in <code>repositories/*_interface.go</code></li>
+<li>Implementation in <code>repositories/*_repository.go</code></li>
+<li>Models in <code>models/</code></li>
+<li>Queries in <code>query/</code></li>
+</ol>
+<p>This separation makes testing trivial — mock the interface, not the implementation.</p>
+<hr />
+<h2 id="migration-system">Migration System</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/migrate.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Migrate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> pool</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Pool</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span></code></pre>
+<p>Migrations are versioned and idempotent:</p>
+<ul>
+<li><code>migrate_storage.go</code> — base schema</li>
+<li><code>migrate_eval.go</code> — evaluation tables</li>
+<li><code>migrate_evolution.go</code> — strategy lineage tables</li>
+</ul>
+<p>Each migration checks the current schema version and only applies missing migrations. Safe to run on startup.</p>
+<hr />
+<h2 id="lessons">Lessons</h2>
+<p>Storage is the layer nobody talks about until it breaks. Pool leaks, breaker misconfigurations, missing cache keys — each took a production incident to find.</p>
+<p>The four-layer protection (Pool → Breaker → Buffer → Timeout) seems like overkill until you're at 3 AM trying to figure out why PostgreSQL has 500 idle connections.</p>
+<p><strong>The best storage layer is the one you forget exists.</strong> It works, it's fast, it's safe — and it lets every other module focus on its job instead of worrying about the database.</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/20-llm-client-layer/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">LLM Client Layer — Failover, DeepSeek, and Multi-Provider Abstraction</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/18-knowledge-graph-build/">
+                                <span class="button__text">Knowledge Graph Build — From Markdown to 27K Edges (AKG)</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

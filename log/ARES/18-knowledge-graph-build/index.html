@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Knowledge Graph Build — From Markdown to 27K Edges (AKG) | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="Article X covered retrieval. This one covers construction — how memories become a knowledge graph.">
+
+    <meta property="og:description" content="Article X covered retrieval. This one covers construction — how memories become a knowledge graph.">
+    <meta property="og:title" content="Knowledge Graph Build — From Markdown to 27K Edges (AKG) | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/18-knowledge-graph-build/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Article X covered retrieval. This one covers construction — how memories become a knowledge graph.">
+    <meta name="twitter:title" content="Knowledge Graph Build — From Markdown to 27K Edges (AKG) | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/18-knowledge-graph-build/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/18-knowledge-graph-build/">Knowledge Graph Build — From Markdown to 27K Edges (AKG)</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/knowledge-graph/">#Knowledge Graph</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rag/">#RAG</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ares-architecture-deep-dive-xviii-knowledge-graph-build-from-markdown-to-27k-edges-akg">ares Architecture Deep Dive (XVIII): Knowledge Graph Build — From Markdown to 27K Edges (AKG)</h1>
+<p>Article X covered <em>retrieval</em> — how to find relevant memories. This article covers <em>construction</em> — how those memories become a knowledge graph in the first place.</p>
+<p>The AKF Knowledge Fabric (<code>internal/knowledge/</code>) is the engine that turns raw provider data into a linked, queryable graph. v0.2.7 shipped it; v0.2.8 exposed it through the public <code>api/knowledge</code> API.</p>
+<hr />
+<h2 id="the-problem-three-providers-no-edges">The Problem: Three Providers, No Edges</h2>
+<p>Three teams were each building their own knowledge store:</p>
+<table><thead><tr><th>Team</th><th>Source</th><th>Storage</th><th>Edges?</th></tr></thead><tbody>
+<tr><td>Memory</td><td>Conversation turns</td><td>PostgreSQL + pgvector</td><td>None</td></tr>
+<tr><td>Evolution</td><td>Strategy decisions</td><td>In-memory</td><td>None</td></tr>
+<tr><td>Code</td><td>Source files</td><td>SQLite</td><td>None</td></tr>
+</tbody></table>
+<p>Each team had nodes. Nobody had edges. When someone asked "which decision led to this code change?", the answer required manually joining three stores.</p>
+<p><strong>Honest reflection</strong>: We tried a unified SQL schema first. It took two weeks, broke three integrations, and still couldn't express "strategy S superseded strategy T because decision D chose approach A." The relational model fights you when the data is fundamentally graph-shaped.</p>
+<hr />
+<h2 id="the-design-plan-load-link-reduce-graph">The Design: Plan → Load → Link → Reduce → Graph</h2>
+<p><code>KnowledgeRuntime</code> orchestrates a five-stage pipeline:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart LR</span></span>
+<span class="giallo-l"><span>    P[Plan] --&gt; L[Load]</span></span>
+<span class="giallo-l"><span>    L --&gt; LI[Link]</span></span>
+<span class="giallo-l"><span>    LI --&gt; R[Reduce]</span></span>
+<span class="giallo-l"><span>    R --&gt; G[Graph]</span></span></code></pre><h3 id="stage-1-plan">Stage 1: Plan</h3>
+<p>The <code>KnowledgePlanner</code> decides <em>what</em> to load. The default planner loads all registered providers:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/knowledge/planner/default.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> DefaultPlanner</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;">{}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DefaultPlanner</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Plan</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> intent</span><span style="color: #F9E2AF;font-style: italic;"> Intent</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Plan</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    sources</span><span style="color: #94E2D5;"> :=</span><span> p</span><span style="color: #9399B2;">.</span><span>discovery</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Discover</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> intent</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">Plan</span><span style="color: #9399B2;">{</span><span>Sources</span><span style="color: #9399B2;">:</span><span> sources</span><span style="color: #9399B2;">},</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>An <code>Intent</code> describes what the runtime wants ("build a graph for this task"). The planner maps intent to sources.</p>
+<h3 id="stage-2-load">Stage 2: Load</h3>
+<p>Providers load raw <code>KnowledgeObject</code>s from their backing store:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/knowledge/provider/interface.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Provider</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Name</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Load</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">knowledge</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeObject</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Five built-in providers:</p>
+<table><thead><tr><th>Provider</th><th>Source</th><th>Object Type</th></tr></thead><tbody>
+<tr><td><code>memory.Provider</code></td><td>Conversation turns</td><td><code>ObjectMemory</code></td></tr>
+<tr><td><code>evolution.Provider</code></td><td>Strategy decisions</td><td><code>ObjectDecision</code></td></tr>
+<tr><td><code>code.Provider</code></td><td>Source files</td><td><code>ObjectCode</code></td></tr>
+<tr><td><code>mysql.Provider</code></td><td>MySQL rows</td><td><code>ObjectDocument</code></td></tr>
+<tr><td><code>postgres.Provider</code></td><td>PostgreSQL rows</td><td><code>ObjectDocument</code></td></tr>
+<tr><td><code>vector.Provider</code></td><td>pgvector embeddings</td><td><code>ObjectMemory</code></td></tr>
+</tbody></table>
+<h3 id="stage-3-link">Stage 3: Link</h3>
+<p>This is where the magic happens. Four <code>Linker</code> plugins generate edges:</p>
+<table><thead><tr><th>Linker</th><th>Edge Type</th><th>Logic</th></tr></thead><tbody>
+<tr><td><code>DecisionLinker</code></td><td><code>decided_by</code>, <code>rationale_for</code></td><td>Keyword scoring on summaries/tags</td></tr>
+<tr><td><code>ArchitectureLinker</code></td><td><code>depends_on</code>, <code>implements</code></td><td>Code entities ↔ architecture decisions</td></tr>
+<tr><td><code>SimilarityLinker</code></td><td><code>similar_to</code></td><td>Token-overlap similarity (default ≥ 0.3)</td></tr>
+<tr><td><code>TimelineLinker</code></td><td><code>supersedes</code>, <code>generated_by</code></td><td>Chronological ordering by <code>CreatedAt</code></td></tr>
+</tbody></table>
+<p>Each Linker is independent and pluggable. Adding a new relation type means implementing <code>runtime.Linker</code> and registering it — no changes to the core pipeline.</p>
+<h3 id="stage-4-reduce">Stage 4: Reduce</h3>
+<p>The <code>Reducer</code> prunes and ranks the graph. Without reduction, a 147-node graph can explode to 50K+ edges (similarity is O(n²)). The reducer applies:</p>
+<ol>
+<li><strong>Edge type limits</strong> — cap <code>similar_to</code> edges per node</li>
+<li><strong>Score thresholds</strong> — drop edges below <code>MinScore</code></li>
+<li><strong>Redundancy removal</strong> — collapse parallel edges of the same type</li>
+</ol>
+<p>The benchmark: <strong>147 nodes, 27K edges, 73ms build time.</strong></p>
+<h3 id="stage-5-graph">Stage 5: Graph</h3>
+<p>The final <code>KnowledgeGraph</code> is stored in a pluggable <code>Store</code>:</p>
+<table><thead><tr><th>Store</th><th>Backend</th><th>Use Case</th></tr></thead><tbody>
+<tr><td><code>memory.Store</code></td><td>In-memory map</td><td>Testing, small graphs</td></tr>
+<tr><td><code>sqlite.Store</code></td><td>SQLite</td><td>Single-node deployment</td></tr>
+<tr><td><code>postgres.Store</code></td><td>PostgreSQL + pgvector</td><td>Production, distributed</td></tr>
+</tbody></table>
+<hr />
+<h2 id="the-lazy-graph">The Lazy Graph</h2>
+<p>Not every query needs the full graph. <code>lazy_graph.go</code> builds subgraphs on demand:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/knowledge/runtime/lazy_graph.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">r </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeRuntime</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> GetSubgraph</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> rootID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> depth</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">knowledge</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeGraph</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>This is what <code>agent.Run</code> calls when <code>WithKnowledge()</code> is enabled — it builds a small subgraph around the current task, not the entire corpus.</p>
+<p><strong>Honest reflection</strong>: The lazy graph was a performance hack that became an architecture. Initially we built the full graph every time. At 500 nodes, build time hit 2 seconds. At 1000, it was 8 seconds. The lazy graph brought it back to ~50ms for typical queries.</p>
+<hr />
+<h2 id="the-public-api">The Public API</h2>
+<p>v0.2.8 exposes the Knowledge Fabric through <code>api/knowledge</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// api/knowledge/knowledge.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> KnowledgeObject</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">       string</span></span>
+<span class="giallo-l"><span>    Type</span><span style="color: #F9E2AF;font-style: italic;">     ObjectType</span></span>
+<span class="giallo-l"><span>    Summary</span><span style="color: #CBA6F7;">  string</span></span>
+<span class="giallo-l"><span>    Tags</span><span style="color: #9399B2;">     []</span><span style="color: #CBA6F7;">string</span></span>
+<span class="giallo-l"><span>    Payload</span><span style="color: #CBA6F7;">  map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span></span>
+<span class="giallo-l"><span>    CreatedAt</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> KnowledgeGraph</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Objects</span><span style="color: #9399B2;">  []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeObject</span></span>
+<span class="giallo-l"><span>    Relations</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">Relation</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>External integrators can now build and query knowledge graphs without importing <code>internal/</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span>graph</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">GetSubgraph</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> taskID</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> _</span><span style="color: #9399B2;">,</span><span> obj</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> graph</span><span style="color: #9399B2;">.</span><span>Objects</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Printf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;%s: %s</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> obj</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #9399B2;">,</span><span> obj</span><span style="color: #9399B2;">.</span><span>Summary</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<hr />
+<h2 id="the-adapter-bridge">The Adapter Bridge</h2>
+<p><code>internal/knowledge/service/adapter.go</code> (v0.2.8, +126 lines) bridges the public <code>api/knowledge</code> API to the internal Knowledge Fabric runtime. It translates:</p>
+<ul>
+<li>Public <code>KnowledgeObject</code> ↔ internal <code>knowledge.KnowledgeObject</code></li>
+<li>Public <code>KnowledgeGraph</code> ↔ internal <code>knowledge.KnowledgeGraph</code></li>
+<li>Public query API ↔ internal <code>retriever.Retriever</code></li>
+</ul>
+<p>This is the pattern: public API in <code>api/</code>, implementation in <code>internal/</code>, adapter in <code>internal/&lt;module&gt;/service/adapter.go</code>.</p>
+<hr />
+<h2 id="lessons">Lessons</h2>
+<p>The AKG Knowledge Fabric is the most complex module in ares. It has six sub-packages, four Linkers, three Stores, six Providers. But the core insight is simple: <strong>knowledge is a graph, not a table.</strong></p>
+<p>When you stop fighting the graph shape and embrace it — Linkers that generate edges, Reducers that prune them, Lazy graphs that build subgraphs on demand — the system gets simpler, not more complex.</p>
+<p><strong>The best knowledge system is the one that knows what shape its data is.</strong> For ares, that shape is a graph.</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/19-storage-layer/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Storage Layer — The Foundation Under Everything</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/17-sdk-layer/">
+                                <span class="button__text">SDK Layer — One Line of Code to Start an Agent</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

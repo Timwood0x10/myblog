@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Promoter — Champion&#x2F;Challenger Promotion and the Five-State State Machine | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="A five-state promotion state machine with 12-parameter criteria and rolling improvement detection.">
+
+    <meta property="og:description" content="A five-state promotion state machine with 12-parameter criteria and rolling improvement detection.">
+    <meta property="og:title" content="Promoter — Champion/Challenger Promotion and the Five-State State Machine | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/24-4-ga-promoter/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="A five-state promotion state machine with 12-parameter criteria and rolling improvement detection.">
+    <meta name="twitter:title" content="Promoter — Champion/Challenger Promotion and the Five-State State Machine | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/24-4-ga-promoter/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/24-4-ga-promoter/">Promoter — Champion&#x2F;Challenger Promotion and the Five-State State Machine</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/genetic-algorithm/">#Genetic Algorithm</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/promotion/">#Promotion</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="promoter-champion-challenger-promotion-system-a-deep-dive-into-the-five-state-state-machine">Promoter Champion/Challenger Promotion System — A Deep Dive into the Five-State State Machine</h1>
+<blockquote>
+<p>This article provides an in-depth analysis of the Promotion System implementation in the ARES evolution system, covering the five-state state machine, 12-parameter promotion criteria, evidence scoring formula, and rolling improvement detection. All code snippets are from the actual source code.</p>
+</blockquote>
+<h2 id="1-system-overview">1. System Overview</h2>
+<p>The Promoter is the core component of the evolution system that manages the "candidate strategy → champion strategy" promotion pipeline. Its design is inspired by the <strong>Champion/Challenger</strong> pattern: the system maintains a known-good "Champion" and multiple "Challengers" attempting to surpass it, determining strategy promotion and demotion through a rigorous evaluation process.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>┌─────────────────────────────────────────────────────┐</span></span>
+<span class="giallo-l"><span>│                  Promoter System Architecture        │</span></span>
+<span class="giallo-l"><span>│                                                       │</span></span>
+<span class="giallo-l"><span>│   ┌──────────┐    ┌──────────┐    ┌──────────┐      │</span></span>
+<span class="giallo-l"><span>│   │          │    │          │    │          │      │</span></span>
+<span class="giallo-l"><span>│   │ Candidate ├───→│  Shadow  ├───→│ Champion │      │</span></span>
+<span class="giallo-l"><span>│   │ (25选5) │    │  (Contend)│    │ (Execute)│      │</span></span>
+<span class="giallo-l"><span>│   │          │    │          │    │          │      │</span></span>
+<span class="giallo-l"><span>│   └──────────┘    └──────────┘    └──────────┘      │</span></span>
+<span class="giallo-l"><span>│        │                             │               │</span></span>
+<span class="giallo-l"><span>│        ▼                             ▼               │</span></span>
+<span class="giallo-l"><span>│   ┌──────────┐                  ┌──────────┐        │</span></span>
+<span class="giallo-l"><span>│   │  Demoted │                  │  Retired │        │</span></span>
+<span class="giallo-l"><span>│   │ (Cooling)│                  │ (Records)│        │</span></span>
+<span class="giallo-l"><span>│   └──────────┘                  └──────────┘        │</span></span>
+<span class="giallo-l"><span>└─────────────────────────────────────────────────────┘</span></span></code></pre>
+<p>Source path: <code>internal/ares_evolution/promotion/</code></p>
+<h2 id="2-five-state-state-machine">2. Five-State State Machine</h2>
+<h3 id="2-1-state-definitions">2.1 State Definitions</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: internal/ares_evolution/promotion/types.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> StrategyState</span><span style="color: #CBA6F7;"> int</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Candidate state: strategy just created, needs to collect samples</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    StrategyCandidate</span><span style="color: #F9E2AF;font-style: italic;"> StrategyState</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> iota</span><span style="color: #9399B2;font-style: italic;">  // 0</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Shadow state: intermediate state competing with the champion</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    StrategyShadow</span><span style="color: #9399B2;font-style: italic;">                           // 1</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Champion state: current best strategy</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    StrategyChampion</span><span style="color: #9399B2;font-style: italic;">                         // 2</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Demoted state: was champion but has been surpassed</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    StrategyDemoted</span><span style="color: #9399B2;font-style: italic;">                          // 3</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Retired state: permanently withdrawn from competition</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    StrategyRetired</span><span style="color: #9399B2;font-style: italic;">                          // 4</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p>Complete lifecycle of the five states:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>StrategyCandidate (0)</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    │ Collect ≥10 samples + SuccessRate ≥ 50%</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>StrategyShadow (1)</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    │ MeetsPromotionCriteria() + MinAbsoluteImprovement ≥ 0.5</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>StrategyChampion (2)</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ├── Rolling improvement stays positive → Remain champion</span></span>
+<span class="giallo-l"><span>    ├── Rolling improvement turns negative + exceeds ChampionHoldPeriod → StrategyDemoted (3)</span></span>
+<span class="giallo-l"><span>    └── MaxChampionTenure = 20 generations → Forced demotion to StrategyShadow (1)</span></span>
+<span class="giallo-l"><span>                                        │</span></span>
+<span class="giallo-l"><span>                                        ▼</span></span>
+<span class="giallo-l"><span>                                  StrategyDemoted (3)</span></span>
+<span class="giallo-l"><span>                                        │</span></span>
+<span class="giallo-l"><span>                                        │ Cooldown ChampionHoldPeriod×2 generations</span></span>
+<span class="giallo-l"><span>                                        ▼</span></span>
+<span class="giallo-l"><span>                                  StrategyRetired (4)</span></span></code></pre><h3 id="2-2-state-transition-validation-explicit-directed-graph">2.2 State Transition Validation: Explicit Directed Graph</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: internal/ares_evolution/promotion/types.go</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// CanPromoteTo and CanDemoteTo use explicit transition mapping tables</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// This design is safer and more maintainable than implicit if-else chains</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Promotion transition mapping (key = current state)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> promotionTransitions</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">StrategyState</span><span style="color: #9399B2;">][]</span><span style="color: #F9E2AF;font-style: italic;">StrategyState</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>    StrategyCandidate</span><span style="color: #9399B2;">: {</span><span>StrategyShadow</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    StrategyShadow</span><span style="color: #9399B2;">:    {</span><span>StrategyChampion</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Demotion transition mapping (key = current state)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> demotionTransitions</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">StrategyState</span><span style="color: #9399B2;">][]</span><span style="color: #F9E2AF;font-style: italic;">StrategyState</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>    StrategyChampion</span><span style="color: #9399B2;">: {</span><span>StrategyDemoted</span><span style="color: #9399B2;">,</span><span> StrategyShadow</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span>    StrategyDemoted</span><span style="color: #9399B2;">:  {</span><span>StrategyRetired</span><span style="color: #9399B2;">},</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Design highlights:</p>
+<ul>
+<li>The transition mapping is a <strong>Directed Acyclic Graph</strong> (DAG) with no circular dependencies</li>
+<li>Each state has a limited set of transition targets (at most 2)</li>
+<li><code>StrategyShadow → StrategyChampion</code> is the most critical transition in the system</li>
+</ul>
+<h2 id="3-promotioncriteria-the-12-parameter-promotion-standard">3. PromotionCriteria: The 12-Parameter Promotion Standard</h2>
+<h3 id="3-1-data-structure">3.1 Data Structure</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> PromotionCriteria</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    MinSampleCount</span><span style="color: #CBA6F7;">         int</span><span style="color: #9399B2;font-style: italic;">     // Minimum sample count: 100</span></span>
+<span class="giallo-l"><span>    MinSuccessRate</span><span style="color: #CBA6F7;">         float64</span><span style="color: #9399B2;font-style: italic;"> // Minimum success rate: 0.85 (85%)</span></span>
+<span class="giallo-l"><span>    MaxErrorRate</span><span style="color: #CBA6F7;">           float64</span><span style="color: #9399B2;font-style: italic;"> // Maximum error rate: 0.15 (15%)</span></span>
+<span class="giallo-l"><span>    MaxLatencyP95</span><span style="color: #CBA6F7;">          int64</span><span style="color: #9399B2;font-style: italic;">   // Maximum P95 latency: 5000ms</span></span>
+<span class="giallo-l"><span>    MinConfidence</span><span style="color: #CBA6F7;">          float64</span><span style="color: #9399B2;font-style: italic;"> // Minimum confidence: 0.7</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    ChampionHoldPeriod</span><span style="color: #CBA6F7;">     int</span><span style="color: #9399B2;font-style: italic;">     // Champion hold period: 5 generations</span></span>
+<span class="giallo-l"><span>    DemotionThreshold</span><span style="color: #CBA6F7;">      float64</span><span style="color: #9399B2;font-style: italic;"> // Demotion threshold: 0.3</span></span>
+<span class="giallo-l"><span>    CoolDownGenerations</span><span style="color: #CBA6F7;">    int</span><span style="color: #9399B2;font-style: italic;">     // Cooldown generations: 3 generations</span></span>
+<span class="giallo-l"><span>    MinAbsoluteImprovement</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;font-style: italic;"> // Minimum absolute improvement: 0.5</span></span>
+<span class="giallo-l"><span>    MinRollingImprovement</span><span style="color: #CBA6F7;">  float64</span><span style="color: #9399B2;font-style: italic;"> // Minimum rolling improvement: 0.1</span></span>
+<span class="giallo-l"><span>    ImprovementWindow</span><span style="color: #CBA6F7;">      int</span><span style="color: #9399B2;font-style: italic;">     // Improvement window: 3 generations</span></span>
+<span class="giallo-l"><span>    MaxChampionTenure</span><span style="color: #CBA6F7;">      int</span><span style="color: #9399B2;font-style: italic;">     // Maximum champion tenure: 20 generations</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="3-2-default-values">3.2 Default Values</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> DefaultPromotionCriteria</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> PromotionCriteria</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F9E2AF;font-style: italic;"> PromotionCriteria</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        MinSampleCount</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">         100</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        MinSuccessRate</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">         0.85</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        MaxErrorRate</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">           0.15</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        MaxLatencyP95</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">          5000</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        MinConfidence</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">          0.7</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        ChampionHoldPeriod</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">     5</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        DemotionThreshold</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">      0.3</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        CoolDownGenerations</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">    3</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        MinAbsoluteImprovement</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;"> 0.5</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        MinRollingImprovement</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">  0.1</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        ImprovementWindow</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">      3</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        MaxChampionTenure</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">      20</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="3-3-promotion-condition-check">3.3 Promotion Condition Check</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// MeetsPromotionCriteria checks whether the strategy meets the promotion conditions</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Checks 5 thresholds simultaneously; all must pass for promotion to be allowed</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> MeetsPromotionCriteria</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">info</span><span style="color: #F9E2AF;font-style: italic;"> StrategyInfo</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> criteria</span><span style="color: #F9E2AF;font-style: italic;"> PromotionCriteria</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 1. Sufficient samples</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>SampleCount</span><span style="color: #94E2D5;"> &lt;</span><span> criteria</span><span style="color: #9399B2;">.</span><span>MinSampleCount</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 2. Success rate ≥ 85%</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>SuccessRate</span><span style="color: #94E2D5;"> &lt;</span><span> criteria</span><span style="color: #9399B2;">.</span><span>MinSuccessRate</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 3. Error rate ≤ 15%</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>ErrorRate</span><span style="color: #94E2D5;"> &gt;</span><span> criteria</span><span style="color: #9399B2;">.</span><span>MaxErrorRate</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 4. P95 latency ≤ 5000ms</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>LatencyP95</span><span style="color: #94E2D5;"> &gt;</span><span> criteria</span><span style="color: #9399B2;">.</span><span>MaxLatencyP95</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 5. Confidence ≥ 0.7</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>Confidence</span><span style="color: #94E2D5;"> &lt;</span><span> criteria</span><span style="color: #9399B2;">.</span><span>MinConfidence</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="4-evidencescore-weighted-evidence-scoring">4. EvidenceScore: Weighted Evidence Scoring</h2>
+<h3 id="4-1-scoring-formula">4.1 Scoring Formula</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// CalculateEvidenceScore calculates the evidence-weighted score for a strategy</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Weight allocation:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//   - Success rate: 40%</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//   - Low error rate: 30%</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//   - Confidence: 20%</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//   - Low latency: 10%</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> CalculateEvidenceScore</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">info</span><span style="color: #F9E2AF;font-style: italic;"> StrategyInfo</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    normalizedLatency</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 1.0</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>LatencyP95</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        normalizedLatency</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 1.0</span><span style="color: #94E2D5;"> -</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;">(</span><span>info</span><span style="color: #9399B2;">.</span><span>LatencyP95</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">/</span><span style="color: #FAB387;">10000.0</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> normalizedLatency</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            normalizedLatency</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> info</span><span style="color: #9399B2;">.</span><span>SuccessRate</span><span style="color: #94E2D5;">*</span><span style="color: #FAB387;">0.4</span><span style="color: #94E2D5;"> +</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        (</span><span style="color: #FAB387;">1</span><span style="color: #94E2D5;">-</span><span>info</span><span style="color: #9399B2;">.</span><span>ErrorRate</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">*</span><span style="color: #FAB387;">0.3</span><span style="color: #94E2D5;"> +</span></span>
+<span class="giallo-l"><span>        info</span><span style="color: #9399B2;">.</span><span>Confidence</span><span style="color: #94E2D5;">*</span><span style="color: #FAB387;">0.2</span><span style="color: #94E2D5;"> +</span></span>
+<span class="giallo-l"><span>        normalizedLatency</span><span style="color: #94E2D5;">*</span><span style="color: #FAB387;">0.1</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Rationale behind the weight design</strong>:</p>
+<ul>
+<li><strong>Success Rate (0.4)</strong>: Highest weight, because the core value of a strategy is its task completion success rate</li>
+<li><strong>Low Error Rate (0.3)</strong>: Second highest weight; high success rate accompanied by high error rate is undesirable</li>
+<li><strong>Confidence (0.2)</strong>: Medium weight; larger sample sizes yield higher confidence</li>
+<li><strong>Low Latency (0.1)</strong>: Lowest weight; although latency is an important metric, some latency can be sacrificed for higher success rate</li>
+</ul>
+<h2 id="5-promoter-core-evaluation-flow">5. Promoter Core Evaluation Flow</h2>
+<h3 id="5-1-defaultpromoter-structure">5.1 DefaultPromoter Structure</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> DefaultPromoter</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;"> sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span><span style="color: #9399B2;font-style: italic;">  // Protects all internal state</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    criteria</span><span style="color: #F9E2AF;font-style: italic;">    PromotionCriteria</span><span style="color: #9399B2;font-style: italic;">  // Promotion criteria</span></span>
+<span class="giallo-l"><span>    strategies</span><span style="color: #CBA6F7;">  map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">StrategyInfo</span><span style="color: #9399B2;font-style: italic;">  // strategyID → strategy info</span></span>
+<span class="giallo-l"><span>    champions</span><span style="color: #9399B2;">   []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;">  // Current champion list</span></span>
+<span class="giallo-l"><span>    candidatePool</span><span style="color: #9399B2;"> []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;">  // Candidate pool</span></span>
+<span class="giallo-l"><span>    shadowPool</span><span style="color: #9399B2;">    []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;">  // Shadow pool</span></span>
+<span class="giallo-l"><span>    generation</span><span style="color: #CBA6F7;">    int</span><span style="color: #9399B2;font-style: italic;">  // Current generation</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="5-2-evaluate-main-dispatcher">5.2 Evaluate() Main Dispatcher</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DefaultPromoter</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Evaluate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> name</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> info</span><span style="color: #F9E2AF;font-style: italic;"> StrategyInfo</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">Action</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    p</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> p</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Dispatch to different evaluation functions based on current state</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Each state has different promotion/demotion logic</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> info</span><span style="color: #9399B2;">.</span><span>CurrentState</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> StrategyCandidate</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> p</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">evaluateCandidate</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">,</span><span> info</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> StrategyShadow</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> p</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">evaluateShadow</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">,</span><span> info</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> StrategyChampion</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> p</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">evaluateChampion</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">,</span><span> info</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> StrategyDemoted</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> p</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">evaluateDemoted</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #9399B2;">,</span><span> info</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> StrategyRetired</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Retired state is no longer processed</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> ActionNoop</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    default</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> ActionNoop</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="5-3-candidate-shadow-promotion">5.3 Candidate → Shadow Promotion</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Candidate → Shadow: only requires meeting minimum sample requirements</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// The bar is low, intended to allow enough candidate strategies into the competition pool</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DefaultPromoter</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> evaluateCandidate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> info</span><span style="color: #F9E2AF;font-style: italic;"> StrategyInfo</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">Action</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>SampleCount</span><span style="color: #94E2D5;"> &gt;=</span><span style="color: #FAB387;"> 10</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> info</span><span style="color: #9399B2;">.</span><span>SuccessRate</span><span style="color: #94E2D5;"> &gt;=</span><span style="color: #FAB387;"> 0.5</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // Conditions met, promote to shadow state</span></span>
+<span class="giallo-l"><span>        action</span><span style="color: #94E2D5;"> :=</span><span style="color: #F9E2AF;font-style: italic;"> Action</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>            Name</span><span style="color: #9399B2;">:</span><span>       name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            FromState</span><span style="color: #9399B2;">:</span><span>  StrategyCandidate</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            ToState</span><span style="color: #9399B2;">:</span><span>    StrategyShadow</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            ActionType</span><span style="color: #9399B2;">:</span><span> ActionPromote</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            Reason</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;">     &quot;candidate has sufficient samples and success rate&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> action</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> ActionNoop</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The Candidate → Shadow threshold (10 samples + 50% success rate) is deliberately set low to:</p>
+<ul>
+<li>Allow more strategies into the shadow pool to compete</li>
+<li>Avoid prematurely淘汰ing potentially promising strategies</li>
+<li>Collect more data before applying stricter selection</li>
+</ul>
+<h3 id="5-4-shadow-champion-promotion">5.4 Shadow → Champion Promotion</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Shadow → Champion: the most stringent promotion path</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Must simultaneously satisfy:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//   1. MeetsPromotionCriteria (5 threshold checks)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//   2. MinAbsoluteImprovement ≥ 0.5 (relative to current champion)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">//   3. Rolling improvement check already performed</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DefaultPromoter</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> evaluateShadow</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> info</span><span style="color: #F9E2AF;font-style: italic;"> StrategyInfo</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">Action</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span style="color: #89B4FA;font-style: italic;">MeetsPromotionCriteria</span><span style="color: #9399B2;">(</span><span>info</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #9399B2;">.</span><span>criteria</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> ActionNoop</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Check absolute improvement</span></span>
+<span class="giallo-l"><span>    improvement</span><span style="color: #94E2D5;"> :=</span><span> info</span><span style="color: #9399B2;">.</span><span>EvidenceScore</span><span style="color: #94E2D5;"> -</span><span> info</span><span style="color: #9399B2;">.</span><span>BaselineScore</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> improvement</span><span style="color: #94E2D5;"> &lt;</span><span> p</span><span style="color: #9399B2;">.</span><span>criteria</span><span style="color: #9399B2;">.</span><span>MinAbsoluteImprovement</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> ActionNoop</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Promote to champion</span></span>
+<span class="giallo-l"><span>    action</span><span style="color: #94E2D5;"> :=</span><span style="color: #F9E2AF;font-style: italic;"> Action</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        Name</span><span style="color: #9399B2;">:</span><span>       name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        FromState</span><span style="color: #9399B2;">:</span><span>  StrategyShadow</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        ToState</span><span style="color: #9399B2;">:</span><span>    StrategyChampion</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        ActionType</span><span style="color: #9399B2;">:</span><span> ActionPromote</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        Reason</span><span style="color: #9399B2;">:</span><span>     fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;promotion criteria met, improvement=%.2f&quot;</span><span style="color: #9399B2;">,</span><span> improvement</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> action</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="5-5-champion-evaluation-three-exit-paths">5.5 Champion Evaluation: Three Exit Paths</h3>
+<p>A champion strategy has three possible fates:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DefaultPromoter</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> evaluateChampion</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> info</span><span style="color: #F9E2AF;font-style: italic;"> StrategyInfo</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">Action</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Evaluation 1: Check if tenure exceeds MaxChampionTenure</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // If so, force demotion to shadow (give other strategies a chance)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>GenerationCount</span><span style="color: #94E2D5;"> &gt;</span><span> p</span><span style="color: #9399B2;">.</span><span>criteria</span><span style="color: #9399B2;">.</span><span>MaxChampionTenure</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F9E2AF;font-style: italic;"> Action</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>            Name</span><span style="color: #9399B2;">:</span><span>       name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            FromState</span><span style="color: #9399B2;">:</span><span>  StrategyChampion</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            ToState</span><span style="color: #9399B2;">:</span><span>    StrategyShadow</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            ActionType</span><span style="color: #9399B2;">:</span><span> ActionDemote</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            Reason</span><span style="color: #9399B2;">:</span><span>     fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;max tenure (%d) exceeded&quot;</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #9399B2;">.</span><span>criteria</span><span style="color: #9399B2;">.</span><span>MaxChampionTenure</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        },</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Evaluation 2: Check if hold period is sufficient</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>GenerationCount</span><span style="color: #94E2D5;"> &lt;</span><span> p</span><span style="color: #9399B2;">.</span><span>criteria</span><span style="color: #9399B2;">.</span><span>ChampionHoldPeriod</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> ActionNoop</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Evaluation 3: Check rolling improvement</span></span>
+<span class="giallo-l"><span>    rollingImprovement</span><span style="color: #94E2D5;"> :=</span><span> p</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">calculateRollingImprovement</span><span style="color: #9399B2;">(</span><span>info</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> rollingImprovement</span><span style="color: #94E2D5;"> &lt;</span><span> p</span><span style="color: #9399B2;">.</span><span>criteria</span><span style="color: #9399B2;">.</span><span>DemotionThreshold</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F9E2AF;font-style: italic;"> Action</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>            Name</span><span style="color: #9399B2;">:</span><span>       name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            FromState</span><span style="color: #9399B2;">:</span><span>  StrategyChampion</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            ToState</span><span style="color: #9399B2;">:</span><span>    StrategyDemoted</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            ActionType</span><span style="color: #9399B2;">:</span><span> ActionDemote</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            Reason</span><span style="color: #9399B2;">:</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sprintf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;rolling improvement (%.2f) below threshold (%.2f)&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>                rollingImprovement</span><span style="color: #9399B2;">,</span><span> p</span><span style="color: #9399B2;">.</span><span>criteria</span><span style="color: #9399B2;">.</span><span>DemotionThreshold</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        },</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> ActionNoop</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Design rationale behind the three exit paths</strong>:</p>
+<ol>
+<li><strong>Tenure Exit</strong> (MaxChampionTenure=20): Prevents "safe but stagnant" strategies from permanently occupying the champion position. Even if performance is acceptable after 20 generations, demotion gives new strategies a chance</li>
+<li><strong>Hold Period Lock</strong> (ChampionHoldPeriod=5): A new champion has a 5-generation protection period and will not be immediately demoted, giving it sufficient time to prove itself</li>
+<li><strong>Insufficient Improvement Exit</strong> (DemotionThreshold=0.3): After the hold period ends, if rolling improvement falls below 0.3, the champion is demoted</li>
+</ol>
+<h3 id="5-6-demoted-retired-cooldown-period">5.6 Demoted → Retired Cooldown Period</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DefaultPromoter</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> evaluateDemoted</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> info</span><span style="color: #F9E2AF;font-style: italic;"> StrategyInfo</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">Action</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Cooldown period is ChampionHoldPeriod × 2 = 10 generations</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>GenerationCount</span><span style="color: #94E2D5;"> &gt;</span><span> p</span><span style="color: #9399B2;">.</span><span>criteria</span><span style="color: #9399B2;">.</span><span>ChampionHoldPeriod</span><span style="color: #94E2D5;">*</span><span style="color: #FAB387;">2</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F9E2AF;font-style: italic;"> Action</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>            Name</span><span style="color: #9399B2;">:</span><span>       name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            FromState</span><span style="color: #9399B2;">:</span><span>  StrategyDemoted</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            ToState</span><span style="color: #9399B2;">:</span><span>    StrategyRetired</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            ActionType</span><span style="color: #9399B2;">:</span><span> ActionDemote</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>            Reason</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;">     &quot;demoted period expired, transitioning to retired&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        },</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> ActionNoop</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="6-rolling-improvement-detection">6. Rolling Improvement Detection</h2>
+<p>The Promoter uses a sliding window to calculate improvement trends, which is a key indicator for determining whether a champion should step down.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// calculateRollingImprovement calculates the average score delta within the sliding window</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// ImprovementWindow = 3 (default)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Takes the average of score changes over the last 3 generations</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DefaultPromoter</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> calculateRollingImprovement</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">info</span><span style="color: #F9E2AF;font-style: italic;"> StrategyInfo</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    history</span><span style="color: #94E2D5;"> :=</span><span> info</span><span style="color: #9399B2;">.</span><span>ScoreHistory</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>history</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> 1.0</span><span style="color: #9399B2;font-style: italic;"> // Assume positive improvement when insufficient data</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    window</span><span style="color: #94E2D5;"> :=</span><span> p</span><span style="color: #9399B2;">.</span><span>criteria</span><span style="color: #9399B2;">.</span><span>ImprovementWindow</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> window</span><span style="color: #94E2D5;"> &lt;=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        window</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 3</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    start</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>history</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -</span><span> window</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> start</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        start</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> totalDelta</span><span style="color: #CBA6F7;"> float64</span></span>
+<span class="giallo-l"><span>    count</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> i</span><span style="color: #94E2D5;"> :=</span><span> start</span><span style="color: #9399B2;">;</span><span> i</span><span style="color: #94E2D5;"> &lt;</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>history</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">-</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">;</span><span> i</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        delta</span><span style="color: #94E2D5;"> :=</span><span> history</span><span style="color: #9399B2;">[</span><span>i</span><span style="color: #94E2D5;">+</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> -</span><span> history</span><span style="color: #9399B2;">[</span><span>i</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span>        totalDelta</span><span style="color: #94E2D5;"> +=</span><span> delta</span></span>
+<span class="giallo-l"><span>        count</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> count</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> 1.0</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> totalDelta</span><span style="color: #94E2D5;"> /</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;">(</span><span>count</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Difference between Rolling Improvement and Absolute Improvement</strong>:</p>
+<ul>
+<li><strong>Absolute Improvement</strong>: The difference between the current score and the baseline score, used for Shadow→Champion promotion</li>
+<li><strong>Rolling Improvement</strong>: The sliding average of score changes over the most recent N generations, used for champion state retention judgment</li>
+</ul>
+<h2 id="7-cooldown-period-and-transition-protection">7. Cooldown Period and Transition Protection</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// canTransition checks whether a strategy can transition states</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// New strategies (GenerationCount=0) can transition immediately</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Strategies with history must satisfy the cooldown generation requirement</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">DefaultPromoter</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> canTransition</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">info</span><span style="color: #F9E2AF;font-style: italic;"> StrategyInfo</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> info</span><span style="color: #9399B2;">.</span><span>GenerationCount</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> true</span><span style="color: #9399B2;font-style: italic;"> // New strategy takes effect immediately</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> info</span><span style="color: #9399B2;">.</span><span>GenerationCount</span><span style="color: #94E2D5;"> &gt;=</span><span> p</span><span style="color: #9399B2;">.</span><span>criteria</span><span style="color: #9399B2;">.</span><span>CoolDownGenerations</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>CoolDownGenerations=3</strong>: After a state transition, the strategy must remain in the current state for at least 3 generations to prevent frequent oscillation.</p>
+<h2 id="8-key-parameter-tuning-guide">8. Key Parameter Tuning Guide</h2>
+<table><thead><tr><th>Parameter</th><th>Default</th><th>Increase</th><th>Decrease</th></tr></thead><tbody>
+<tr><td>MinSampleCount</td><td>100</td><td>More conservative, fewer false promotions</td><td>Faster promotion, but more noise</td></tr>
+<tr><td>MinSuccessRate</td><td>0.85</td><td>Higher quality, but fewer promotions</td><td>More strategies can be promoted</td></tr>
+<tr><td>MaxErrorRate</td><td>0.15</td><td>Tolerates more errors</td><td>Requires higher precision</td></tr>
+<tr><td>MaxLatencyP95</td><td>5000ms</td><td>Tolerates slower strategies</td><td>Requires faster responses</td></tr>
+<tr><td>ChampionHoldPeriod</td><td>5</td><td>Champion is more stable</td><td>Faster champion turnover</td></tr>
+<tr><td>DemotionThreshold</td><td>0.3</td><td>Champion is more easily demoted</td><td>Champion is more stable</td></tr>
+<tr><td>MinAbsoluteImprovement</td><td>0.5</td><td>Requires larger improvement</td><td>Allows smaller promotions</td></tr>
+<tr><td>MaxChampionTenure</td><td>20</td><td>Champion can reign longer</td><td>Faster champion turnover</td></tr>
+</tbody></table>
+<h2 id="9-summary">9. Summary</h2>
+<p>The Promoter's five-state state machine serves as the <strong>quality control layer</strong> of the evolution system, ensuring that only fully validated strategies can become champions:</p>
+<ol>
+<li><strong>Candidate→Shadow</strong> has a low threshold (10 samples / 50% success rate) to ensure pool liquidity</li>
+<li><strong>Shadow→Champion</strong> has strict standards (5 thresholds + 0.5 absolute improvement) to ensure champion quality</li>
+<li><strong>Champion</strong> rolling improvement detection prevents strategy stagnation (DemotionThreshold=0.3)</li>
+<li><strong>MaxChampionTenure=20</strong> acts as a safety valve, preventing permanent champion lock-in</li>
+<li><strong>Cooldown Period (CoolDownGenerations=3)</strong> prevents state oscillation</li>
+</ol>
+<p>This system ensures the principle of "<strong>survival of the fittest, but never let the victor reign forever</strong>" in the evolution process — giving excellent strategies enough time to shine (hold period of 5 generations) while preventing them from hindering innovation due to historical advantage (maximum tenure of 20 generations).</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/24-5-ga-genealogy/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Genealogy — Recording and Tracing the Evolutionary Family Tree</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/24-3-ga-selection-benchmark/">
+                                <span class="button__text">Selection Operator Benchmark — Truncation vs Tournament vs Roulette</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

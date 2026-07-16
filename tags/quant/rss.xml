@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+    <channel>
+      <title>Timwood0x10 - Quant</title>
+      <link>https://Timwood0x10.github.io/myblog</link>
+      <description>Tim Wood — memory safety, static analysis, and AI infrastructure.</description>
+      <generator>Zola</generator>
+      <language>en</language>
+      <atom:link href="https://Timwood0x10.github.io/myblog/tags/quant/rss.xml" rel="self" type="application/rss+xml"/>
+      <lastBuildDate>Sun, 28 Jun 2026 00:00:00 +0000</lastBuildDate>
+      <item>
+          <title>Quant Trading Module — The Experiment We Keep Honest About</title>
+          <pubDate>Sun, 28 Jun 2026 00:00:00 +0000</pubDate>
+          <author>Unknown</author>
+          <link>https://Timwood0x10.github.io/myblog/log/ARES/23-quant-trading/</link>
+          <guid>https://Timwood0x10.github.io/myblog/log/ARES/23-quant-trading/</guid>
+          <description xml:base="https://Timwood0x10.github.io/myblog/log/ARES/23-quant-trading/">&lt;h1 id=&quot;ares-architecture-deep-dive-xxiii-quant-trading-module-the-experiment-we-keep-honest-about&quot;&gt;ares Architecture Deep Dive (XXIII): Quant Trading Module — The Experiment We Keep Honest About&lt;&#x2F;h1&gt;
+&lt;p&gt;Every project has that one module. The one that started as &quot;just a quick experiment&quot; and grew into 9,768 lines of code. For ares, that module is &lt;code&gt;internal&#x2F;ares_quant&#x2F;&lt;&#x2F;code&gt; — the quantitative trading system.&lt;&#x2F;p&gt;
+&lt;p&gt;This article is different from the others. It&#x27;s not &quot;look at this great architecture.&quot; It&#x27;s &quot;here&#x27;s what we built, why we built it, and why it probably shouldn&#x27;t be here.&quot;&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;the-origin-story&quot;&gt;The Origin Story&lt;&#x2F;h2&gt;
+&lt;p&gt;The quant module started in v0.2.4 as a side experiment: &quot;Can we use the agent framework to do quantitative trading research?&quot; The answer was yes — and that&#x27;s the problem.&lt;&#x2F;p&gt;
+&lt;p&gt;Three sub-systems grew in parallel:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Sub-system&lt;&#x2F;th&gt;&lt;th&gt;Purpose&lt;&#x2F;th&gt;&lt;th&gt;Size&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;market&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Data sources (Yahoo, CoinGecko, Polymarket)&lt;&#x2F;td&gt;&lt;td&gt;582 lines&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;marketmaking&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Quote engine, inventory, chaos testing&lt;&#x2F;td&gt;&lt;td&gt;1,328 lines&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;portfolio&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Position tracking, risk metrics&lt;&#x2F;td&gt;&lt;td&gt;1,242 lines&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;research&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Backtesting, evaluation, research agents&lt;&#x2F;td&gt;&lt;td&gt;3,562 lines&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;indicators&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Technical indicators (RSI, MACD, etc.)&lt;&#x2F;td&gt;&lt;td&gt;171 lines&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;dataflow&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Event streaming, pipeline orchestration&lt;&#x2F;td&gt;&lt;td&gt;585 lines&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;store&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;Persistence&lt;&#x2F;td&gt;&lt;td&gt;382 lines&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;marketmaking_api&#x2F;&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;HTTP API for market making&lt;&#x2F;td&gt;&lt;td&gt;1,569 lines&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;Total: &lt;strong&gt;9,768 lines&lt;&#x2F;strong&gt;, or about 11% of the entire ares codebase.&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;what-it-does&quot;&gt;What It Does&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;market-data-market&quot;&gt;Market Data (&lt;code&gt;market&#x2F;&lt;&#x2F;code&gt;)&lt;&#x2F;h3&gt;
+&lt;p&gt;Three data source adapters:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_quant&#x2F;market&#x2F;yahoo.go&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; YahooSource&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    client&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; *&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;http&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Client&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;y &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;YahooSource&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; Fetch&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt; symbol&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt; range_&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;) (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;MarketData&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; error&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Yahoo Finance&lt;&#x2F;strong&gt; — historical OHLCV data&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;CoinGecko&lt;&#x2F;strong&gt; — cryptocurrency prices&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;Polymarket&lt;&#x2F;strong&gt; — prediction market odds&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;Each implements a common &lt;code&gt;DataSource&lt;&#x2F;code&gt; interface.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;market-making-marketmaking&quot;&gt;Market Making (&lt;code&gt;marketmaking&#x2F;&lt;&#x2F;code&gt;)&lt;&#x2F;h3&gt;
+&lt;p&gt;A complete market making engine:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_quant&#x2F;marketmaking&#x2F;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; QuoteEngine&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    config&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;      QuoteEngineConfig&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    inventory&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;   *&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Inventory&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    riskLimit&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;   float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;    &#x2F;&#x2F; ...&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Inventory&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    cash&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;        float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    position&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;    &#x2F;&#x2F; ...&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The engine:&lt;&#x2F;p&gt;
+&lt;ol&gt;
+&lt;li&gt;Receives &lt;code&gt;MarketDataEvent&lt;&#x2F;code&gt;s&lt;&#x2F;li&gt;
+&lt;li&gt;Computes bid&#x2F;ask quotes based on inventory and risk&lt;&#x2F;li&gt;
+&lt;li&gt;Adjusts spread based on volatility&lt;&#x2F;li&gt;
+&lt;li&gt;Includes a &lt;code&gt;ChaosExecutor&lt;&#x2F;code&gt; for fault injection testing&lt;&#x2F;li&gt;
+&lt;&#x2F;ol&gt;
+&lt;p&gt;&lt;strong&gt;Honest reflection&lt;&#x2F;strong&gt;: The market making engine is genuinely useful — it tests the agent framework under high-frequency, stateful conditions. But it&#x27;s also 1,328 lines of domain-specific code that 99% of ares users will never touch.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;portfolio-portfolio&quot;&gt;Portfolio (&lt;code&gt;portfolio&#x2F;&lt;&#x2F;code&gt;)&lt;&#x2F;h3&gt;
+&lt;p&gt;Position tracking and risk metrics:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_quant&#x2F;portfolio&#x2F;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Portfolio&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    positions&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; map&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;[&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;]&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Position&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    cash&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;      float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;p &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Portfolio&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; SharpeRatio&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;()&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;p &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Portfolio&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; MaxDrawdown&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;()&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;p &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Portfolio&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; VaR&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;confidence&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; float64&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Standard quant finance metrics. The implementation is correct but unremarkable.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;research-research&quot;&gt;Research (&lt;code&gt;research&#x2F;&lt;&#x2F;code&gt;)&lt;&#x2F;h3&gt;
+&lt;p&gt;The largest sub-package (3,562 lines):&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;research&#x2F;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;├── agents&#x2F;           # Research agents (base, interface, mock)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;├── evaluation.go     # Evaluator for historical decisions&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;├── backtest.go       # Backtesting framework&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;└── ...&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Research agents use the ares LLM client to analyze market data and produce trading recommendations. The &lt;code&gt;Evaluator&lt;&#x2F;code&gt; scores these recommendations against historical outcomes.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;Honest reflection&lt;&#x2F;strong&gt;: The research module is where &quot;experiment&quot; most clearly shows. The agents are powerful but the evaluation is basic — we compare predicted ratings against future returns, but we don&#x27;t account for market regimes, transaction costs, or selection bias. This is prototype-quality research tooling.&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;the-mcp-integration&quot;&gt;The MCP Integration&lt;&#x2F;h2&gt;
+&lt;p&gt;The quant module exposes its tools via MCP (Model Context Protocol):&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_quant&#x2F;tools.go&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; Data sources (Yahoo Finance, Polymarket) and computations (technical indicators)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; are wrapped as MCP Tool instances registered in the global tool Registry.&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This means an ares agent can call quant tools the same way it calls any other tool:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;req&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; dashboard&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;AgentRequest&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;{&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    MCPTool&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; &amp;quot;financial_data&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    MCPArgs&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; map&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;[&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;]&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;any&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;{&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;ticker&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; &amp;quot;AAPL&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;},&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The agent doesn&#x27;t know it&#x27;s calling a quant tool — it just sees an MCP tool with a schema and a handler.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;Honest reflection&lt;&#x2F;strong&gt;: The MCP integration is the one part of the quant module that&#x27;s genuinely well-architected. By exposing quant tools through MCP, we get:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;Schema validation for free&lt;&#x2F;li&gt;
+&lt;li&gt;Tool discovery for free&lt;&#x2F;li&gt;
+&lt;li&gt;Composability with non-quant tools for free&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;If we ever extract the quant module into a separate repo, the MCP interface is the clean boundary.&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;the-honest-assessment&quot;&gt;The Honest Assessment&lt;&#x2F;h2&gt;
+&lt;p&gt;In &lt;code&gt;01-architecture-overview-deep-dive.md&lt;&#x2F;code&gt;, I wrote:&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;坦诚反思&lt;&#x2F;strong&gt;：代码库比需要的大。量化交易模块、面试 demo、MCP dashboard——这些是实验，应该放在独立仓库。核心（Runtime + Workflow + Memory + Events）是扎实的。外围还在找自己的形状。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;This is still true in v0.2.8. The quant module is:&lt;&#x2F;p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Useful for testing&lt;&#x2F;strong&gt; — high-frequency, stateful, error-prone operations stress the agent framework&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;Useful for demos&lt;&#x2F;strong&gt; — &quot;watch an agent trade&quot; is compelling&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;Not useful for most users&lt;&#x2F;strong&gt; — 99% of ares users don&#x27;t need a market making engine&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;A maintenance burden&lt;&#x2F;strong&gt; — 9,768 lines that need to be kept up to date with Go versions, dependencies, and ares API changes&lt;&#x2F;li&gt;
+&lt;&#x2F;ol&gt;
+&lt;h3 id=&quot;the-decision-we-keep-deferring&quot;&gt;The Decision We Keep Deferring&lt;&#x2F;h3&gt;
+&lt;p&gt;v0.2.5: &quot;We should extract this.&quot;
+v0.2.6: &quot;After the SDK refactor, we&#x27;ll extract this.&quot;
+v0.2.7: &quot;We&#x27;ll extract this in the next release.&quot;
+v0.2.8: &quot;We&#x27;ll extract this in the next release.&quot;&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;The honest truth&lt;&#x2F;strong&gt;: We keep not extracting it because:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;The MCP integration makes it genuinely useful for agent testing&lt;&#x2F;li&gt;
+&lt;li&gt;Extracting it means breaking the MCP tool registration&lt;&#x2F;li&gt;
+&lt;li&gt;It&#x27;s not hurting anything sitting where it is&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;But it&#x27;s wrong that a 9,768-line trading module lives in a general agent framework. It should be a separate &lt;code&gt;ares-quant&lt;&#x2F;code&gt; repo that depends on &lt;code&gt;ares&lt;&#x2F;code&gt;, not a sub-package of &lt;code&gt;ares&lt;&#x2F;code&gt; itself.&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;lessons&quot;&gt;Lessons&lt;&#x2F;h2&gt;
+&lt;p&gt;The quant module teaches three lessons:&lt;&#x2F;p&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Experiments should be labeled as experiments.&lt;&#x2F;strong&gt; The quant module grew because we treated it as production code. If we&#x27;d labeled it &lt;code&gt;experimental&#x2F;&lt;&#x2F;code&gt; from day one, we&#x27;d have been more ruthless about extracting or deleting it.&lt;&#x2F;p&gt;
+&lt;&#x2F;li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Domain-specific code leaks.&lt;&#x2F;strong&gt; A market making engine has different requirements than an agent framework (latency, statefulness, error recovery). Mixing them means compromising both.&lt;&#x2F;p&gt;
+&lt;&#x2F;li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Honesty is a feature.&lt;&#x2F;strong&gt; The architecture overview calls out the quant module as an experiment. This article does the same. Users deserve to know what&#x27;s production-grade and what&#x27;s not.&lt;&#x2F;p&gt;
+&lt;&#x2F;li&gt;
+&lt;&#x2F;ol&gt;
+&lt;p&gt;&lt;strong&gt;The best codebase is the one that knows what it is and what it isn&#x27;t.&lt;&#x2F;strong&gt; ares is an agent framework. It&#x27;s not a quant trading system. The quant module is useful, but it&#x27;s in the wrong place.&lt;&#x2F;p&gt;
+</description>
+      </item>
+    </channel>
+</rss>

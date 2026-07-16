@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Evaluation Framework — How We Know If an Agent Is Actually Good | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="How do you know your agent improved? An objective framework for measuring strategy quality.">
+
+    <meta property="og:description" content="How do you know your agent improved? An objective framework for measuring strategy quality.">
+    <meta property="og:title" content="Evaluation Framework — How We Know If an Agent Is Actually Good | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/21-evaluation-framework/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="How do you know your agent improved? An objective framework for measuring strategy quality.">
+    <meta name="twitter:title" content="Evaluation Framework — How We Know If an Agent Is Actually Good | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/21-evaluation-framework/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/21-evaluation-framework/">Evaluation Framework — How We Know If an Agent Is Actually Good</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/benchmark/">#Benchmark</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/evaluation/">#Evaluation</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ares-architecture-deep-dive-xxi-evaluation-framework-how-we-know-if-an-agent-is-actually-good">ares Architecture Deep Dive (XXI): Evaluation Framework — How We Know If an Agent Is Actually Good</h1>
+<p>"How do you know your agent improved?" This question haunted v0.2.5. The evolution engine was generating new strategies, the arena was running battles — but we had no objective way to say "strategy A is 12% better than strategy B."</p>
+<p>The evaluation framework (<code>internal/ares_eval/</code>, 3,390 lines) is the answer. It's the layer that turns "looks better to me" into reproducible scores.</p>
+<hr />
+<h2 id="the-problem-vibes-based-evaluation">The Problem: Vibes-Based Evaluation</h2>
+<p>Early ares had three evaluation paths, all broken:</p>
+<table><thead><tr><th>Path</th><th>Method</th><th>Problem</th></tr></thead><tbody>
+<tr><td>Manual</td><td>"Read the output, does it look right?"</td><td>Not scalable, heavily biased</td></tr>
+<tr><td>Unit tests</td><td>Hardcoded expected outputs</td><td>Fragile, LLM output varies</td></tr>
+<tr><td>Token counting</td><td>"More tokens = more thorough"</td><td>GPT-4o-mini at 500 tokens beats GPT-4 at 2000</td></tr>
+</tbody></table>
+<p>We tried building a custom scoring rubric. It worked for a week, then someone asked "how do you compare a 7/10 on task X with a 8/10 on task Y?" The answer: you can't, unless you have a framework.</p>
+<p><strong>Honest reflection</strong>: We considered using an existing eval framework (promptfoo, langchain eval). They're great for single-model evaluation. But ares needed <em>comparative</em> evaluation — is strategy A better than strategy B on the same task? That's a different problem.</p>
+<hr />
+<h2 id="the-design-three-layers">The Design: Three Layers</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>graph TD</span></span>
+<span class="giallo-l"><span>    L[Loader] --&gt; R[Runner]</span></span>
+<span class="giallo-l"><span>    R --&gt; EV[Evaluator]</span></span>
+<span class="giallo-l"><span>    EV --&gt; LJ[LLMJudge]</span></span>
+<span class="giallo-l"><span>    EV --&gt; DJ[DimensionJudge]</span></span>
+<span class="giallo-l"><span>    EV --&gt; CO[Comparison]</span></span>
+<span class="giallo-l"><span>    R --&gt; RE[Report]</span></span></code></pre><h3 id="layer-1-test-cases-loader-go-types-go">Layer 1: Test Cases (<code>loader.go</code>, <code>types.go</code>)</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_eval/types.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> TestCase</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">          string</span></span>
+<span class="giallo-l"><span>    Input</span><span style="color: #CBA6F7;">       string</span></span>
+<span class="giallo-l"><span>    Expected</span><span style="color: #CBA6F7;">    string</span><span style="color: #9399B2;font-style: italic;">  // optional reference answer</span></span>
+<span class="giallo-l"><span>    Category</span><span style="color: #CBA6F7;">    string</span><span style="color: #9399B2;font-style: italic;">  // &quot;reasoning&quot;, &quot;coding&quot;, &quot;chat&quot;, etc.</span></span>
+<span class="giallo-l"><span>    Difficulty</span><span style="color: #CBA6F7;">  string</span><span style="color: #9399B2;font-style: italic;">  // &quot;easy&quot;, &quot;medium&quot;, &quot;hard&quot;</span></span>
+<span class="giallo-l"><span>    Metadata</span><span style="color: #CBA6F7;">    map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> TestResult</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    TestCaseID</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span>    Output</span><span style="color: #CBA6F7;">     string</span></span>
+<span class="giallo-l"><span>    Scores</span><span style="color: #9399B2;">     []</span><span style="color: #F9E2AF;font-style: italic;">EvalScore</span></span>
+<span class="giallo-l"><span>    Duration</span><span style="color: #F9E2AF;font-style: italic;">   time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span></span>
+<span class="giallo-l"><span>    Error</span><span style="color: #CBA6F7;">      error</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EvalScore</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    EvaluatorName</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span>    Score</span><span style="color: #CBA6F7;">         float64</span></span>
+<span class="giallo-l"><span>    MaxScore</span><span style="color: #CBA6F7;">      float64</span></span>
+<span class="giallo-l"><span>    Reasoning</span><span style="color: #CBA6F7;">     string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Test cases are loaded from YAML or JSON:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="yaml"><span class="giallo-l"><span style="color: #9399B2;">-</span><span style="color: #89B4FA;"> id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> reasoning_01</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  input</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;If A &gt; B and B &gt; C, what&#39;s the relationship between A and C?&quot;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  expected</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;A &gt; C&quot;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  category</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> reasoning</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  difficulty</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> easy</span></span></code></pre><h3 id="layer-2-evaluators-evaluator-go-llm-judge-go-dimension-judge-go">Layer 2: Evaluators (<code>evaluator.go</code>, <code>llm_judge.go</code>, <code>dimension_judge.go</code>)</h3>
+<p>The core interface:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_eval/evaluator.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Evaluator</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Name</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Evaluate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> tc</span><span style="color: #F9E2AF;font-style: italic;"> TestCase</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> result</span><span style="color: #F9E2AF;font-style: italic;"> TestResult</span><span style="color: #9399B2;">) ([]</span><span style="color: #F9E2AF;font-style: italic;">EvalScore</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Three built-in evaluators:</p>
+<h4 id="llmjudgeevaluator">LLMJudgeEvaluator</h4>
+<p>Uses an LLM-as-judge to score outputs. Supports three scales:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_eval/llm_judge.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ScaleOneToTen</span><span style="color: #F9E2AF;font-style: italic;">  ScaleType</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> iota</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;font-style: italic;">  // 1-10 scoring</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ScaleOneToFive</span><span style="color: #9399B2;font-style: italic;">                       // 1-5 scoring</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ScalePassFail</span><span style="color: #9399B2;font-style: italic;">                        // binary pass/fail</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p>The judge prompt (simplified):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>You are evaluating an AI assistant&#39;s response.</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Task: {input}</span></span>
+<span class="giallo-l"><span>Expected: {expected}</span></span>
+<span class="giallo-l"><span>Actual: {output}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Score the response on a scale of 1-10:</span></span>
+<span class="giallo-l"><span>- 10: Perfect, matches or exceeds expected</span></span>
+<span class="giallo-l"><span>- 7-9: Good, minor issues</span></span>
+<span class="giallo-l"><span>- 4-6: Partial, missing key elements</span></span>
+<span class="giallo-l"><span>- 1-3: Poor, wrong or irrelevant</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>Respond with JSON: {&quot;score&quot;: N, &quot;reasoning&quot;: &quot;...&quot;}</span></span></code></pre>
+<p><strong>Honest reflection</strong>: LLM-as-judge has a known bias — it prefers longer, more verbose responses. We added a length penalty to the judge prompt, but it's a band-aid. The "real" fix is calibrating the judge against human evaluations, which we haven't done yet.</p>
+<h4 id="dimensionjudgeevaluator">DimensionJudgeEvaluator</h4>
+<p>Scores across multiple dimensions:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_eval/dimension_judge.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Dimension</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Name</span><span style="color: #CBA6F7;">      string</span><span style="color: #9399B2;font-style: italic;">  // &quot;accuracy&quot;, &quot;completeness&quot;, &quot;clarity&quot;</span></span>
+<span class="giallo-l"><span>    Weight</span><span style="color: #CBA6F7;">    float64</span></span>
+<span class="giallo-l"><span>    MaxScore</span><span style="color: #CBA6F7;">  float64</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Each dimension gets its own score, then a weighted aggregate. This is what the evolution engine uses for fitness evaluation.</p>
+<h3 id="layer-3-runner-and-comparison-runner-go-comparison-go-concurrent-runner-go">Layer 3: Runner and Comparison (<code>runner.go</code>, <code>comparison.go</code>, <code>concurrent_runner.go</code>)</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_eval/runner.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Runner</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    evaluators</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">Evaluator</span></span>
+<span class="giallo-l"><span>    loader</span><span style="color: #94E2D5;">     *</span><span style="color: #F9E2AF;font-style: italic;">Loader</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">r </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Runner</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> RunAll</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Report</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">r </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Runner</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> RunScenario</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> scenario</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Report</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>The <strong>comparison</strong> layer is where the magic happens:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_eval/comparison.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Comparison</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Baseline</span><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">Report</span></span>
+<span class="giallo-l"><span>    Candidate</span><span style="color: #94E2D5;">   *</span><span style="color: #F9E2AF;font-style: italic;">Report</span></span>
+<span class="giallo-l"><span>    Improvements</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">ScoreDelta</span></span>
+<span class="giallo-l"><span>    Regressions</span><span style="color: #9399B2;">   []</span><span style="color: #F9E2AF;font-style: italic;">ScoreDelta</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This lets us say:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Strategy A (baseline):  average score 7.2/10</span></span>
+<span class="giallo-l"><span>Strategy B (candidate): average score 8.1/10</span></span>
+<span class="giallo-l"><span>Improvement: +12.5%</span></span></code></pre>
+<p>The <code>concurrent_runner.go</code> runs test cases in parallel, cutting evaluation time from 30 minutes to 3 minutes on a 100-case suite.</p>
+<hr />
+<h2 id="integration-with-evolution">Integration with Evolution</h2>
+<p>The evaluation framework is the fitness function for the GA engine (Article XI):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_bootstrap/bootstrap.go (simplified)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> SetupEvaluators</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">llmClient</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">llm</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Client</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> registry</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">eval</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">EvaluatorRegistry</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    judge</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> eval</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewLLMJudgeEvaluator</span><span style="color: #9399B2;">(</span><span>llmClient</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        eval</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithScale</span><span style="color: #9399B2;">(</span><span>eval</span><span style="color: #9399B2;">.</span><span>ScaleOneToTen</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span>        eval</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithMaxRetries</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">3</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    )</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    registry</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Register</span><span style="color: #9399B2;">(</span><span>judge</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    dimJudge</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> eval</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewDimensionJudgeEvaluator</span><span style="color: #9399B2;">(</span><span>llmClient</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        eval</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithDimensions</span><span style="color: #9399B2;">(</span><span>defaultDimensions</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    )</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    registry</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Register</span><span style="color: #9399B2;">(</span><span>dimJudge</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>When evolution runs, it:</p>
+<ol>
+<li>Generates a new strategy (via mutation)</li>
+<li>Runs it through the agent</li>
+<li>Evaluates the output with <code>LLMJudgeEvaluator</code></li>
+<li>Uses the score as fitness for selection</li>
+</ol>
+<p><strong>Honest reflection</strong>: The LLM judge is expensive — each evaluation is an LLM call. For a 100-case suite with 10 strategies per generation, that's 1000 LLM calls per generation. We added caching (same input → same score) and a "fast mode" that only evaluates 10 random cases. But the fundamental cost remains.</p>
+<hr />
+<h2 id="the-service-layer">The Service Layer</h2>
+<p><code>internal/ares_eval/service/</code> exposes the evaluation framework via HTTP:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>service/</span></span>
+<span class="giallo-l"><span>├── handler.go       # HTTP handlers</span></span>
+<span class="giallo-l"><span>├── router.go        # Route registration</span></span>
+<span class="giallo-l"><span>├── service.go       # Business logic</span></span>
+<span class="giallo-l"><span>├── repository.go    # Result persistence</span></span>
+<span class="giallo-l"><span>└── types.go         # API types</span></span></code></pre>
+<p>Endpoints:</p>
+<ul>
+<li><code>POST /eval/run</code> — Run an evaluation suite</li>
+<li><code>GET /eval/results/{id}</code> — Get results</li>
+<li><code>POST /eval/compare</code> — Compare two runs</li>
+</ul>
+<hr />
+<h2 id="lessons">Lessons</h2>
+<p>The evaluation framework is the most undervalued module in ares. Nobody asks "how do you evaluate?" in a demo. But without it, evolution is just random mutation — no fitness function, no selection pressure, no improvement.</p>
+<p><strong>The best evaluation framework is the one that makes "is it better?" a question with a numerical answer.</strong> Vibes don't scale. Reproducible scores do.</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/22-config-system/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Config System — One YAML, Twelve Modules</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/20-llm-client-layer/">
+                                <span class="button__text">LLM Client Layer — Failover, DeepSeek, and Multi-Provider Abstraction</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

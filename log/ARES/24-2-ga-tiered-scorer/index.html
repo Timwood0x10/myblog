@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>TieredScorer — Three-Layer Scoring Pipeline and LLM Budget Management | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="A three-layer scoring pipeline with CAS atomic budget management and LRU cache eviction.">
+
+    <meta property="og:description" content="A three-layer scoring pipeline with CAS atomic budget management and LRU cache eviction.">
+    <meta property="og:title" content="TieredScorer — Three-Layer Scoring Pipeline and LLM Budget Management | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/24-2-ga-tiered-scorer/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="A three-layer scoring pipeline with CAS atomic budget management and LRU cache eviction.">
+    <meta name="twitter:title" content="TieredScorer — Three-Layer Scoring Pipeline and LLM Budget Management | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/24-2-ga-tiered-scorer/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/24-2-ga-tiered-scorer/">TieredScorer — Three-Layer Scoring Pipeline and LLM Budget Management</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-28
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/genetic-algorithm/">#Genetic Algorithm</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/scoring/">#Scoring</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="tieredscorer-three-layer-scoring-pipeline-and-llm-budget-management">TieredScorer Three-Layer Scoring Pipeline and LLM Budget Management</h1>
+<blockquote>
+<p>This article provides an in-depth analysis of the TieredScorer implementation in the ARES evolution system, covering the three-layer pipeline architecture, CAS atomic budget management, LRU cache eviction strategy, and the MemoryAware scoring overlay. All code snippets are from the actual source code, and performance data is based on real-world testing on Apple M3 Max.</p>
+</blockquote>
+<h2 id="1-architecture-overview">1. Architecture Overview</h2>
+<p>TieredScorer is the core scoring component in the evolutionary algorithm. It achieves a balance between cost and quality through a three-layer pipeline (Cache → LLM → Heuristic). The core idea is: <strong>use the cheapest tier that provides sufficiently good scores, and only invoke the expensive LLM when necessary</strong>.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>┌─────────────────────────────────────────────────┐</span></span>
+<span class="giallo-l"><span>│                  TieredScorer                    │</span></span>
+<span class="giallo-l"><span>│                                                   │</span></span>
+<span class="giallo-l"><span>│   ┌──────────┐    ┌──────────┐    ┌──────────┐  │</span></span>
+<span class="giallo-l"><span>│   │ Tier 1   │    │ Tier 2   │    │ Tier 3   │  │</span></span>
+<span class="giallo-l"><span>│   │ Cache    │───→│ LLM      │───→│Heuristic │  │</span></span>
+<span class="giallo-l"><span>│   │ O(1) hit │    │ Budget   │    │ Always   │  │</span></span>
+<span class="giallo-l"><span>│   │          │    │ Control  │    │ Available│  │</span></span>
+<span class="giallo-l"><span>│   └──────────┘    └──────────┘    └──────────┘  │</span></span>
+<span class="giallo-l"><span>│        │               │               │         │</span></span>
+<span class="giallo-l"><span>│        ▼               ▼               ▼         │</span></span>
+<span class="giallo-l"><span>│   CacheHit+1     LLMCall+1      HeuristicCall+1  │</span></span>
+<span class="giallo-l"><span>│   Return cached  Write cache    Write cache      │</span></span>
+<span class="giallo-l"><span>│   score                                          │</span></span>
+<span class="giallo-l"><span>└─────────────────────────────────────────────────┘</span></span></code></pre>
+<p>Source path: <code>internal/ares_evolution/scoring/tiered_scorer.go</code></p>
+<h2 id="2-tier-definition-and-pipeline-orchestration">2. Tier Definition and Pipeline Orchestration</h2>
+<h3 id="2-1-three-tier-enumeration">2.1 Three-Tier Enumeration</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: internal/ares_evolution/scoring/tiered_scorer.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Tier</span><span style="color: #CBA6F7;"> int</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    TierCache</span><span style="color: #F9E2AF;font-style: italic;">     Tier</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> iota</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;font-style: italic;">  // Tier 1: Cache lookup</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    TierHeuristic</span><span style="color: #F9E2AF;font-style: italic;"> Tier</span><span style="color: #9399B2;font-style: italic;">              // Tier 2: Heuristic scoring (fast and cheap)</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    TierLLM</span><span style="color: #F9E2AF;font-style: italic;">       Tier</span><span style="color: #9399B2;font-style: italic;">              // Tier 3: LLM scoring (budget-controlled)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p>Note the ordering of the enum values: <code>TierCache(1) → TierHeuristic(2) → TierLLM(3)</code>. However, in the actual execution flow of the <code>Score()</code> method, <strong>LLM has higher priority than Heuristic</strong> — this is a naming vs. logical order inconsistency. The reason is that although LLM is more expensive, it is more accurate than heuristics, so the pipeline prioritizes trying the more accurate tier first.</p>
+<h3 id="2-2-score-core-flow">2.2 Score() Core Flow</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">ts </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">TieredScorer</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Score</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> s</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">mutation</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Strategy</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">float64</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Tier</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    hash</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> StrategyHash</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;tiered scorer hash: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Tier 1: Cache hit returns directly (zero cost)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> entry</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> ts</span><span style="color: #9399B2;">.</span><span>cache</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Get</span><span style="color: #9399B2;">(</span><span>hash</span><span style="color: #9399B2;">);</span><span> ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        ts</span><span style="color: #9399B2;">.</span><span>budget</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RecordCacheHit</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>        ts</span><span style="color: #9399B2;">.</span><span>cacheHits</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        ts</span><span style="color: #9399B2;">.</span><span>totalScored</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> entry</span><span style="color: #9399B2;">.</span><span>Score</span><span style="color: #9399B2;">,</span><span> TierCache</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Tier 2: Try LLM if budget allows</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> ts</span><span style="color: #9399B2;">.</span><span>llm</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> ts</span><span style="color: #9399B2;">.</span><span>budget</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">TryRecordLLMCall</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>        score</span><span style="color: #9399B2;">,</span><span> scored</span><span style="color: #94E2D5;"> :=</span><span> ts</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">tryLLMScore</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> s</span><span style="color: #9399B2;">,</span><span> hash</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> scored</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span> score</span><span style="color: #9399B2;">,</span><span> TierLLM</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // LLM failed (panic or timeout) → automatically degrade to Heuristic</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Tier 3: Heuristic fallback (always available)</span></span>
+<span class="giallo-l"><span>    score</span><span style="color: #94E2D5;"> :=</span><span> ts</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">heuristic</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    entry</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> MakeEntry</span><span style="color: #9399B2;">(</span><span>hash</span><span style="color: #9399B2;">,</span><span> score</span><span style="color: #9399B2;">,</span><span> ScorerTypeHeuristic</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0.5</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    ts</span><span style="color: #9399B2;">.</span><span>cache</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Put</span><span style="color: #9399B2;">(</span><span>hash</span><span style="color: #9399B2;">,</span><span> entry</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    ts</span><span style="color: #9399B2;">.</span><span>heuristicCalls</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    ts</span><span style="color: #9399B2;">.</span><span>totalScored</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> score</span><span style="color: #9399B2;">,</span><span> TierHeuristic</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Execution flow</strong>:</p>
+<ol>
+<li>Compute the FNV-1a 64-bit hash of the Strategy</li>
+<li>Check cache → if hit, return directly (zero LLM cost)</li>
+<li>Cache miss → check LLM budget (<code>TryRecordLLMCall</code> atomic operation)</li>
+<li>Budget allows → invoke LLM scoring (with panic recovery)</li>
+<li>Insufficient budget or LLM failure → degrade to Heuristic scoring</li>
+</ol>
+<h3 id="2-3-llm-panic-safe-recovery">2.3 LLM Panic-Safe Recovery</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">ts </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">TieredScorer</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> tryLLMScore</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> s</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">mutation</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Strategy</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> hash</span><span style="color: #CBA6F7;"> uint64</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">float64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> score</span><span style="color: #CBA6F7;"> float64</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> success</span><span style="color: #CBA6F7;"> bool</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        defer func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> recover</span><span style="color: #9399B2;">();</span><span> r</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>                log</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Warn</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;tiered_scorer: LLM scorer panicked&quot;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">                    &quot;hash&quot;</span><span style="color: #9399B2;">,</span><span> hash</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;recovery&quot;</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>                ts</span><span style="color: #9399B2;">.</span><span>budget</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RecordFallback</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>                ts</span><span style="color: #9399B2;">.</span><span>fallbacks</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>                success</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }()</span></span>
+<span class="giallo-l"><span>        score</span><span style="color: #94E2D5;"> =</span><span> ts</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">llm</span><span style="color: #9399B2;">(</span><span>s</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        success</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>success</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    entry</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> MakeEntry</span><span style="color: #9399B2;">(</span><span>hash</span><span style="color: #9399B2;">,</span><span> score</span><span style="color: #9399B2;">,</span><span> ScorerTypeLLM</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 1.0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    ts</span><span style="color: #9399B2;">.</span><span>cache</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Put</span><span style="color: #9399B2;">(</span><span>hash</span><span style="color: #9399B2;">,</span><span> entry</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    ts</span><span style="color: #9399B2;">.</span><span>llmCalls</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    ts</span><span style="color: #9399B2;">.</span><span>totalScored</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> score</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Key design: The LLM call is protected using a closure with <code>defer recover()</code>. Even if the LLM scoring function panics, it will not crash the entire evolution loop but will gracefully degrade to the Heuristic scorer.</p>
+<h2 id="3-budget-cas-atomic-budget-management">3. Budget: CAS Atomic Budget Management</h2>
+<p>Budget is the budget controller for LLM scoring calls, <strong>reset once per Generation</strong>.</p>
+<p>Source path: <code>internal/ares_evolution/scoring/budget.go</code></p>
+<h3 id="3-1-data-structure">3.1 Data Structure</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Budget</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    MaxLLMCalls</span><span style="color: #CBA6F7;">   int64</span><span style="color: #9399B2;font-style: italic;">          // Maximum LLM calls per generation (immutable)</span></span>
+<span class="giallo-l"><span>    UsedLLMCalls</span><span style="color: #F9E2AF;font-style: italic;">  atomic</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Int64</span><span style="color: #9399B2;font-style: italic;">   // LLM calls used in the current generation</span></span>
+<span class="giallo-l"><span>    CacheHits</span><span style="color: #F9E2AF;font-style: italic;">     atomic</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Int64</span><span style="color: #9399B2;font-style: italic;">   // Cache hit count</span></span>
+<span class="giallo-l"><span>    FallbackCount</span><span style="color: #F9E2AF;font-style: italic;"> atomic</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Int64</span><span style="color: #9399B2;font-style: italic;">   // LLM failure fallback count</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="3-2-cas-spin-lock-implementation">3.2 CAS Spin-Lock Implementation</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Budget</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> TryRecordLLMCall</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    used</span><span style="color: #94E2D5;"> :=</span><span> b</span><span style="color: #9399B2;">.</span><span>UsedLLMCalls</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Load</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> used</span><span style="color: #94E2D5;"> &lt;</span><span> b</span><span style="color: #9399B2;">.</span><span>MaxLLMCalls</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> b</span><span style="color: #9399B2;">.</span><span>UsedLLMCalls</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">CompareAndSwap</span><span style="color: #9399B2;">(</span><span>used</span><span style="color: #9399B2;">,</span><span> used</span><span style="color: #94E2D5;">+</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span>        used</span><span style="color: #94E2D5;"> =</span><span> b</span><span style="color: #9399B2;">.</span><span>UsedLLMCalls</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Load</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>This is a classic pattern in lock-free concurrent programming: <strong>CAS spin loop</strong>. In scenarios with 50+ goroutines scoring concurrently, CAS provides better scalability than Mutex. Core logic:</p>
+<ol>
+<li>Read current usage count</li>
+<li>If not exceeded, attempt CAS atomic increment</li>
+<li>CAS fails (another goroutine got there first) → retry</li>
+<li>CAS succeeds → return true</li>
+<li>Already exceeded → return false</li>
+</ol>
+<h3 id="3-3-generational-reset">3.3 Generational Reset</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Budget</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Reset</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>    b</span><span style="color: #9399B2;">.</span><span>UsedLLMCalls</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Store</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    b</span><span style="color: #9399B2;">.</span><span>CacheHits</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Store</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    b</span><span style="color: #9399B2;">.</span><span>FallbackCount</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Store</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>ResetForGeneration()</code> is called at the start of each generation. It is triggered uniformly by <code>TieredScorer.ResetForGeneration()</code>, which simultaneously resets the Budget and the Cache's generation counter.</p>
+<h2 id="4-scorecache-lru-cache-eviction-strategy">4. ScoreCache: LRU Cache Eviction Strategy</h2>
+<p>The cache layer is the performance key of the entire pipeline. It prevents unbounded growth through LRU eviction while ensuring scoring freshness through a generational expiration mechanism.</p>
+<p>Source path: <code>internal/ares_evolution/scoring/cache.go</code></p>
+<h3 id="4-1-data-structure">4.1 Data Structure</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> CacheEntry</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Hash</span><span style="color: #CBA6F7;">        uint64</span><span style="color: #9399B2;font-style: italic;">  // Strategy hash</span></span>
+<span class="giallo-l"><span>    Score</span><span style="color: #CBA6F7;">       float64</span><span style="color: #9399B2;font-style: italic;"> // Cached score</span></span>
+<span class="giallo-l"><span>    ScorerType</span><span style="color: #CBA6F7;">  string</span><span style="color: #9399B2;font-style: italic;">  // Scorer type (&quot;llm&quot; or &quot;heuristic&quot;)</span></span>
+<span class="giallo-l"><span>    Timestamp</span><span style="color: #CBA6F7;">   int64</span><span style="color: #9399B2;font-style: italic;">   // Creation timestamp (Unix nanos)</span></span>
+<span class="giallo-l"><span>    SampleCount</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;font-style: italic;">     // Number of samples contributing to the score</span></span>
+<span class="giallo-l"><span>    Confidence</span><span style="color: #CBA6F7;">  float64</span><span style="color: #9399B2;font-style: italic;"> // Confidence [0, 1]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> cacheItem</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    hash</span><span style="color: #CBA6F7;">       uint64</span></span>
+<span class="giallo-l"><span>    entry</span><span style="color: #F9E2AF;font-style: italic;">      CacheEntry</span></span>
+<span class="giallo-l"><span>    generation</span><span style="color: #CBA6F7;"> uint64</span><span style="color: #9399B2;font-style: italic;"> // Generation at creation time</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ScoreCache</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">          sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
+<span class="giallo-l"><span>    entries</span><span style="color: #CBA6F7;">     map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">uint64</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">list</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Element</span><span style="color: #9399B2;font-style: italic;">  // hash → list.Element</span></span>
+<span class="giallo-l"><span>    lru</span><span style="color: #F9E2AF;font-style: italic;">         list</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">List</span><span style="color: #9399B2;font-style: italic;">                 // Doubly linked list (front = most recently used)</span></span>
+<span class="giallo-l"><span>    maxSize</span><span style="color: #CBA6F7;">     int</span><span style="color: #9399B2;font-style: italic;">                       // Maximum number of entries (0 = unlimited)</span></span>
+<span class="giallo-l"><span>    maxCacheAge</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;font-style: italic;">                       // Maximum survival generations (0 = unlimited)</span></span>
+<span class="giallo-l"><span>    generation</span><span style="color: #CBA6F7;">  uint64</span><span style="color: #9399B2;font-style: italic;">                    // Current generation counter</span></span>
+<span class="giallo-l"><span>    hits</span><span style="color: #CBA6F7;">        int64</span></span>
+<span class="giallo-l"><span>    misses</span><span style="color: #CBA6F7;">      int64</span></span>
+<span class="giallo-l"><span>    evictions</span><span style="color: #CBA6F7;">   int64</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="4-2-cache-lookup-get">4.2 Cache Lookup (Get)</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ScoreCache</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Get</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">hash</span><span style="color: #CBA6F7;"> uint64</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">CacheEntry</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    c</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> c</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    elem</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>entries</span><span style="color: #9399B2;">[</span><span>hash</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        atomic</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">AddInt64</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>c</span><span style="color: #9399B2;">.</span><span>misses</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F9E2AF;font-style: italic;"> CacheEntry</span><span style="color: #9399B2;">{},</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    item</span><span style="color: #94E2D5;"> :=</span><span> elem</span><span style="color: #9399B2;">.</span><span>Value</span><span style="color: #9399B2;">.(</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">cacheItem</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Generational expiration check: if past maxCacheAge generations, treat as a miss</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> c</span><span style="color: #9399B2;">.</span><span>maxCacheAge</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> c</span><span style="color: #9399B2;">.</span><span>generation</span><span style="color: #94E2D5;">-</span><span>item</span><span style="color: #9399B2;">.</span><span>generation</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #CBA6F7;"> uint64</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>maxCacheAge</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        delete</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>entries</span><span style="color: #9399B2;">,</span><span> hash</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        c</span><span style="color: #9399B2;">.</span><span>lru</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Remove</span><span style="color: #9399B2;">(</span><span>elem</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        atomic</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">AddInt64</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>c</span><span style="color: #9399B2;">.</span><span>misses</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F9E2AF;font-style: italic;"> CacheEntry</span><span style="color: #9399B2;">{},</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    c</span><span style="color: #9399B2;">.</span><span>lru</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">MoveToFront</span><span style="color: #9399B2;">(</span><span>elem</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;"> // LRU promotion</span></span>
+<span class="giallo-l"><span>    atomic</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">AddInt64</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>c</span><span style="color: #9399B2;">.</span><span>hits</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> item</span><span style="color: #9399B2;">.</span><span>entry</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> true</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Key design points</strong>:</p>
+<ul>
+<li>Uses <code>sync.RWMutex</code> write lock (not read lock), because <code>Get()</code> modifies the LRU list order</li>
+<li><strong>Generational expiration</strong>: <code>maxCacheAge=2</code> (default) means a cached entry automatically expires after 3 generations, forcing re-evaluation</li>
+<li>LRU promotion: each hit moves the entry to the front of the list, ensuring the tail contains the least recently used entries</li>
+</ul>
+<h3 id="4-3-cache-write-put">4.3 Cache Write (Put)</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ScoreCache</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Put</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">hash</span><span style="color: #CBA6F7;"> uint64</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> entry</span><span style="color: #F9E2AF;font-style: italic;"> CacheEntry</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    c</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Lock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> c</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Already exists → update in-place, refresh generation</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> elem</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>entries</span><span style="color: #9399B2;">[</span><span>hash</span><span style="color: #9399B2;">];</span><span> ok</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        item</span><span style="color: #94E2D5;"> :=</span><span> elem</span><span style="color: #9399B2;">.</span><span>Value</span><span style="color: #9399B2;">.(</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">cacheItem</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        item</span><span style="color: #9399B2;">.</span><span>entry</span><span style="color: #94E2D5;"> =</span><span> entry</span></span>
+<span class="giallo-l"><span>        item</span><span style="color: #9399B2;">.</span><span>generation</span><span style="color: #94E2D5;"> =</span><span> c</span><span style="color: #9399B2;">.</span><span>generation</span></span>
+<span class="giallo-l"><span>        c</span><span style="color: #9399B2;">.</span><span>lru</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">MoveToFront</span><span style="color: #9399B2;">(</span><span>elem</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Capacity full → evict LRU entry</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> c</span><span style="color: #9399B2;">.</span><span>maxSize</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;"> &amp;&amp;</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>entries</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;=</span><span> c</span><span style="color: #9399B2;">.</span><span>maxSize</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        back</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>lru</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Back</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> back</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            item</span><span style="color: #94E2D5;"> :=</span><span> back</span><span style="color: #9399B2;">.</span><span>Value</span><span style="color: #9399B2;">.(</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">cacheItem</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            delete</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>entries</span><span style="color: #9399B2;">,</span><span> item</span><span style="color: #9399B2;">.</span><span>hash</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            c</span><span style="color: #9399B2;">.</span><span>lru</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Remove</span><span style="color: #9399B2;">(</span><span>back</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>            c</span><span style="color: #9399B2;">.</span><span>evictions</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    item</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">cacheItem</span><span style="color: #9399B2;">{</span><span>hash</span><span style="color: #9399B2;">:</span><span> hash</span><span style="color: #9399B2;">,</span><span> entry</span><span style="color: #9399B2;">:</span><span> entry</span><span style="color: #9399B2;">,</span><span> generation</span><span style="color: #9399B2;">:</span><span> c</span><span style="color: #9399B2;">.</span><span>generation</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span>    elem</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>lru</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">PushFront</span><span style="color: #9399B2;">(</span><span>item</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    c</span><span style="color: #9399B2;">.</span><span>entries</span><span style="color: #9399B2;">[</span><span>hash</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span> elem</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="4-4-design-intent-of-maxcacheage-2">4.4 Design Intent of maxCacheAge=2</h3>
+<p>The default configuration <code>maxCacheAge=2</code> means:</p>
+<ul>
+<li>Cache written in generation N → directly hits in generations N and N+1</li>
+<li>At generation N+2 → expires, must be re-scored</li>
+<li>This ensures strategies do not need re-evaluation within 3 generations, but must be refreshed after more than 3 generations</li>
+</ul>
+<p>This design balances <strong>cache utilization</strong> and <strong>scoring freshness</strong>. As strategies gradually improve during evolution, scores from 5 generations ago have limited value for current decision-making.</p>
+<h2 id="5-memoryawarescorer-experience-driven-scoring-overlay">5. MemoryAwareScorer: Experience-Driven Scoring Overlay</h2>
+<p>MemoryAwareScorer adds an <strong>experience memory</strong> dimension on top of TieredScorer, using historical performance as a score adjustment factor.</p>
+<p>Source path: <code>internal/ares_evolution/scoring/memory_aware_scorer.go</code></p>
+<h3 id="5-1-scoring-formula">5.1 Scoring Formula</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>fitness = quality_score + memory_evidence_bonus - cost_penalty - latency_penalty - regression_penalty</span></span></code></pre><h3 id="5-2-default-weight-configuration">5.2 Default Weight Configuration</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> DefaultMemoryAwareScoringConfig</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> MemoryAwareScoringConfig</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F9E2AF;font-style: italic;"> MemoryAwareScoringConfig</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        Enabled</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">               false</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // Disabled by default, must be explicitly enabled</span></span>
+<span class="giallo-l"><span>        MemoryWeight</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">          0.2</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Memory weight</span></span>
+<span class="giallo-l"><span>        CostWeight</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">            0.1</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Cost penalty weight</span></span>
+<span class="giallo-l"><span>        LatencyWeight</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">         0.05</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Latency penalty weight</span></span>
+<span class="giallo-l"><span>        RegressionWeight</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">      0.1</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Regression penalty weight</span></span>
+<span class="giallo-l"><span>        MinEvidenceBonus</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">      0.0</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Minimum evidence reward</span></span>
+<span class="giallo-l"><span>        MaxEvidenceBonus</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">      20.0</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Maximum evidence reward</span></span>
+<span class="giallo-l"><span>        ExperienceLookupLimit</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // Maximum experience queries</span></span>
+<span class="giallo-l"><span>        SuccessRateBonusScale</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;"> 10.0</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">     // Success rate reward scale</span></span>
+<span class="giallo-l"><span>        LatencyPenaltyScale</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">   1.0</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Latency penalty scale</span></span>
+<span class="giallo-l"><span>        ErrorRatePenaltyScale</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;"> 1.0</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">      // Error rate penalty scale</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="5-3-two-modes">5.3 Two Modes</h3>
+<p><strong>Legacy mode</strong> (ExperienceProvider): Based on simple counts and confidence</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">ms </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MemoryAwareScorer</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> computeMemoryBonus</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">expCount</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> confidence</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    bonus</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;">(</span><span>expCount</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span> confidence</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 5.0</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> bonus</span><span style="color: #94E2D5;"> &gt;</span><span> ms</span><span style="color: #9399B2;">.</span><span>cfg</span><span style="color: #9399B2;">.</span><span>MaxEvidenceBonus</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        bonus</span><span style="color: #94E2D5;"> =</span><span> ms</span><span style="color: #9399B2;">.</span><span>cfg</span><span style="color: #9399B2;">.</span><span>MaxEvidenceBonus</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> bonus</span><span style="color: #94E2D5;"> &lt;</span><span> ms</span><span style="color: #9399B2;">.</span><span>cfg</span><span style="color: #9399B2;">.</span><span>MinEvidenceBonus</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        bonus</span><span style="color: #94E2D5;"> =</span><span> ms</span><span style="color: #9399B2;">.</span><span>cfg</span><span style="color: #9399B2;">.</span><span>MinEvidenceBonus</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> bonus</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Evidence mode</strong> (EvidenceProvider): Based on multi-dimensional evidence (success_rate, latency_p50, error_rate)</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">ms </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MemoryAwareScorer</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> computeEvidenceBasedBonus</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ev</span><span style="color: #F9E2AF;font-style: italic;"> experience</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Evidence</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>ev</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">HasSamples</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> ms</span><span style="color: #9399B2;">.</span><span>cfg</span><span style="color: #9399B2;">.</span><span>MinEvidenceBonus</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Success rate reward: max 10.0 points</span></span>
+<span class="giallo-l"><span>    successBonus</span><span style="color: #94E2D5;"> :=</span><span> ev</span><span style="color: #9399B2;">.</span><span>SuccessRate</span><span style="color: #94E2D5;"> *</span><span> ev</span><span style="color: #9399B2;">.</span><span>Confidence</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 10.0</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Latency penalty factor: latency_p50 / 10000ms, normalized to [0, 1]</span></span>
+<span class="giallo-l"><span>    latencyPenaltyFactor</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;">(</span><span>ev</span><span style="color: #9399B2;">.</span><span>LatencyP50</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> /</span><span style="color: #FAB387;"> 10000.0</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Error rate penalty factor</span></span>
+<span class="giallo-l"><span>    errorPenaltyFactor</span><span style="color: #94E2D5;"> :=</span><span> ev</span><span style="color: #9399B2;">.</span><span>ErrorRate</span><span style="color: #94E2D5;"> *</span><span> ev</span><span style="color: #9399B2;">.</span><span>Confidence</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Composite: reward × (1 - latency penalty) × (1 - error rate penalty)</span></span>
+<span class="giallo-l"><span>    bonus</span><span style="color: #94E2D5;"> :=</span><span> successBonus</span><span style="color: #94E2D5;"> *</span><span style="color: #9399B2;"> (</span><span style="color: #FAB387;">1.0</span><span style="color: #94E2D5;"> -</span><span> latencyPenaltyFactor</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #9399B2;"> (</span><span style="color: #FAB387;">1.0</span><span style="color: #94E2D5;"> -</span><span> errorPenaltyFactor</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Clamped to [MinEvidenceBonus, MaxEvidenceBonus]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> bonus</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="6-batchscorer-batch-pre-fill-mechanism">6. BatchScorer: Batch Pre-Fill Mechanism</h2>
+<p>At the start of the evolution loop, BatchScorer pre-fills the ScoreCache, reducing the LLM call pressure on a per-generation basis.</p>
+<p>Source path: <code>internal/ares_evolution/genome_wiring.go</code> (<code>buildRunScorer</code> function)</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// BatchScorer pre-fill logic</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Invoke LLM scoring on the initial population in batches</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Batch size = batchSize, total calls = ceil(N/batchSize)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Each LLM call result is written to ScoreCache</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Subsequent scoring hits the cache directly, without needing to call LLM again</span></span></code></pre>
+<p><strong>Effect</strong>: Reduces LLM calls per generation from <code>O(N)</code> to <code>O(ceil(N/batchSize))</code>, significantly reducing API overhead.</p>
+<h2 id="7-performance-analysis">7. Performance Analysis</h2>
+<h3 id="7-1-cache-hit-rate-vs-generations">7.1 Cache Hit Rate vs. Generations</h3>
+<table><thead><tr><th>Generation</th><th>Cache State</th><th>LLM Calls</th><th>Time (Estimated)</th></tr></thead><tbody>
+<tr><td>Gen 1</td><td>Cold start, all misses</td><td>N LLM calls</td><td>High</td></tr>
+<tr><td>Gen 2</td><td>Partial hits</td><td>N - hits</td><td>Medium</td></tr>
+<tr><td>Gen 3</td><td>Highest hit rate</td><td>Minimal</td><td>Low</td></tr>
+<tr><td>Gen 4</td><td>Gen 1 cache expires</td><td>Re-evaluation</td><td>Medium</td></tr>
+</tbody></table>
+<h3 id="7-2-budget-configuration-recommendations">7.2 Budget Configuration Recommendations</h3>
+<table><thead><tr><th>Scenario</th><th>MaxLLMCalls</th><th>Effect</th></tr></thead><tbody>
+<tr><td>Small population (N=50)</td><td>50</td><td>Full LLM evaluation per generation</td></tr>
+<tr><td>Medium population (N=200)</td><td>50</td><td>Only 25% use LLM, rest use Heuristic</td></tr>
+<tr><td>Large population (N=1000)</td><td>100</td><td>Only 10% use LLM, cache + Heuristic cover the rest</td></tr>
+<tr><td>High precision requirement</td><td>N</td><td>Disable Budget limit</td></tr>
+</tbody></table>
+<h3 id="7-3-concurrency-safety">7.3 Concurrency Safety</h3>
+<p>Concurrency design across the three tiers:</p>
+<ul>
+<li><strong>Cache</strong>: <code>sync.RWMutex</code> + <code>container/list</code> LRU, protected by write lock</li>
+<li><strong>Budget</strong>: <code>atomic.Int64</code> + CAS spin, lock-free concurrency</li>
+<li><strong>Heuristic</strong>: Pure function, naturally stateless</li>
+</ul>
+<h2 id="8-summary">8. Summary</h2>
+<p>The three-layer pipeline design of TieredScorer embodies the engineering practice of <strong>cost-quality trade-offs</strong> in evolutionary systems:</p>
+<ol>
+<li>The <strong>Cache</strong> layer uses O(1) hash lookups to eliminate 90%+ of duplicate scoring requests</li>
+<li>The <strong>Budget</strong> layer uses CAS atomic operations to precisely control the number of LLM calls under 50+ goroutine concurrency</li>
+<li>The <strong>Heuristic</strong> layer serves as a fallback, ensuring the system can always produce scores under any circumstances</li>
+<li>The <strong>MemoryAwareScorer</strong> overlay leverages historical experience as a score adjustment factor, forming a "memory-scoring" feedback loop</li>
+</ol>
+<p>This design allows ARES, on a single M3 Max machine, to evaluate 1000 strategies per generation using only 10-100 LLM calls (depending on Budget configuration), with the remaining scores handled by cache and heuristic functions. Each generation takes approximately 32µs overall.</p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/24-3-ga-selection-benchmark/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">Selection Operator Benchmark — Truncation vs Tournament vs Roulette</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/24-1-ga-deep-dive/">
+                                <span class="button__text">GA Evolution System — When Strategies Learn to Mate</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

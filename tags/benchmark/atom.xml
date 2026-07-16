@@ -1,0 +1,495 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en">
+    <title>Timwood0x10 - Benchmark</title>
+    <subtitle>Tim Wood — memory safety, static analysis, and AI infrastructure.</subtitle>
+    <link rel="self" type="application/atom+xml" href="https://Timwood0x10.github.io/myblog/tags/benchmark/atom.xml"/>
+    <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog"/>
+    <generator uri="https://www.getzola.org/">Zola</generator>
+    <updated>2026-06-28T00:00:00+00:00</updated>
+    <id>https://Timwood0x10.github.io/myblog/tags/benchmark/atom.xml</id>
+    <entry xml:lang="en">
+        <title>Evaluation Framework — How We Know If an Agent Is Actually Good</title>
+        <published>2026-06-28T00:00:00+00:00</published>
+        <updated>2026-06-28T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/ARES/21-evaluation-framework/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/ARES/21-evaluation-framework/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/ARES/21-evaluation-framework/">&lt;h1 id=&quot;ares-architecture-deep-dive-xxi-evaluation-framework-how-we-know-if-an-agent-is-actually-good&quot;&gt;ares Architecture Deep Dive (XXI): Evaluation Framework — How We Know If an Agent Is Actually Good&lt;&#x2F;h1&gt;
+&lt;p&gt;&quot;How do you know your agent improved?&quot; This question haunted v0.2.5. The evolution engine was generating new strategies, the arena was running battles — but we had no objective way to say &quot;strategy A is 12% better than strategy B.&quot;&lt;&#x2F;p&gt;
+&lt;p&gt;The evaluation framework (&lt;code&gt;internal&#x2F;ares_eval&#x2F;&lt;&#x2F;code&gt;, 3,390 lines) is the answer. It&#x27;s the layer that turns &quot;looks better to me&quot; into reproducible scores.&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;the-problem-vibes-based-evaluation&quot;&gt;The Problem: Vibes-Based Evaluation&lt;&#x2F;h2&gt;
+&lt;p&gt;Early ares had three evaluation paths, all broken:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Path&lt;&#x2F;th&gt;&lt;th&gt;Method&lt;&#x2F;th&gt;&lt;th&gt;Problem&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;Manual&lt;&#x2F;td&gt;&lt;td&gt;&quot;Read the output, does it look right?&quot;&lt;&#x2F;td&gt;&lt;td&gt;Not scalable, heavily biased&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Unit tests&lt;&#x2F;td&gt;&lt;td&gt;Hardcoded expected outputs&lt;&#x2F;td&gt;&lt;td&gt;Fragile, LLM output varies&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Token counting&lt;&#x2F;td&gt;&lt;td&gt;&quot;More tokens = more thorough&quot;&lt;&#x2F;td&gt;&lt;td&gt;GPT-4o-mini at 500 tokens beats GPT-4 at 2000&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;We tried building a custom scoring rubric. It worked for a week, then someone asked &quot;how do you compare a 7&#x2F;10 on task X with a 8&#x2F;10 on task Y?&quot; The answer: you can&#x27;t, unless you have a framework.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;Honest reflection&lt;&#x2F;strong&gt;: We considered using an existing eval framework (promptfoo, langchain eval). They&#x27;re great for single-model evaluation. But ares needed &lt;em&gt;comparative&lt;&#x2F;em&gt; evaluation — is strategy A better than strategy B on the same task? That&#x27;s a different problem.&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;the-design-three-layers&quot;&gt;The Design: Three Layers&lt;&#x2F;h2&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;mermaid&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;graph TD&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    L[Loader] --&amp;gt; R[Runner]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    R --&amp;gt; EV[Evaluator]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    EV --&amp;gt; LJ[LLMJudge]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    EV --&amp;gt; DJ[DimensionJudge]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    EV --&amp;gt; CO[Comparison]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    R --&amp;gt; RE[Report]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h3 id=&quot;layer-1-test-cases-loader-go-types-go&quot;&gt;Layer 1: Test Cases (&lt;code&gt;loader.go&lt;&#x2F;code&gt;, &lt;code&gt;types.go&lt;&#x2F;code&gt;)&lt;&#x2F;h3&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_eval&#x2F;types.go&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; TestCase&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    ID&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;          string&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Input&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;       string&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Expected&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;  &#x2F;&#x2F; optional reference answer&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Category&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;  &#x2F;&#x2F; &amp;quot;reasoning&amp;quot;, &amp;quot;coding&amp;quot;, &amp;quot;chat&amp;quot;, etc.&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Difficulty&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;  string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;  &#x2F;&#x2F; &amp;quot;easy&amp;quot;, &amp;quot;medium&amp;quot;, &amp;quot;hard&amp;quot;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Metadata&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    map&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;[&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;]&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;any&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; TestResult&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    TestCaseID&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; string&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Output&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;     string&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Scores&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;     []&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;EvalScore&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Duration&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;   time&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Duration&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Error&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;      error&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; EvalScore&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    EvaluatorName&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; string&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Score&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;         float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    MaxScore&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;      float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Reasoning&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;     string&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Test cases are loaded from YAML or JSON:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;yaml&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;-&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;&quot;&gt; id&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; reasoning_01&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;&quot;&gt;  input&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; &amp;quot;If A &amp;gt; B and B &amp;gt; C, what&amp;#39;s the relationship between A and C?&amp;quot;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;&quot;&gt;  expected&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; &amp;quot;A &amp;gt; C&amp;quot;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;&quot;&gt;  category&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; reasoning&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;&quot;&gt;  difficulty&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; easy&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h3 id=&quot;layer-2-evaluators-evaluator-go-llm-judge-go-dimension-judge-go&quot;&gt;Layer 2: Evaluators (&lt;code&gt;evaluator.go&lt;&#x2F;code&gt;, &lt;code&gt;llm_judge.go&lt;&#x2F;code&gt;, &lt;code&gt;dimension_judge.go&lt;&#x2F;code&gt;)&lt;&#x2F;h3&gt;
+&lt;p&gt;The core interface:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_eval&#x2F;evaluator.go&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Evaluator&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; interface&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    Name&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;()&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; string&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    Evaluate&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt; tc&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; TestCase&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt; result&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; TestResult&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;) ([]&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;EvalScore&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; error&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Three built-in evaluators:&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;llmjudgeevaluator&quot;&gt;LLMJudgeEvaluator&lt;&#x2F;h4&gt;
+&lt;p&gt;Uses an LLM-as-judge to score outputs. Supports three scales:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_eval&#x2F;llm_judge.go&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;const&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; (&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;    ScaleOneToTen&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;  ScaleType&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F38BA8;&quot;&gt; iota&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; +&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 1&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;  &#x2F;&#x2F; 1-10 scoring&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;    ScaleOneToFive&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;                       &#x2F;&#x2F; 1-5 scoring&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;    ScalePassFail&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;                        &#x2F;&#x2F; binary pass&#x2F;fail&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The judge prompt (simplified):&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;You are evaluating an AI assistant&amp;#39;s response.&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Task: {input}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Expected: {expected}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Actual: {output}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Score the response on a scale of 1-10:&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;- 10: Perfect, matches or exceeds expected&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;- 7-9: Good, minor issues&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;- 4-6: Partial, missing key elements&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;- 1-3: Poor, wrong or irrelevant&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Respond with JSON: {&amp;quot;score&amp;quot;: N, &amp;quot;reasoning&amp;quot;: &amp;quot;...&amp;quot;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;strong&gt;Honest reflection&lt;&#x2F;strong&gt;: LLM-as-judge has a known bias — it prefers longer, more verbose responses. We added a length penalty to the judge prompt, but it&#x27;s a band-aid. The &quot;real&quot; fix is calibrating the judge against human evaluations, which we haven&#x27;t done yet.&lt;&#x2F;p&gt;
+&lt;h4 id=&quot;dimensionjudgeevaluator&quot;&gt;DimensionJudgeEvaluator&lt;&#x2F;h4&gt;
+&lt;p&gt;Scores across multiple dimensions:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_eval&#x2F;dimension_judge.go&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Dimension&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Name&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;      string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;  &#x2F;&#x2F; &amp;quot;accuracy&amp;quot;, &amp;quot;completeness&amp;quot;, &amp;quot;clarity&amp;quot;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Weight&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    MaxScore&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;  float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Each dimension gets its own score, then a weighted aggregate. This is what the evolution engine uses for fitness evaluation.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;layer-3-runner-and-comparison-runner-go-comparison-go-concurrent-runner-go&quot;&gt;Layer 3: Runner and Comparison (&lt;code&gt;runner.go&lt;&#x2F;code&gt;, &lt;code&gt;comparison.go&lt;&#x2F;code&gt;, &lt;code&gt;concurrent_runner.go&lt;&#x2F;code&gt;)&lt;&#x2F;h3&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_eval&#x2F;runner.go&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Runner&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    evaluators&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; []&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Evaluator&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    loader&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;     *&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Loader&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;r &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Runner&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; RunAll&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;) (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Report&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; error&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;r &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Runner&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; RunScenario&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt; scenario&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; string&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;) (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Report&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; error&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The &lt;strong&gt;comparison&lt;&#x2F;strong&gt; layer is where the magic happens:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_eval&#x2F;comparison.go&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Comparison&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Baseline&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;    *&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Report&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Candidate&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;   *&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Report&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Improvements&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; []&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;ScoreDelta&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Regressions&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;   []&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;ScoreDelta&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;This lets us say:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Strategy A (baseline):  average score 7.2&#x2F;10&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Strategy B (candidate): average score 8.1&#x2F;10&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Improvement: +12.5%&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;The &lt;code&gt;concurrent_runner.go&lt;&#x2F;code&gt; runs test cases in parallel, cutting evaluation time from 30 minutes to 3 minutes on a 100-case suite.&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;integration-with-evolution&quot;&gt;Integration with Evolution&lt;&#x2F;h2&gt;
+&lt;p&gt;The evaluation framework is the fitness function for the GA engine (Article XI):&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_bootstrap&#x2F;bootstrap.go (simplified)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; SetupEvaluators&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;llmClient&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; *&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;llm&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Client&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt; registry&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; *&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;eval&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;EvaluatorRegistry&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; error&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    judge&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; err&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span&gt; eval&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;NewLLMJudgeEvaluator&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;llmClient&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        eval&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;WithScale&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;eval&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;ScaleOneToTen&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;),&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        eval&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;WithMaxRetries&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;3&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;),&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;    )&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    if&lt;&#x2F;span&gt;&lt;span&gt; err&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; !=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F38BA8;&quot;&gt; nil&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;        return&lt;&#x2F;span&gt;&lt;span&gt; err&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;    }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    registry&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;Register&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;judge&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    dimJudge&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; err&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span&gt; eval&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;NewDimensionJudgeEvaluator&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;llmClient&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        eval&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;WithDimensions&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;defaultDimensions&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;),&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;    )&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    if&lt;&#x2F;span&gt;&lt;span&gt; err&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; !=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F38BA8;&quot;&gt; nil&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;        return&lt;&#x2F;span&gt;&lt;span&gt; err&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;    }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    registry&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;Register&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;dimJudge&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    return&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F38BA8;&quot;&gt; nil&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;When evolution runs, it:&lt;&#x2F;p&gt;
+&lt;ol&gt;
+&lt;li&gt;Generates a new strategy (via mutation)&lt;&#x2F;li&gt;
+&lt;li&gt;Runs it through the agent&lt;&#x2F;li&gt;
+&lt;li&gt;Evaluates the output with &lt;code&gt;LLMJudgeEvaluator&lt;&#x2F;code&gt;&lt;&#x2F;li&gt;
+&lt;li&gt;Uses the score as fitness for selection&lt;&#x2F;li&gt;
+&lt;&#x2F;ol&gt;
+&lt;p&gt;&lt;strong&gt;Honest reflection&lt;&#x2F;strong&gt;: The LLM judge is expensive — each evaluation is an LLM call. For a 100-case suite with 10 strategies per generation, that&#x27;s 1000 LLM calls per generation. We added caching (same input → same score) and a &quot;fast mode&quot; that only evaluates 10 random cases. But the fundamental cost remains.&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;the-service-layer&quot;&gt;The Service Layer&lt;&#x2F;h2&gt;
+&lt;p&gt;&lt;code&gt;internal&#x2F;ares_eval&#x2F;service&#x2F;&lt;&#x2F;code&gt; exposes the evaluation framework via HTTP:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;service&#x2F;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;├── handler.go       # HTTP handlers&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;├── router.go        # Route registration&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;├── service.go       # Business logic&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;├── repository.go    # Result persistence&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;└── types.go         # API types&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;Endpoints:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;POST &#x2F;eval&#x2F;run&lt;&#x2F;code&gt; — Run an evaluation suite&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;GET &#x2F;eval&#x2F;results&#x2F;{id}&lt;&#x2F;code&gt; — Get results&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;code&gt;POST &#x2F;eval&#x2F;compare&lt;&#x2F;code&gt; — Compare two runs&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;hr &#x2F;&gt;
+&lt;h2 id=&quot;lessons&quot;&gt;Lessons&lt;&#x2F;h2&gt;
+&lt;p&gt;The evaluation framework is the most undervalued module in ares. Nobody asks &quot;how do you evaluate?&quot; in a demo. But without it, evolution is just random mutation — no fitness function, no selection pressure, no improvement.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;The best evaluation framework is the one that makes &quot;is it better?&quot; a question with a numerical answer.&lt;&#x2F;strong&gt; Vibes don&#x27;t scale. Reproducible scores do.&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>Selection Operator Benchmark — Truncation vs Tournament vs Roulette</title>
+        <published>2026-06-28T00:00:00+00:00</published>
+        <updated>2026-06-28T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/ARES/24-3-ga-selection-benchmark/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/ARES/24-3-ga-selection-benchmark/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/ARES/24-3-ga-selection-benchmark/">&lt;h1 id=&quot;selection-operator-benchmark-performance-comparison-truncation-vs-tournament-vs-roulette-measured&quot;&gt;Selection Operator Benchmark Performance Comparison——Truncation vs Tournament vs Roulette Measured&lt;&#x2F;h1&gt;
+&lt;blockquote&gt;
+&lt;p&gt;This article is based on actual measured data from Apple M3 Max, providing a comprehensive performance comparison of the three major selection operators in the ARES GA framework. It covers ns&#x2F;op, memory allocation, complexity scaling with population size, 3-run variance analysis, and practical guidance on choosing the optimal operator based on the scenario. All data comes from real &lt;code&gt;go test -bench&lt;&#x2F;code&gt; output and 3-run multi-round tests.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h2 id=&quot;1-test-environment-and-methodology&quot;&gt;1. Test Environment and Methodology&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;1-1-hardware-platform&quot;&gt;1.1 Hardware Platform&lt;&#x2F;h3&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Item&lt;&#x2F;th&gt;&lt;th&gt;Value&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;CPU&lt;&#x2F;td&gt;&lt;td&gt;Apple M3 Max&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;OS&lt;&#x2F;td&gt;&lt;td&gt;Darwin 24.6.0 (macOS 15)&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Go&lt;&#x2F;td&gt;&lt;td&gt;go1.26.4&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Architecture&lt;&#x2F;td&gt;&lt;td&gt;darwin&#x2F;arm64&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;h3 id=&quot;1-2-data-sources&quot;&gt;1.2 Data Sources&lt;&#x2F;h3&gt;
+&lt;p&gt;This article analyzes two independently run benchmark results:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;evolution_bench.txt&lt;&#x2F;code&gt;&lt;&#x2F;strong&gt;: Single run (&lt;code&gt;-count=1&lt;&#x2F;code&gt;), covering the full evolution system + selection operators&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;genome_bench.txt&lt;&#x2F;code&gt;&lt;&#x2F;strong&gt;: 3 runs (&lt;code&gt;-count=3&lt;&#x2F;code&gt;), providing variance information, genome package only&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;&lt;code&gt;benchmark_results.json&lt;&#x2F;code&gt;&lt;&#x2F;strong&gt;: Summary of 47 benchmarks with performance ratings (excellent&#x2F;good&#x2F;acceptable)&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h3 id=&quot;1-3-subjects-under-test&quot;&gt;1.3 Subjects Under Test&lt;&#x2F;h3&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Operator&lt;&#x2F;th&gt;&lt;th&gt;File&lt;&#x2F;th&gt;&lt;th&gt;Function&lt;&#x2F;th&gt;&lt;th&gt;Complexity&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;TruncationSelection&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;benchmark_test.go:169-197&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;BenchmarkTruncationSelection&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;O(n log n) dominated by sorting&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;TournamentSelection&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;benchmark_test.go:199-233&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;BenchmarkTournamentSelection&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;O(k) per select, k=2,3,5,10&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;RouletteWheelSelection&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;benchmark_test.go:235-266&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;BenchmarkRouletteWheelSelection&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;O(n) per spin&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;SortByScore&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;benchmark_test.go:268-300&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;code&gt;BenchmarkSortByScore&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;O(n log n) baseline sorting&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;All tests use &lt;code&gt;b.ReportAllocs()&lt;&#x2F;code&gt; to report memory allocation, with controlled RNG seeds for reproducibility.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;2-detailed-benchmark-data&quot;&gt;2. Detailed Benchmark Data&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;2-1-truncationselection&quot;&gt;2.1 TruncationSelection&lt;&#x2F;h3&gt;
+&lt;p&gt;Selection strategy: sort by score descending → take top N% (top 30% in the test). Total cost is almost entirely dominated by sorting.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;Single run results&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Population&lt;&#x2F;th&gt;&lt;th&gt;ns&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;Relative to pop=10&lt;&#x2F;th&gt;&lt;th&gt;B&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;allocs&#x2F;op&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;10&lt;&#x2F;td&gt;&lt;td&gt;183.2&lt;&#x2F;td&gt;&lt;td&gt;1.0×&lt;&#x2F;td&gt;&lt;td&gt;136&lt;&#x2F;td&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;100&lt;&#x2F;td&gt;&lt;td&gt;5,490&lt;&#x2F;td&gt;&lt;td&gt;30.0×&lt;&#x2F;td&gt;&lt;td&gt;952&lt;&#x2F;td&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;500&lt;&#x2F;td&gt;&lt;td&gt;46,136&lt;&#x2F;td&gt;&lt;td&gt;252×&lt;&#x2F;td&gt;&lt;td&gt;4,152&lt;&#x2F;td&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;1,000&lt;&#x2F;td&gt;&lt;td&gt;129,687&lt;&#x2F;td&gt;&lt;td&gt;708×&lt;&#x2F;td&gt;&lt;td&gt;8,248&lt;&#x2F;td&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;3-run variance analysis&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Population&lt;&#x2F;th&gt;&lt;th&gt;Run 1&lt;&#x2F;th&gt;&lt;th&gt;Run 2&lt;&#x2F;th&gt;&lt;th&gt;Run 3&lt;&#x2F;th&gt;&lt;th&gt;Mean&lt;&#x2F;th&gt;&lt;th&gt;Std Dev&lt;&#x2F;th&gt;&lt;th&gt;CV&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;pop_10&lt;&#x2F;td&gt;&lt;td&gt;189.6&lt;&#x2F;td&gt;&lt;td&gt;189.1&lt;&#x2F;td&gt;&lt;td&gt;189.3&lt;&#x2F;td&gt;&lt;td&gt;189.3&lt;&#x2F;td&gt;&lt;td&gt;0.25&lt;&#x2F;td&gt;&lt;td&gt;0.1%&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;pop_100&lt;&#x2F;td&gt;&lt;td&gt;6,280&lt;&#x2F;td&gt;&lt;td&gt;6,445&lt;&#x2F;td&gt;&lt;td&gt;5,986&lt;&#x2F;td&gt;&lt;td&gt;6,237&lt;&#x2F;td&gt;&lt;td&gt;229&lt;&#x2F;td&gt;&lt;td&gt;3.7%&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;pop_500&lt;&#x2F;td&gt;&lt;td&gt;96,348&lt;&#x2F;td&gt;&lt;td&gt;47,130&lt;&#x2F;td&gt;&lt;td&gt;47,460&lt;&#x2F;td&gt;&lt;td&gt;63,646&lt;&#x2F;td&gt;&lt;td&gt;&lt;strong&gt;28,421&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;strong&gt;44.7%&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;pop_1000&lt;&#x2F;td&gt;&lt;td&gt;129,447&lt;&#x2F;td&gt;&lt;td&gt;128,635&lt;&#x2F;td&gt;&lt;td&gt;127,716&lt;&#x2F;td&gt;&lt;td&gt;128,599&lt;&#x2F;td&gt;&lt;td&gt;865&lt;&#x2F;td&gt;&lt;td&gt;0.7%&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;Key finding&lt;&#x2F;strong&gt;: Run 1 of pop_500 at 96,348 ns is clearly abnormal (about 2× the latter two runs). This is likely due to &lt;strong&gt;GC triggering + memory allocation from the sort operation causing first-run latency&lt;&#x2F;strong&gt;. Excluding run 1, the pop_500 mean is 47,295 ns, consistent with the scaling trend.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;2-2-tournamentselection&quot;&gt;2.2 TournamentSelection&lt;&#x2F;h3&gt;
+&lt;p&gt;Randomly draw k individuals from the population and select the best among them. The test selects half the population (25 out of 50 for pop=50, 100 out of 200 for pop=200).&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;pop=50 (select 25)&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;k&lt;&#x2F;th&gt;&lt;th&gt;ns&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;B&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;allocs&#x2F;op&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;2&lt;&#x2F;td&gt;&lt;td&gt;2,822&lt;&#x2F;td&gt;&lt;td&gt;10,808&lt;&#x2F;td&gt;&lt;td&gt;51&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;td&gt;2,972&lt;&#x2F;td&gt;&lt;td&gt;10,808&lt;&#x2F;td&gt;&lt;td&gt;51&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;5&lt;&#x2F;td&gt;&lt;td&gt;3,188&lt;&#x2F;td&gt;&lt;td&gt;10,808&lt;&#x2F;td&gt;&lt;td&gt;51&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;10&lt;&#x2F;td&gt;&lt;td&gt;3,917&lt;&#x2F;td&gt;&lt;td&gt;10,808&lt;&#x2F;td&gt;&lt;td&gt;51&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;pop=200 (select 100)&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;k&lt;&#x2F;th&gt;&lt;th&gt;ns&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;B&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;allocs&#x2F;op&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;2&lt;&#x2F;td&gt;&lt;td&gt;29,651&lt;&#x2F;td&gt;&lt;td&gt;180,896&lt;&#x2F;td&gt;&lt;td&gt;201&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;td&gt;30,221&lt;&#x2F;td&gt;&lt;td&gt;180,897&lt;&#x2F;td&gt;&lt;td&gt;201&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;5&lt;&#x2F;td&gt;&lt;td&gt;31,300&lt;&#x2F;td&gt;&lt;td&gt;180,897&lt;&#x2F;td&gt;&lt;td&gt;201&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;10&lt;&#x2F;td&gt;&lt;td&gt;33,662&lt;&#x2F;td&gt;&lt;td&gt;180,897&lt;&#x2F;td&gt;&lt;td&gt;201&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;k-value cost analysis&lt;&#x2F;strong&gt; (pop=200, 3-run mean):&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;k&lt;&#x2F;th&gt;&lt;th&gt;ns&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;Relative to k=2&lt;&#x2F;th&gt;&lt;th&gt;Cost per Select&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;2&lt;&#x2F;td&gt;&lt;td&gt;36,908&lt;&#x2F;td&gt;&lt;td&gt;1.00×&lt;&#x2F;td&gt;&lt;td&gt;369 ns&#x2F;select ②&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;td&gt;36,712&lt;&#x2F;td&gt;&lt;td&gt;0.99×&lt;&#x2F;td&gt;&lt;td&gt;367 ns&#x2F;select&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;5&lt;&#x2F;td&gt;&lt;td&gt;38,589&lt;&#x2F;td&gt;&lt;td&gt;1.05×&lt;&#x2F;td&gt;&lt;td&gt;386 ns&#x2F;select&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;10&lt;&#x2F;td&gt;&lt;td&gt;41,018&lt;&#x2F;td&gt;&lt;td&gt;1.11×&lt;&#x2F;td&gt;&lt;td&gt;410 ns&#x2F;select&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;② Cost per Select = total time &#x2F; number of selections. pop=200 with selectN=100, 100 selections total.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;Key finding&lt;&#x2F;strong&gt;: Increasing k from 2 to 10 (5×) only results in approximately 11% performance degradation. This is because the &lt;code&gt;pickUniqueIndices()&lt;&#x2F;code&gt; implementation is O(poolSize) rather than O(k)——it randomly picks across the entire population, so the cost is largely independent of k.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;2-3-roulettewheelselection&quot;&gt;2.3 RouletteWheelSelection&lt;&#x2F;h3&gt;
+&lt;p&gt;Fitness-proportional selection: individuals with higher scores have a greater probability of being selected. Each selection traverses the entire population to compute cumulative probabilities.&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;Single run results&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Population&lt;&#x2F;th&gt;&lt;th&gt;ns&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;B&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;allocs&#x2F;op&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;10&lt;&#x2F;td&gt;&lt;td&gt;204.9&lt;&#x2F;td&gt;&lt;td&gt;320&lt;&#x2F;td&gt;&lt;td&gt;4&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;100&lt;&#x2F;td&gt;&lt;td&gt;2,760&lt;&#x2F;td&gt;&lt;td&gt;3,424&lt;&#x2F;td&gt;&lt;td&gt;7&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;500&lt;&#x2F;td&gt;&lt;td&gt;41,703&lt;&#x2F;td&gt;&lt;td&gt;15,424&lt;&#x2F;td&gt;&lt;td&gt;9&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;1,000&lt;&#x2F;td&gt;&lt;td&gt;151,649&lt;&#x2F;td&gt;&lt;td&gt;29,760&lt;&#x2F;td&gt;&lt;td&gt;10&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;3-run variance analysis&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Population&lt;&#x2F;th&gt;&lt;th&gt;Mean ns&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;Std Dev&lt;&#x2F;th&gt;&lt;th&gt;CV&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;pop_10&lt;&#x2F;td&gt;&lt;td&gt;211.7&lt;&#x2F;td&gt;&lt;td&gt;2.6&lt;&#x2F;td&gt;&lt;td&gt;1.2%&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;pop_100&lt;&#x2F;td&gt;&lt;td&gt;2,905&lt;&#x2F;td&gt;&lt;td&gt;9.0&lt;&#x2F;td&gt;&lt;td&gt;0.3%&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;pop_500&lt;&#x2F;td&gt;&lt;td&gt;41,983&lt;&#x2F;td&gt;&lt;td&gt;448&lt;&#x2F;td&gt;&lt;td&gt;1.1%&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;pop_1000&lt;&#x2F;td&gt;&lt;td&gt;151,874&lt;&#x2F;td&gt;&lt;td&gt;975&lt;&#x2F;td&gt;&lt;td&gt;0.6%&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;Key finding&lt;&#x2F;strong&gt;: Roulette results are very stable, with the coefficient of variation consistently around 1%. This is because its computation path is highly predictable——each time it traverses the entire population to compute cumulative probabilities, with no branch prediction issues like sorting.&lt;&#x2F;p&gt;
+&lt;h3 id=&quot;2-4-sortbyscore&quot;&gt;2.4 SortByScore&lt;&#x2F;h3&gt;
+&lt;p&gt;Not an independent selection operator, but a foundational operation used by most selectors (truncation, rank, lineage rank, etc.).&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;Single run results&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Population&lt;&#x2F;th&gt;&lt;th&gt;ns&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;B&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;allocs&#x2F;op&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;10&lt;&#x2F;td&gt;&lt;td&gt;229.0&lt;&#x2F;td&gt;&lt;td&gt;136&lt;&#x2F;td&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;100&lt;&#x2F;td&gt;&lt;td&gt;5,765&lt;&#x2F;td&gt;&lt;td&gt;952&lt;&#x2F;td&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;500&lt;&#x2F;td&gt;&lt;td&gt;44,288&lt;&#x2F;td&gt;&lt;td&gt;4,152&lt;&#x2F;td&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;1,000&lt;&#x2F;td&gt;&lt;td&gt;116,356&lt;&#x2F;td&gt;&lt;td&gt;8,248&lt;&#x2F;td&gt;&lt;td&gt;3&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;3-run mean&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Population&lt;&#x2F;th&gt;&lt;th&gt;mean ns&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;Std Dev&lt;&#x2F;th&gt;&lt;th&gt;Theoretical O(n log n)&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;10&lt;&#x2F;td&gt;&lt;td&gt;222.4&lt;&#x2F;td&gt;&lt;td&gt;2.9&lt;&#x2F;td&gt;&lt;td&gt;10·log₂10 ≈ 33&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;100&lt;&#x2F;td&gt;&lt;td&gt;5,741&lt;&#x2F;td&gt;&lt;td&gt;24&lt;&#x2F;td&gt;&lt;td&gt;100·log₂100 ≈ 664&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;500&lt;&#x2F;td&gt;&lt;td&gt;42,180&lt;&#x2F;td&gt;&lt;td&gt;161&lt;&#x2F;td&gt;&lt;td&gt;500·log₂500 ≈ 4,483&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;1000&lt;&#x2F;td&gt;&lt;td&gt;112,674&lt;&#x2F;td&gt;&lt;td&gt;329&lt;&#x2F;td&gt;&lt;td&gt;1000·log₂1000 ≈ 9,966&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;Key finding&lt;&#x2F;strong&gt;: SortByScore has extremely low 3-run variance (&amp;lt;1%), making it the most predictable operation. The test includes 20% unevaluated strategies (Score=-1), which are placed at the end during sorting, not affecting the stable sorting property.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;3-complexity-analysis-and-scaling-comparison&quot;&gt;3. Complexity Analysis and Scaling Comparison&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;3-1-algorithmic-complexity-vs-measured&quot;&gt;3.1 Algorithmic Complexity vs Measured&lt;&#x2F;h3&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Complexity comparison (time unit: ns&#x2F;op):&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;                pop=10    pop=100   pop=500   pop=1000&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Truncation:       183      5,490    46,136    129,687    O(n log n)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;SortByScore:      229      5,765    44,288    116,356    O(n log n)  &lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Roulette:         205      2,760    41,703    151,649    O(n²) ③&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Tournament(k=2):  -         -       2,822④    29,651⑤   O(k·n)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;③ Roulette selects n&#x2F;2 individuals = executes n&#x2F;2 traversals, each O(n), total complexity O(n²)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;④ pop=50, selectN=25&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;⑤ pop=200, selectN=100&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;strong&gt;Key insights&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Truncation and Roulette cross over around pop=500&lt;&#x2F;strong&gt;: Roulette is faster when pop&amp;lt;500, but Truncation overtakes it when pop&amp;gt;500. This is because the O(n log n) cost of sorting is not significant for small n, while the O(n²) cost of roulette accelerates as n grows.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;Tournament&#x27;s memory consumption is the biggest challenge&lt;&#x2F;strong&gt;: At pop=200, it uses up to 180KB&#x2F;op, 22× that of truncation. This is because each Select creates a result slice.&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h3 id=&quot;3-2-partition-analysis-by-population-size&quot;&gt;3.2 Partition Analysis by Population Size&lt;&#x2F;h3&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Small populations (pop &amp;lt; 50):&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Operator       ns&#x2F;op    Recommendation&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Truncation      183     ★★★★★  (Best)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Roulette        205     ★★★★☆  (Close)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Tournament      2,822   ★★★☆☆  (at pop=50)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Medium populations (pop 100-500):&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Operator       ns&#x2F;op    Recommendation  &lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Roulette(p=100) 2,760  ★★★★★  (Best, 4.1μs&#x2F;select)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Truncation(p=100)5,490  ★★★★☆  (≈ 2× roulette)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Tournament(p=200)29,651 ★★★☆☆  (7× roulette)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Large populations (pop 1000+):&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Operator       ns&#x2F;op    Recommendation&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Truncation    129,687   ★★★★★  (Best)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Roulette      151,649   ★★★★☆  (17% slower than truncation)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Tournament     ~33,662⑥ ★★★★★  (Selects half of all, but higher precision)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;⑥ Tournament(pop=200) conversion: selecting all 1000 individuals would require approximately 10× time ≈ 336,620 ns&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h2 id=&quot;4-in-depth-memory-allocation-analysis&quot;&gt;4. In-depth Memory Allocation Analysis&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;4-1-allocation-pattern-comparison&quot;&gt;4.1 Allocation Pattern Comparison&lt;&#x2F;h3&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Operator&lt;&#x2F;th&gt;&lt;th&gt;pop=10&lt;&#x2F;th&gt;&lt;th&gt;pop=100&lt;&#x2F;th&gt;&lt;th&gt;pop=500&lt;&#x2F;th&gt;&lt;th&gt;pop=1000&lt;&#x2F;th&gt;&lt;th&gt;Allocation Source&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;Truncation&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;136 B &#x2F; 3 allocs&lt;&#x2F;td&gt;&lt;td&gt;952 B &#x2F; 3&lt;&#x2F;td&gt;&lt;td&gt;4,152 B &#x2F; 3&lt;&#x2F;td&gt;&lt;td&gt;8,248 B &#x2F; 3&lt;&#x2F;td&gt;&lt;td&gt;Copying slice for sorting&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;Tournament&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;-&lt;&#x2F;td&gt;&lt;td&gt;10,808 B &#x2F; 51 allocs&lt;&#x2F;td&gt;&lt;td&gt;-&lt;&#x2F;td&gt;&lt;td&gt;180,897 B &#x2F; 201&lt;&#x2F;td&gt;&lt;td&gt;Selection result slice + dedup map&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;Roulette&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;320 B &#x2F; 4&lt;&#x2F;td&gt;&lt;td&gt;3,424 B &#x2F; 7&lt;&#x2F;td&gt;&lt;td&gt;15,424 B &#x2F; 9&lt;&#x2F;td&gt;&lt;td&gt;29,760 B &#x2F; 10&lt;&#x2F;td&gt;&lt;td&gt;Cumulative probability + selection result&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;&lt;strong&gt;Key observations&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Truncation has the most stable allocation&lt;&#x2F;strong&gt;: Always 3 allocations, only copies the population slice. alloc count does not vary with scale.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;Tournament allocation grows linearly with population&lt;&#x2F;strong&gt;: 201 allocations (pop=200)——approximately 1 map operation for deduplication per select. This is the biggest optimization opportunity.&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;Roulette allocation grows slowly&lt;&#x2F;strong&gt;: From 4 (pop=10) to 10 (pop=1000), primarily from the cumulative probability array.&lt;&#x2F;li&gt;
+&lt;&#x2F;ol&gt;
+&lt;h3 id=&quot;4-2-average-cost-per-select&quot;&gt;4.2 Average Cost per Select&lt;&#x2F;h3&gt;
+&lt;p&gt;Calculating the marginal cost of &quot;selecting one individual&quot; by dividing total time by the number of selected individuals:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;pop=500, selectN=250:&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Truncation:  46,136 ns &#x2F; 250 = 184.5 ns&#x2F;select&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Roulette:    41,703 ns &#x2F; 250 = 166.8 ns&#x2F;select&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Tournament⑦: 46,136 &#x2F; (500×0.5) &#x2F; 50 ≈ difficult to compare&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;⑦ Tournament&amp;#39;s Select() returns n individuals, but the internal cost per select&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;   is primarily determined by k (pickUniqueIndices → sort → pick best).&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;strong&gt;Key insight&lt;&#x2F;strong&gt;: At medium scale (pop=500), Roulette&#x27;s marginal cost per select (166.8 ns) is actually lower than Truncation&#x27;s (184.5 ns). This is because truncation requires sorting all 500 individuals at once, while roulette&#x27;s batch selection amortizes the cost of building the cumulative probability array.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;5-overall-evolution-system-performance-data&quot;&gt;5. Overall Evolution System Performance Data&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;5-1-full-evolution-cycle-benchmarks&quot;&gt;5.1 Full Evolution Cycle Benchmarks&lt;&#x2F;h3&gt;
+&lt;p&gt;End-to-end evolution system performance extracted from &lt;code&gt;benchmark_results.json&lt;&#x2F;code&gt;:&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Benchmark&lt;&#x2F;th&gt;&lt;th&gt;ns&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;Allocs&#x2F;op&lt;&#x2F;th&gt;&lt;th&gt;Rating&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;DreamCycle single run&lt;&#x2F;td&gt;&lt;td&gt;25,000&lt;&#x2F;td&gt;&lt;td&gt;4,500 B &#x2F; 65 allocs&lt;&#x2F;td&gt;&lt;td&gt;good&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;System creation pop=10&lt;&#x2F;td&gt;&lt;td&gt;45,000&lt;&#x2F;td&gt;&lt;td&gt;12,000 B &#x2F; 180 allocs&lt;&#x2F;td&gt;&lt;td&gt;good&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;System creation pop=100&lt;&#x2F;td&gt;&lt;td&gt;175,000&lt;&#x2F;td&gt;&lt;td&gt;68,000 B &#x2F; 920 allocs&lt;&#x2F;td&gt;&lt;td&gt;acceptable&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;Idle evolution 10 generations&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;strong&gt;420,000&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;strong&gt;150,000 B &#x2F; 5,000 allocs&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;&lt;strong&gt;acceptable&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Idle evolution 100 generations&lt;&#x2F;td&gt;&lt;td&gt;4,100,000&lt;&#x2F;td&gt;&lt;td&gt;1,500,000 B &#x2F; 50,000 allocs&lt;&#x2F;td&gt;&lt;td&gt;acceptable&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Full pipeline&lt;&#x2F;td&gt;&lt;td&gt;2,300,000&lt;&#x2F;td&gt;&lt;td&gt;850,000 B &#x2F; 28,000 allocs&lt;&#x2F;td&gt;&lt;td&gt;acceptable&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Adaptive mutation (fixed)&lt;&#x2F;td&gt;&lt;td&gt;1,600,000&lt;&#x2F;td&gt;&lt;td&gt;600,000 B &#x2F; 20,000 allocs&lt;&#x2F;td&gt;&lt;td&gt;acceptable&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;h3 id=&quot;5-2-selection-operator-share-of-total-evolution-time&quot;&gt;5.2 Selection Operator Share of Total Evolution Time&lt;&#x2F;h3&gt;
+&lt;p&gt;Using idle evolution for 10 generations at pop=20 (420μs) as an example:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Total time: 420,000 ns&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Of which per generation:&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Selection operation (tournament, select 50%): ~6,000 ns × 10 = 60,000 ns&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Mutation operation: ~10,000 ns × 10 = 100,000 ns&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Evaluation: ~30,000 ns × 10 = 300,000 ns&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Other overhead (snapshots, lineage records, etc.): ~60,000 ns&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Selection operations account for approximately 14% of total time.&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;strong&gt;Note&lt;&#x2F;strong&gt;: In actual LLM-driven evolution, &lt;strong&gt;LLM call cost accounts for 99%+&lt;&#x2F;strong&gt;. The computational overhead of selection operations (microseconds) is negligible compared to a single LLM API call&#x27;s latency (seconds). Therefore, in real-world scenarios, the &lt;strong&gt;algorithmic effectiveness&lt;&#x2F;strong&gt; (solution quality) of the selection operator is far more important than its &lt;strong&gt;computational efficiency&lt;&#x2F;strong&gt;.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;6-application-scenario-guide-for-each-operator&quot;&gt;6. Application Scenario Guide for Each Operator&lt;&#x2F;h2&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;┌─────────────────────────────────────────────────────────┐&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│                  Selection Operator Matrix                │&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;├────────────┬──────────┬──────────┬──────────┬───────────┤&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  Scenario   │Truncation│Tournament│ Roulette │ Best Pick │&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;├────────────┼──────────┼──────────┼──────────┼───────────┤&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  Rapid proto│    ✓     │          │    ✓✓    │ Roulette  │&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  LLM-driven │    ✓     │    ✓✓    │    ✓     │ Tournament│&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  pop&amp;lt;50     │    ✓✓    │          │    ✓✓    │ Truncation│&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  pop 100-500│    ✓✓    │    ✓     │    ✓✓    │ Roulette  │&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  pop&amp;gt;1000   │    ✓     │    ✓✓    │          │ Tournament│&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  Sorted output│   ✓✓   │          │          │ Truncation│&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  Selection   │          │    ✓✓    │          │ Tournament│&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  pressure ctl│          │          │          │           │&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  Low memory  │    ✓✓    │          │    ✓✓    │ Truncation│&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  Lineage     │          │    ✓✓    │          │ LineageRank│&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;│  diversity   │          │          │          │           │&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;└────────────┴──────────┴──────────┴──────────┴───────────┘&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;&lt;h3 id=&quot;6-1-recommended-usage-conditions-for-each-operator&quot;&gt;6.1 Recommended Usage Conditions for Each Operator&lt;&#x2F;h3&gt;
+&lt;p&gt;&lt;strong&gt;TruncationSelection&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;When to use: Small to medium populations (pop ≤ 500), need deterministic output, memory-sensitive&lt;&#x2F;li&gt;
+&lt;li&gt;When not to use: When exploration is needed (truncation&#x27;s elitism accelerates convergence), or when sorting cost is non-negligible at very large pop sizes&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;&lt;strong&gt;TournamentSelection&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;When to use: Need fine-grained control over selection pressure (via k value), very large populations (cost independent of size)&lt;&#x2F;li&gt;
+&lt;li&gt;When not to use: Sensitive to per-run memory allocation (201 allocs&#x2F;op for pop=200), need deterministic scenarios (non-seeded non-deterministic)&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;&lt;strong&gt;RouletteWheelSelection&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;When to use: Medium populations (100 ≤ pop ≤ 500), want score differences to drive selection probability&lt;&#x2F;li&gt;
+&lt;li&gt;When not to use: Score differences are very small (all individuals have similar scores, making selection nearly random), O(n²) cost is significant at very large pop sizes&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h2 id=&quot;7-benchmark-code-analysis&quot;&gt;7. Benchmark Code Analysis&lt;&#x2F;h2&gt;
+&lt;h3 id=&quot;7-1-benchmark-test-design-quality&quot;&gt;7.1 Benchmark Test Design Quality&lt;&#x2F;h3&gt;
+&lt;p&gt;Design considerations for the three selection operator benchmarks:&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; Truncation: sort + slice, excluding selector object creation&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; Only measures the core operations of sorting and taking top-N&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;ResetTimer&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;for&lt;&#x2F;span&gt;&lt;span&gt; i&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 0&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;span&gt; i&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; &amp;lt;&lt;&#x2F;span&gt;&lt;span&gt; b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;N&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;span&gt; i&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;++&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    sorted&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; make&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;([]&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;mutation&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Strategy&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; len&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;population&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;))&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    copy&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;sorted&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; population&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    SortByScore&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;sorted&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    _&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span&gt; sorted&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;[:&lt;&#x2F;span&gt;&lt;span&gt;selectN&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;]&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; Tournament: includes selector creation, because NewTournamentSelection has parameter configuration&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; Selector creation is outside ResetTimer, does not affect timing&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;sel&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; _&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; NewTournamentSelection&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;WithTournamentSize&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;k&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;),&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; WithTournamentSeed&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;42&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;))&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;ResetTimer&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;for&lt;&#x2F;span&gt;&lt;span&gt; i&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 0&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;span&gt; i&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; &amp;lt;&lt;&#x2F;span&gt;&lt;span&gt; b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;N&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;span&gt; i&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;++&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    _&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; _&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span&gt; sel&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;Select&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; population&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; selectN&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; Roulette: similarly starts timing only after selector creation&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;sel&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; _&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; NewRouletteWheelSelection&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;WithRouletteSeed&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;42&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;))&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;ResetTimer&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;for&lt;&#x2F;span&gt;&lt;span&gt; i&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 0&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;span&gt; i&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; &amp;lt;&lt;&#x2F;span&gt;&lt;span&gt; b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;N&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;span&gt; i&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;++&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    _&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; _&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span&gt; sel&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;Select&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; population&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; selectN&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;strong&gt;Design differences&lt;&#x2F;strong&gt;:&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;Truncation uses an inline implementation (not through the Select method) to reduce function call overhead, providing a purer measurement of sorting + truncation cost&lt;&#x2F;li&gt;
+&lt;li&gt;Tournament and Roulette both measure the full operator call path via the &lt;code&gt;sel.Select()&lt;&#x2F;code&gt; method&lt;&#x2F;li&gt;
+&lt;li&gt;All benchmarks complete RNG seeding and data generation before &lt;code&gt;ResetTimer()&lt;&#x2F;code&gt;&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h3 id=&quot;7-2-3-run-variance-analysis-summary&quot;&gt;7.2 3-Run Variance Analysis Summary&lt;&#x2F;h3&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;Benchmark&lt;&#x2F;th&gt;&lt;th&gt;Best Case CV&lt;&#x2F;th&gt;&lt;th&gt;Worst Case CV&lt;&#x2F;th&gt;&lt;th&gt;Stability Rating&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;SortByScore&lt;&#x2F;td&gt;&lt;td&gt;0.3% (pop=1000)&lt;&#x2F;td&gt;&lt;td&gt;1.3% (pop=10)&lt;&#x2F;td&gt;&lt;td&gt;★★★★★&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;RouletteWheel&lt;&#x2F;td&gt;&lt;td&gt;0.3% (pop=100)&lt;&#x2F;td&gt;&lt;td&gt;1.2% (pop=10)&lt;&#x2F;td&gt;&lt;td&gt;★★★★★&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Tournament&lt;&#x2F;td&gt;&lt;td&gt;0.4% (k=3&#x2F;pop=50)&lt;&#x2F;td&gt;&lt;td&gt;2.6% (k=2&#x2F;pop=200)&lt;&#x2F;td&gt;&lt;td&gt;★★★★☆&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Truncation&lt;&#x2F;td&gt;&lt;td&gt;0.1% (pop=10)&lt;&#x2F;td&gt;&lt;td&gt;&lt;strong&gt;44.7% (pop=500)&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;★★☆☆☆&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;Truncation&#x27;s large variance stems from GC interference in the first run. Excluding the first run, pop=500&#x27;s CV drops to 0.5%, comparable to SortByScore——which also confirms that Truncation&#x27;s cost comes almost entirely from the sorting operation.&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;8-summary&quot;&gt;8. Summary&lt;&#x2F;h2&gt;
+&lt;ol&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Small populations (pop ≤ 50)&lt;&#x2F;strong&gt;: Truncation is the fastest selector (183ns), but Roulette is also close (205ns). The differences among the three are at the microsecond level, essentially negligible.&lt;&#x2F;p&gt;
+&lt;&#x2F;li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Medium populations (100 ≤ pop ≤ 500)&lt;&#x2F;strong&gt;: Roulette is the optimal choice——below 3μs (pop=100) to 42μs (pop=500), with extremely low variance (&amp;lt;1.2%). Truncation requires about 2× the time at pop=100.&lt;&#x2F;p&gt;
+&lt;&#x2F;li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Large populations (pop ≥ 1000)&lt;&#x2F;strong&gt;: Truncation overtakes Roulette (129μs vs 152μs, 17% faster). Tournament becomes the best choice for very large populations due to its O(k) cost and selection pressure control that is independent of population size.&lt;&#x2F;p&gt;
+&lt;&#x2F;li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Tournament&#x27;s k value has minimal impact&lt;&#x2F;strong&gt;: Increasing k from 2 to 10 (5× growth) produces only about an 11% performance difference. Larger k values can be safely used to increase selection pressure.&lt;&#x2F;p&gt;
+&lt;&#x2F;li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;In modern evolution systems, computational efficiency is no longer the primary constraint&lt;&#x2F;strong&gt;: In LLM-driven evolution, a single API call takes seconds, while selection operations take only microseconds. Therefore, the &lt;strong&gt;algorithmic effectiveness&lt;&#x2F;strong&gt; (population diversity, convergence speed, solution quality) of the selection operator is far more important than its performance numbers.&lt;&#x2F;p&gt;
+&lt;&#x2F;li&gt;
+&lt;li&gt;
+&lt;p&gt;&lt;strong&gt;Memory allocation is the most easily overlooked cost&lt;&#x2F;strong&gt;: Tournament allocates 180KB per operation (201 allocs) at pop=200, while Truncation allocates only 8KB (3 allocs). In high-frequency call scenarios, this will significantly increase GC pressure.&lt;&#x2F;p&gt;
+&lt;&#x2F;li&gt;
+&lt;&#x2F;ol&gt;
+</content>
+        
+    </entry>
+</feed>
