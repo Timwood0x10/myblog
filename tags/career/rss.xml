@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:atom="http://www.w3.org/2005/Atom" version="2.0">
+    <channel>
+      <title>Timwood0x10 - Career</title>
+      <link>https://Timwood0x10.github.io/myblog</link>
+      <description>Tim Wood — memory safety, static analysis, and AI infrastructure.</description>
+      <generator>Zola</generator>
+      <language>en</language>
+      <atom:link href="https://Timwood0x10.github.io/myblog/tags/career/rss.xml" rel="self" type="application/rss+xml"/>
+      <lastBuildDate>Thu, 16 Jul 2026 00:00:00 +0000</lastBuildDate>
+      <item>
+          <title>离开 Web3 的那天</title>
+          <pubDate>Thu, 16 Jul 2026 00:00:00 +0000</pubDate>
+          <author>Unknown</author>
+          <link>https://Timwood0x10.github.io/myblog/log/decision-archaeology/12-leaving-web3/</link>
+          <guid>https://Timwood0x10.github.io/myblog/log/decision-archaeology/12-leaving-web3/</guid>
+          <description xml:base="https://Timwood0x10.github.io/myblog/log/decision-archaeology/12-leaving-web3/">&lt;h1 id=&quot;chi-kai-web3-de-na-tian&quot;&gt;离开 Web3 的那天&lt;&#x2F;h1&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Problem&lt;&#x2F;strong&gt;: 我 fork 了 Evmos 的 ethermint，把 Tendermint 共识移植到 sei-tendermint，写了一条 EVM 兼容链。共识、出块、状态机、EVM 兼容层——全栈都碰过，最后一条提交停在 2023-05-08，共 1465 次提交。然后某个时刻我意识到：这条路上最让我兴奋的，不是&quot;谁先出块&quot;，而是&quot;为什么这段 Rust 代码的内存我看不见&quot;。离开 Web3，是哪个决策？&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h2 id=&quot;xian-shuo-qing-chu-yi-tai-wang-bu-shi-wo-sui-shou-xie-de-wan-ju&quot;&gt;先说清楚：以太网不是我随手写的玩具&lt;&#x2F;h2&gt;
+&lt;p&gt;它不是我 fork 来练手的 demo。仓库标题原话是：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&quot;fork from evmos and change tendermint to sei-tendermint&quot;&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;分支名叫 &lt;code&gt;switch_consensus_to_sei_tendermint&lt;&#x2F;code&gt;。上游 ethermint 是什么？README 自己写的是：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&quot;Ethermint is a scalable and interoperable Ethereum library, built on Proof-of-Stake with fast-finality using the Cosmos SDK which runs on top of Tendermint Core consensus engine.&quot;&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;也就是说，这是一条&lt;strong&gt;跑在 Cosmos SDK 上、用 PoS 拿快速最终性、但把 EVM 当状态机&lt;&#x2F;strong&gt;的链。我的工作是把地基从 Tendermint Core 换到 Sei 定制的 sei-tendermint。技术栈是 Go 1.19+，依赖里 geth 升到了 v1.10.25、cosmos-sdk 固定在 0.46.11、iavl 0.19.4，协议层还把 LGPLv3 重新授权过（那次 relicensing 是 #800）。&lt;&#x2F;p&gt;
+&lt;p&gt;我在这个仓库里动过的东西是具体的：&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;共识切换&lt;&#x2F;strong&gt;：把整条链的出块引擎从 Tendermint 换到 sei-tendermint，意味着 proposal &#x2F; prevote &#x2F; precommit 那套 BFT 时序要重新接，出块间隔、超时参数、状态机 fork 逻辑都得重新校准；&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;EVM 兼容层&lt;&#x2F;strong&gt;：&lt;code&gt;x&#x2F;evm&lt;&#x2F;code&gt; 模块的 EIP-712 算法从 Evmos 迁过来（#1746），params 重构到单一 key 下（#1617）；&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;客户端边界&lt;&#x2F;strong&gt;：&lt;code&gt;rpc&lt;&#x2F;code&gt; 默认绑定从 &lt;code&gt;0.0.0.0&lt;&#x2F;code&gt; 收紧到 &lt;code&gt;localhost&lt;&#x2F;code&gt;（#1613），&lt;code&gt;cmd&lt;&#x2F;code&gt; 支持自定义 db opener（#1615）；&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;依赖与安全&lt;&#x2F;strong&gt;：因为安全修复 bump 了 btcd 和 cosmos-sdk（#1716）。&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;这些都是&lt;strong&gt;扎实的分布式系统工程&lt;&#x2F;strong&gt;。Tendermint 用 BFT 把&quot;互不信任的节点如何就同一份账本达成一致&quot;解决得很漂亮，调出块间隔、改状态机、处理 EVM 边界——没有一行是糊弄的。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;dan-zha-shi-bu-deng-yu-rang-wo-zai-hu&quot;&gt;但&quot;扎实&quot;不等于&quot;让我在乎&quot;&lt;&#x2F;h2&gt;
+&lt;p&gt;三年下来，一个事实越来越清楚：&lt;strong&gt;共识解决的是&quot;别人值不值得信&quot;，而我真正睡不着觉的问题是&quot;我自己的程序到底有没有偷偷漏内存&quot;。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;p&gt;前者是分布式系统的尊严，后者是每一个写 Rust 的人都在疼、却很少有人正面去治的伤口。我在 Web3 的每一天都在和&quot;节点会不会分叉&quot;&quot;状态机边界对不对&quot;缠斗，但收工之后回过头，真正让我兴奋的瞬间，是看一段 Rust 代码时那个挥之不去的念头——&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;这块内存到底被几个智能指针共享了？循环引用是不是悄悄长出来了？编译器说&quot;安全&quot;，可它根本没告诉我它在干什么。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;一个诡异的认知错位：我白天在 Go 里写共识，夜里却对 Rust 的内存模型念念不忘。语言错位本身就是信号——我的问题域，从来不在&quot;谁先出块&quot;。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;na-ge-ci-tong-wo-de-shun-jian&quot;&gt;那个刺痛我的瞬间&lt;&#x2F;h2&gt;
+&lt;p&gt;memscope-rs 的创立动机，我自己在项目里写得很直白：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Valgrind doesn&#x27;t know what &lt;code&gt;Arc&amp;lt;Rc&amp;lt;Box&amp;lt;...&amp;gt;&amp;gt;&amp;gt;&lt;&#x2F;code&gt; means, and someone has to fix that.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;这句话是离开 Web3 的真正分水岭。Valgrind、AddressSanitizer 是内存工具的王者，但它们工作在 C&#x2F;C++ 的抽象层。当 Rust 用 &lt;code&gt;Arc&amp;lt;Rc&amp;lt;Box&amp;lt;T&amp;gt;&amp;gt;&amp;gt;&lt;&#x2F;code&gt; 这种层层智能指针把所有权包起来时，传统工具&lt;strong&gt;看不懂&lt;&#x2F;strong&gt;——它们看到的是最底层的那次 &lt;code&gt;malloc&lt;&#x2F;code&gt;，上面三层&quot;谁和谁共享了同一块数据&quot;的语义，它们一无所知。&lt;&#x2F;p&gt;
+&lt;p&gt;Web3 让我写了无数共识代码，可共识从不需要回答&quot;这块内存被几个智能指针共享、循环引用有没有悄悄长出来&quot;。那个问题，Valgrind 答不上来，Rust 编译器也只在编译期保证&quot;不 UB&quot;，运行期它把所有权交还给你，就不再管了。&lt;&#x2F;p&gt;
+&lt;p&gt;GitHub 的 bio 我现在写的是 &quot;former Web3 software engineer&quot;。former 这个词不是否定，是归档——Web3 给了我工程纪律（一个 off-by-one 能让整条链分叉，这种对&quot;正确性&quot;的执念是刻进骨头的），但内存安全给了我一个&lt;strong&gt;值得用余生去解决的问题&lt;&#x2F;strong&gt;。&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;所以离开不是逃离，是归位。&lt;&#x2F;strong&gt; 我把在 Web3 练出来的&quot;和复杂系统缠斗&quot;的能力，搬到了一个更让我在意的主战场。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zhe-ge-jue-ce-qian-liao-shen-me-zhai&quot;&gt;这个决策欠了什么债&lt;&#x2F;h2&gt;
+&lt;p&gt;诚实地说，离开是有成本的，而且成本不小：&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;语境债&lt;&#x2F;strong&gt;：Web3 的分布式经验在内存安全领域大部分用不上。我从一个&quot;知道 Tendermint 每个阶段在干嘛&quot;的人，变回了一个要在 LLVM IR 里重新学起的新手（这一点在 OmniScope 篇会讲得更痛——光是读 IR 就够喝一壶）。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;信号债&lt;&#x2F;strong&gt;：外界看你的标签还是&quot;Web3 工程师&quot;，而你要做的工具面向的是系统程序员。解释&quot;为什么一个前 Web3 的人在做内存追踪&quot;本身就要消耗精力，而且很多人听完的潜台词是&quot;你是不是 Web3 凉了才转行的&quot;。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;复利债&lt;&#x2F;strong&gt;：共识领域我已经有深度，切换意味着那部分复利停了。1465 次提交攒下的直觉，在新的领域要从零开始计息。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;社交债&lt;&#x2F;strong&gt;：圈子里的人脉、讨论的语境、招聘市场的标签，全部要重建。&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;但这些债的对手方是：&lt;strong&gt;每天做一件自己不在乎的事，复利再高也是空的。&lt;&#x2F;strong&gt; 我在 10「重写还是演进」里写过——重写的正当信号是&quot;过去不存在的约束出现了&quot;。离开 Web3 不是重写一段代码，是重写我自己的问题域：约束从&quot;如何在不信任的网络里达成共识&quot;变成了&quot;如何让一块被智能指针藏起来的内存变得可见&quot;。问题域一换，旧标签的复利自然就清零了，拖着它反倒累赘。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;ru-guo-jin-tian-zhong-xin-xuan&quot;&gt;如果今天重新选&lt;&#x2F;h2&gt;
+&lt;p&gt;我不会更早离开，也不会更晚。&lt;&#x2F;p&gt;
+&lt;p&gt;早了，我还没有足够的系统功底去治那个我真正在乎的病——连 LLVM IR 都读不顺，谈什么内存追踪？晚了，沉没成本会让我连承认&quot;我不在乎共识&quot;都不敢，最后变成一边写链、一边在业余时间敷衍地搞工具，两头都做不深。&lt;&#x2F;p&gt;
+&lt;p&gt;离开的时机刚好卡在：我在 Web3 攒够了&quot;和复杂系统缠斗&quot;的硬功夫，又还没被标签焊死。Web3 给我的最宝贵的东西不是技术，是&lt;strong&gt;一种对&quot;正确性&quot;的执念&lt;&#x2F;strong&gt;——分布式系统容不得含糊，一个 off-by-one 能让整条链分叉。这种执念搬到内存安全上，正好：内存 bug 也是那种&quot;平时安静、爆发时毁灭性&quot;的问题，和共识层的 bug 是同一类怪物，只是换了个战场。&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;我没有离开工程，我只是从&quot;让互不信任的人达成一致&quot;，搬到了&quot;让一段被藏起来的内存重新被看见&quot;。后者的观众更少，但我更想为它鼓掌。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;hr &#x2F;&gt;
+&lt;p&gt;&lt;em&gt;Next: &lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;decision-archaeology&#x2F;13-safe-rust-memory-tool&#x2F;&quot;&gt;在&quot;以安全著称的 Rust&quot;里做内存工具&lt;&#x2F;a&gt; -- memscope-rs 的悖论：Rust 保的是&quot;不 UB&quot;，不是&quot;可观测&quot;。最安全的语言，反而最需要一个能看穿它自己安全抽象的工具。&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;
+</description>
+      </item>
+    </channel>
+</rss>

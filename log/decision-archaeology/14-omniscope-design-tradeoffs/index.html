@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>OmniScope：从拒绝巨额白名单到妥协 | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="OmniScope 选了 LLVM IR 层做跨语言 FFI 安全分析。它的设计史是一场持续的'拒绝—妥协'：拒绝 C++（不会写）、嫌 Rust 编译慢、用 Zig 写下第一个工具，最后又回到 Rust（omniscope-rs）；拒绝 AI 建议的巨型白名单，转而建 MemoryGraph + CallGraph 做上下文感知。这篇考古的是——为什么'不穷举危险函数'才是更诚实的静态分析。">
+
+    <meta property="og:description" content="OmniScope 选了 LLVM IR 层做跨语言 FFI 安全分析。它的设计史是一场持续的'拒绝—妥协'：拒绝 C++（不会写）、嫌 Rust 编译慢、用 Zig 写下第一个工具，最后又回到 Rust（omniscope-rs）；拒绝 AI 建议的巨型白名单，转而建 MemoryGraph + CallGraph 做上下文感知。这篇考古的是——为什么'不穷举危险函数'才是更诚实的静态分析。">
+    <meta property="og:title" content="OmniScope：从拒绝巨额白名单到妥协 | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/14-omniscope-design-tradeoffs/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="OmniScope 选了 LLVM IR 层做跨语言 FFI 安全分析。它的设计史是一场持续的'拒绝—妥协'：拒绝 C++（不会写）、嫌 Rust 编译慢、用 Zig 写下第一个工具，最后又回到 Rust（omniscope-rs）；拒绝 AI 建议的巨型白名单，转而建 MemoryGraph + CallGraph 做上下文感知。这篇考古的是——为什么'不穷举危险函数'才是更诚实的静态分析。">
+    <meta name="twitter:title" content="OmniScope：从拒绝巨额白名单到妥协 | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/14-omniscope-design-tradeoffs/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/14-omniscope-design-tradeoffs/">OmniScope：从拒绝巨额白名单到妥协</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-07-16
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/omniscope/">#OmniScope</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/static-analysis/">#Static Analysis</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/zig/">#Zig</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="omniscope-cong-ju-jue-ju-e-bai-ming-dan-dao-tuo-xie">OmniScope：从拒绝巨额白名单到妥协</h1>
+<blockquote>
+<p><strong>Problem</strong>: 跨语言 FFI 是内存安全最大的盲区。但"分析 FFI"有太多做法——按语言逐个适配？维护一张危险函数黑名单？还是下沉到 LLVM IR？OmniScope 的设计史，就是一部不断拒绝"看起来最省事"方案、再被迫妥协的历史。</p>
+</blockquote>
+<p>这篇我想诚实地把 OmniScope 的<strong>每一次犹豫和每一次打脸</strong>都写出来。因为它不是一个"我设计得很好"的故事，而是一个"我试了很多蠢办法，才慢慢逼近正确"的故事。它有三个真实的转折：语言选型、拒绝白名单、以及把妥协走成架构。</p>
+<h2 id="zhuan-zhe-yi-yu-yan-zhi-lu-c-rust-zig-rust">转折一 · 语言之路：C++ → Rust → Zig → Rust</h2>
+<p>第一个决策是"用什么写"。设计文档（<code>000-design.md</code>）里写得很坦诚，我一字没改：</p>
+<blockquote>
+<p>Initially, I didn't know what to do, choosing between Rust and C++. However, Rust's compilation speed was too slow... As for C++, I'm sorry, I'm not very good at it. So I switched to Zig.</p>
+</blockquote>
+<p>这不是技术宣言，是诚实的取舍记录：</p>
+<table><thead><tr><th>候选</th><th>结局</th><th>真实原因</th></tr></thead><tbody>
+<tr><td><strong>C++</strong></td><td>直接否</td><td>"我不太会写"——不装懂</td></tr>
+<tr><td><strong>Rust</strong></td><td>暂时搁置</td><td>编译太慢；而且分析 unsafe 本身要写大量 unsafe，和它的安全模型拧着</td></tr>
+<tr><td><strong>Zig</strong></td><td>第一个工具落脚点</td><td>编译快、手动内存控制、我第一次用它写东西</td></tr>
+<tr><td><strong>Rust（omniscope-rs）</strong></td><td>后来回归</td><td>生态成熟后做了一个平行的 Rust 实现</td></tr>
+</tbody></table>
+<p>这条 C++ → Rust → Zig → Rust(omniscope-rs) 的路线，<strong>不是朝三暮四，每一步都是在为同一个约束投降</strong>：跨语言 FFI 的安全责任，必须下沉到"语言层以下"才能看清。谁当宿主语言不重要，只要它能帮我吃下 LLVM IR，就都能接受。</p>
+<blockquote>
+<p>语言不是信仰，是工具。我在 Web3 是 Go，做内存工具在 Rust 和 Zig 之间流浪——<strong>流浪不是没主见，是我把"看清 IR"这件事看得比"忠于某门语言"更重。</strong></p>
+</blockquote>
+<h2 id="wei-shen-me-shi-ir-bu-shi-ast">为什么是 IR，不是 AST</h2>
+<p>很多 FFI 实现不限于 Rust↔C，还有 C↔C++、Go↔C。如果为每种语言各适配一套语法分析，是灾难级工作量。我意识到一个共同点：</p>
+<blockquote>
+<p>这些语言都拿 LLVM 当编译器后端。所以 IR 层才是它们的交汇点。</p>
+</blockquote>
+<p>于是 OmniScope 吃 <code>.ll</code> / <code>.bc</code>，不在源码目录上跑。入口在 <code>src/main.zig:73</code>，单模块分析由 <code>src/main.zig:171</code> 的 <code>runModulePipeline</code> 驱动；源码先被降成 LLVM IR，再被抬升回分析事实（<code>src/pipeline/pipeline.zig:66</code> 的 <code>PassContext</code> 建立共享事实空间）。</p>
+<p><strong>选 IR 的代价也很清楚</strong>：你放弃了源码级的变量名和注释，换来的是"一次理解、多语言通吃"。这是一笔我愿意付的账。</p>
+<h2 id="zhuan-zhe-er-ju-jue-ju-e-bai-ming-dan">转折二 · 拒绝巨额白名单</h2>
+<p>这是整段设计史里最精彩的一次"拒绝—妥协"。</p>
+<p>最初 TP（真阳性率）很低，低到我"甚至考虑过放弃"（设计文档原话）。我去问 AI，AI 建议加<strong>白名单</strong>。我同意了，实现了，然后发现：</p>
+<blockquote>
+<p>maintaining a very large whitelist was necessary, which wasn't what I wanted.</p>
+</blockquote>
+<p>白名单的诱惑在于"立刻能降噪"。但它的代价是一座你永远维护不完的监狱——每支持一种语言、一个库，就要往名单里塞更多条目。名单越长，误报越少，可维护性越差，直到没人敢动它。</p>
+<p>我拒绝了这座监狱，回头翻自己的笔记，做了一个更贵的决定：<strong>建 MemoryGraph + CallGraph，在 IR 扫描时顺手记录完整调用栈，然后分析这张图</strong>。只盯 FFI 部分，别的它不管。</p>
+<p>结果 "surprisingly good"。这比白名单诚实：</p>
+<blockquote>
+<p>白名单是"我枚举了所有危险函数"；图模型是"我理解了这段代码的上下文，能判断这个指针是不是正走在危险路径上"。前者是穷举，后者是理解。</p>
+</blockquote>
+<h2 id="tu-mo-xing-dao-di-zen-me-pan-duan-wei-xian">图模型到底怎么判断"危险"</h2>
+<p>拒绝白名单只是口号，真正要回答的是：<strong>一个指针，凭什么说它危险？</strong> OmniScope 的核心答案在 <code>MemoryGraph.isOnDangerPath</code>（<code>src/semantics/memory_graph.zig:892</code>）——源码注释直接把它叫做"决定一个指针要不要管的那 ONE question"：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> isOnDangerPath</span><span>(</span><span style="color: #94E2D5;">...</span><span>) DangerPathKind {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 1. 先看调用边：这个指针有没有作为 FFI 函数的实参？</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> arg_indices</span><span style="color: #94E2D5;"> =</span><span> graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">getCallArgsForPtr</span><span>(ptr_val)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> (arg_indices) </span><span style="color: #94E2D5;">|</span><span>idx</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> (set</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span>(graph</span><span style="color: #94E2D5;">.</span><span>call_args</span><span style="color: #94E2D5;">.</span><span>items[idx]</span><span style="color: #94E2D5;">.</span><span>callee_name)) </span><span style="color: #CBA6F7;">return</span><span style="color: #94E2D5;"> .</span><span>ffi_arg</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 2. 再看返回边：它是不是 FFI 函数的返回值？</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> ret_indices</span><span style="color: #94E2D5;"> =</span><span> graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">getCallRetsForPtr</span><span>(ptr_val)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> (ret_indices) </span><span style="color: #94E2D5;">|</span><span>idx</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> (set</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span>(graph</span><span style="color: #94E2D5;">.</span><span>call_rets</span><span style="color: #94E2D5;">.</span><span>items[idx]</span><span style="color: #94E2D5;">.</span><span>callee_name)) </span><span style="color: #CBA6F7;">return</span><span style="color: #94E2D5;"> .</span><span>ffi_ret</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 3. 最后看分配节点：是不是在 unsafe 区分配的？跨语言释放？</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> node</span><span style="color: #94E2D5;"> =</span><span> graph</span><span style="color: #94E2D5;">.</span><span>nodes</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get</span><span>(ptr_val) </span><span style="color: #CBA6F7;">orelse return</span><span style="color: #94E2D5;"> .</span><span>none</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (node</span><span style="color: #94E2D5;">.</span><span>zone</span><span style="color: #94E2D5;"> == .</span><span>unsafe) </span><span style="color: #CBA6F7;">return</span><span style="color: #94E2D5;"> .</span><span>unsafe_alloc</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (node</span><span style="color: #94E2D5;">.</span><span>freed</span><span style="color: #CBA6F7;"> and</span><span> node</span><span style="color: #94E2D5;">.</span><span>alloc_lang</span><span style="color: #94E2D5;"> !=</span><span> node</span><span style="color: #94E2D5;">.</span><span>free_lang</span><span style="color: #94E2D5;">.?</span><span>) </span><span style="color: #CBA6F7;">return</span><span style="color: #94E2D5;"> .</span><span>cross_lang_lifecycle</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // alias closure follows...</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p><strong>这个顺序是决策，不是随便排的</strong>：调用边必须排在分配节点前面。因为很多 FFI 实参根本没有分配记录——它们来自函数参数、外部返回、或早期 pass 没能恢复的源头。如果要求先有 <code>AllocNode</code>，就会漏掉最重要的边界流动情况。</p>
+<p>一个指针在 LLVM IR 里经过 bitcast、load、store、传参、返回之后，会以好几个 SSA 值出现。所以还要做 <strong>alias closure</strong>（<code>traceAliasClosure</code>，<code>src/pass/analysis/danger_surface.zig:144</code>）——只标记原始指针会漏掉后续用法。这不是完整的别名分析，是<strong>针对 FFI 指针家族的聚焦传播</strong>。</p>
+<div class="mermaid-direct" data-series="decision-archaeology" data-name="graph.mmd">
+flowchart LR
+    A[潜在内存问题] --> B{在危险路径上?}
+    B -->|否| C[过滤 / 降级为本地问题]
+    B -->|是| D[FFI 相关问题]
+    D --> E[更高审查优先级]
+</div>
+<p>一个本地的 C <code>malloc</code>/<code>free</code> 配对，优先级可以很低；但一个指针穿过 FFI 参数、返回或回调，就值得人来看。<strong>这就是"上下文感知"替代"危险函数穷举"的落地。</strong></p>
+<h2 id="zhuan-zhe-san-tuo-xie-ru-he-cheng-shou-v0-2-0-de-shang-xia-wen-jia-gou">转折三 · 妥协如何成熟：v0.2.0 的上下文架构</h2>
+<p>拒绝白名单不是终点，是起点。v0.2.0 把"图模型替代白名单"这条路走成了完整架构：</p>
+<ul>
+<li><strong>SurfaceClassifier</strong>（<code>src/semantics/surface_classifier/...</code>）：先把函数分成 <code>user_code</code> / <code>dependency</code> / <code>boundary</code> / <code>standard_library</code> / <code>compiler_generated</code> / <code>runtime</code> / <code>unknown</code>。<code>boundary</code> 优先级最高，标准库和运行时默认跳过——本质是用"<strong>可推理的分类</strong>"替代"手维护的白名单"。</li>
+<li><strong>Issue Gate</strong>（<code>src/pass/filter/issue_gate.zig</code>）：每条诊断在发出前过一遍语义证据门，置信度阈值 <code>0.85</code>。冲突或低置信度的证据<strong>放行而非隐藏</strong>——这又是对"白名单式一刀切"的拒绝。</li>
+<li><strong>Resource Contracts</strong>（<code>src/resource/ffi_contract_db.zig</code>）：从"看见一个 <code>free</code>"升级到"释放配对是否正确"，例如 <code>SSL_new</code> 必须匹配 <code>SSL_free</code>，不是随便一个 free-like 函数。</li>
+<li><strong>SymbolGraph</strong>（<code>src/ffi/symbol_graph.zig</code>）：模块级语言检测下沉到符号级，避免把一个混编 LLVM 模块当成单一语言。</li>
+</ul>
+<p>一句话总结 v0.2.0：<strong>从"找可疑模式"升级到"在报告之前，先理解语言边界、资源所有权和语义上下文"。</strong></p>
+<h2 id="cang-zai-pass-xi-tong-li-de-yi-ge-xi-jie-yi-ge-pass-gua-liao-bu-neng-xia-diao-zheng-ge-gong-ju">藏在 pass 系统里的一个细节：一个 pass 挂了，不能瞎掉整个工具</h2>
+<p>真实世界的 IR 是脏的——链接不全、优化等级不同、缺 debug info、编译器差异。OmniScope 的 <code>PassManager.run</code>（<code>src/pass/manager.zig:193</code>）做了一个我很得意的决定：<strong>graceful degradation</strong>。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> (self</span><span style="color: #94E2D5;">.</span><span>resolved_order</span><span style="color: #94E2D5;">.?</span><span>) </span><span style="color: #94E2D5;">|</span><span>idx</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span>    self</span><span style="color: #94E2D5;">.</span><span>passes</span><span style="color: #94E2D5;">.</span><span>items[idx]</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">run_fn</span><span>(ctx</span><span style="color: #9399B2;">,</span><span> diag) </span><span style="color: #CBA6F7;">catch</span><span style="color: #94E2D5;"> |</span><span>err</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span>        diag</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">warn</span><span>(</span><span style="color: #A6E3A1;">&quot;pass &#39;{s}&#39; failed: {any}, degrading gracefully&quot;</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> .</span><span>{ pass_name</span><span style="color: #9399B2;">,</span><span> err })</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>        pass_failures</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">  // 记一笔，然后继续跑后面的 pass</span></span>
+<span class="giallo-l"><span>    }</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>这不是"吞异常"。它背后是一个价值判断：</p>
+<blockquote>
+<p>一个分析阶段挂了，不该把无关的证据一起清零。宁可交出"部分但真实"的结果，也不要因为一个不认识的 IR 模式就交白卷。</p>
+</blockquote>
+<p>pass 之间的依赖用 Kahn 拓扑排序解（<code>src/pass/manager.zig:86</code>），缺依赖直接报 <code>MissingDependency</code>——因为<strong>错误的 pass 顺序不只是配置错，它会产出错误的事实</strong>。这和白名单的哲学一脉相承：宁可慢、宁可少，也不要"看起来对但其实错"。</p>
+<h2 id="zhe-ge-jue-ce-qian-liao-shen-me-zhai">这个决策欠了什么债</h2>
+<ul>
+<li><strong>复杂度债</strong>：MemoryGraph + CallGraph + 一整套 pass 流水线，比"一张白名单"重得多。早期 TP 低到我"甚至考虑过放弃"。</li>
+<li><strong>噪声债</strong>：IR 优化、符号缺失、wrapper 横飞时，能恢复出的语义会变少——静态分析永远有天花板，<code>MemoryGraph</code> 的质量直接决定下游每个 pass 的质量。</li>
+<li><strong>学习债</strong>：我自陈"甚至不太懂编译器"。下沉到 IR 层，等于在自己不熟的领地里开荒（这笔债其实从 12 篇离开 Web3 那天就开始欠了）。</li>
+</ul>
+<p>但白名单的债更贵：<strong>它随语言增长成线性膨胀的维护成本，且永远覆盖不了"名单之外的新模式"</strong>。图模型至少让你"理解一次，覆盖一类"。</p>
+<h2 id="jie-lun">结论</h2>
+<blockquote>
+<p>白名单是静态分析的舒适区——它让你觉得自己在做事，其实只是在穷举。我拒绝当白名单的囚徒，妥协去建图：用"上下文感知"替代"危险函数穷举"。</p>
+</blockquote>
+<p>OmniScope 的语言流浪（C++→Rust→Zig→Rust）和它对白名单的拒绝，是同一枚硬币的两面：<strong>都不接受"看起来最省事"的答案</strong>。白名单省事但会烂尾；Zig 顺手但后来还是回到 Rust 做平行实现——每一次"不将就"，都是在为"FFI 安全责任必须下沉到语言层以下"这个约束买单。</p>
+<p>这正好呼应 10「重写还是演进」：不是旧的不好，是新的问题配不上旧的家。也呼应 13——13 在运行时看 Rust 内部的 ownership，14 在 IR 上看跨语言的 ownership，<strong>它们是同一道题在信任边界两侧的两个投影</strong>。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/15-code-review-drama/">把代码评审变成一场戏</a> -- 从静态分析转到人：当评审结论太平，人就会自动忽略。CodeTribunal 的解法是往评审团里塞一个故意说错话的 agent。</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/15-code-review-drama/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">把代码评审变成一场戏</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/13-safe-rust-memory-tool/">
+                                <span class="button__text">在&quot;以安全著称的 Rust&quot;里做内存工具</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

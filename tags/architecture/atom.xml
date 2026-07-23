@@ -2165,4 +2165,169 @@ flowchart TD
 </content>
         
     </entry>
+    <entry xml:lang="en">
+        <title>撒谎的设计模式</title>
+        <published>2026-06-12T00:00:00+00:00</published>
+        <updated>2026-06-12T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/08-the-pattern-that-lied/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/decision-archaeology/08-the-pattern-that-lied/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/decision-archaeology/08-the-pattern-that-lied/">&lt;h1 id=&quot;sa-huang-de-she-ji-mo-shi&quot;&gt;撒谎的设计模式&lt;&#x2F;h1&gt;
+&lt;p&gt;先讲一个让我肉疼的故事。ARES 最早做多 Agent 通信时，我没用 Go channel，而是花了&lt;strong&gt;整整两天&lt;&#x2F;strong&gt;跟 RabbitMQ 搏斗——第一天装 Erlang、配 vhost、建 exchange、映射 binding key；第二天写了 200 多行胶水代码，就为了把一条消息从 Agent A 送到 Agent B。&lt;&#x2F;p&gt;
+&lt;p&gt;等我终于跑完基准测试，端到端延迟从 &lt;strong&gt;&amp;lt;1μs（Go channel）涨到了 2ms+——那是 2000 倍的减速&lt;&#x2F;strong&gt;。而且这还不是网络延迟造成的，因为两个 Agent 就在同一个进程里。纯序列化和路由开销。&lt;&#x2F;p&gt;
+&lt;p&gt;那一刻我想的是：&lt;strong&gt;同一个进程、两个 goroutine，发个消息还得走网络？这他妈太荒谬了。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;p&gt;于是我把 RabbitMQ 全删了，写了 AHP——一个不碰网线的纯进程内通信协议。这就是设计模式撒谎最典型的一课。&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Problem&lt;&#x2F;strong&gt;: 「要面向接口编程」「用策略模式解耦」「观察者模式降低耦合」——教科书句句是真理。可 ARES 的 &lt;code&gt;LLMService&lt;&#x2F;code&gt; 接口（第一篇）、AHP 的通信协议（第二篇），落地时都跟教科书长得很不一样。设计模式什么时候开始撒谎？&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h2 id=&quot;mo-shi-fan-mai-de-shi-wei-lai-de-ke-neng-xing&quot;&gt;模式贩卖的是「未来的可能性」&lt;&#x2F;h2&gt;
+&lt;p&gt;每个设计模式推销时都带着一个隐藏状语：&lt;strong&gt;「当你未来需要……的时候」&lt;&#x2F;strong&gt;。&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;工厂模式：「当你未来要创建 N 种实现时。」&lt;&#x2F;li&gt;
+&lt;li&gt;策略模式：「当你未来要切换算法时。」&lt;&#x2F;li&gt;
+&lt;li&gt;观察者模式：「当你未来要加 N 个监听者时。」&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;问题来了：你&lt;strong&gt;现在&lt;&#x2F;strong&gt;需要吗？大多数情况下不需要。但你买了，因为「万一呢」。于是模式在你用不上的地方提前支取了复杂度。&lt;&#x2F;p&gt;
+&lt;p&gt;ARES 第一篇讲的「抽象的债务」就是同一个病：抽象到什么粒度？做多了，接口本身变成维护负担。设计模式是抽象的具名版本——它比裸抽象更危险，因为它披着「最佳实践」的外衣，让你不好意思质疑。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zhen-shi-fu-zai-hui-si-diao-mo-shi-de-bao-zhuang&quot;&gt;真实负载会撕掉模式的包装&lt;&#x2F;h2&gt;
+&lt;p&gt;看 ARES 的 AHP 协议（第二篇）。教科书会建议你用消息队列 &#x2F; 观察者模式做多 Agent 通信。我&lt;strong&gt;真试过&lt;&#x2F;strong&gt;——就是上面那两天。&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;我花了两天跟 RabbitMQ 搏斗……端到端延迟从 &amp;lt;1μs（Go channel）涨到 2ms+——2000 倍的减速。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;消息队列这个「模式」在同一进程内是撒谎的：它解决的是「不同进程&#x2F;机器要通信」的问题，而你面对的是「同一进程两个 goroutine」。模式答非所问，你还以为是自己用错了。&lt;&#x2F;p&gt;
+&lt;p&gt;AHP 最后落在了 &lt;code&gt;internal&#x2F;ares_ahp&#x2F;message_queue.go&lt;&#x2F;code&gt; 里一个基于带缓冲 channel 的 &lt;code&gt;MessageQueue&lt;&#x2F;code&gt;，入队是非阻塞的：&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;q &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;MessageQueue&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; Enqueue&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt; msg&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; *&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;AHPMessage&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;) (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;retErr&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; error&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;) {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    if&lt;&#x2F;span&gt;&lt;span&gt; q&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;closed&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;Load&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;() {&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; return&lt;&#x2F;span&gt;&lt;span&gt; errors&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;ErrQueueClosed&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    defer func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;() {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;        if&lt;&#x2F;span&gt;&lt;span&gt; r&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; recover&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;();&lt;&#x2F;span&gt;&lt;span&gt; r&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; !=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F38BA8;&quot;&gt; nil&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;span&gt; retErr&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span&gt; errors&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;ErrQueueClosed&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;    }()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    select&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    case&lt;&#x2F;span&gt;&lt;span&gt; q&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;messages&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; &amp;lt;-&lt;&#x2F;span&gt;&lt;span&gt; msg&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;        return&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F38BA8;&quot;&gt; nil&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    default&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;        return&lt;&#x2F;span&gt;&lt;span&gt; errors&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;ErrQueueFull&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;    }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;非阻塞、锁无关地检查关闭标志、&lt;code&gt;defer recover()&lt;&#x2F;code&gt; 兜住 &lt;code&gt;send on closed channel&lt;&#x2F;code&gt; 的 panic——这些细节都不是「消息队列模式」教科书会告诉你的。它们是&lt;strong&gt;同一个进程、同一个内存空间&lt;&#x2F;strong&gt;这个真实约束逼出来的。&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;模式不撒谎的时候，是你的问题恰好匹配它预设的场景。&lt;&#x2F;strong&gt; 不匹配时，它比没有模式更糟——因为它用一套你不懂的间接层，把你简单的问题藏了起来。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;mo-shi-yong-dui-de-na-ci&quot;&gt;模式用对的那次&lt;&#x2F;h2&gt;
+&lt;p&gt;也不是所有模式都在 ARES 里翻车。ARES 第一篇的 &lt;code&gt;LLMService&lt;&#x2F;code&gt; 接口就是用对了的例子——它抽象的是&lt;strong&gt;行为&lt;&#x2F;strong&gt;，不是数据：&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; LLMService&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; interface&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    Chat&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt; req&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; ChatRequest&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;) (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;ChatResponse&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; error&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    Embed&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Context&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt; req&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; EmbedRequest&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;) (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;EmbedResponse&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; error&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;    &#x2F;&#x2F; ...&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;四个 provider（OpenAI &#x2F; Ollama &#x2F; DeepSeek &#x2F; 本地）的差异是&lt;strong&gt;真实存在的&lt;&#x2F;strong&gt;，不是假想的未来需求。抽象它，是因为我明天就可能要切 provider，而调用方的业务代码一行都不用改。这跟 AHP 用 channel 而不是 MQ 是同一个判断：&lt;strong&gt;通信双方就在同一进程，这是被实测确认的场景，不是想象。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;p&gt;两条规律：&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;模式只为&lt;strong&gt;已经存在的差异&lt;&#x2F;strong&gt;服务，不为想象中的差异预支。&lt;&#x2F;li&gt;
+&lt;li&gt;模式的价值在&lt;strong&gt;它消除的重复&lt;&#x2F;strong&gt;，不在它增加的「可扩展性」。&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;h2 id=&quot;wo-dang-shi-xin-liao-mo-shi-hou-lai-bei-da-lian-de-di-fang&quot;&gt;我当时信了模式，后来被打脸的地方&lt;&#x2F;h2&gt;
+&lt;p&gt;AHP 我自己写完后，诚实列过它的短板（第二篇的「What&#x27;s Missing」一节），有几条是模式教我的反面教材：&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;没有广播&lt;&#x2F;strong&gt;：想给多个 Sub Agent 发消息？你只能在 Leader 侧写 for 循环一个个发。有一次我要同时通知 6 个 Sub，等 Leader 发到第 3 个时，第 1 个已经执行完了——串行发送成了整个工作流的瓶颈。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;重试策略太天真&lt;&#x2F;strong&gt;：DLQ 的重试间隔是固定的，没有指数退避。有一次下游 API 挂了 10 分钟，DLQ 用固定间隔疯狂重试，把本就脆弱的局面搞得更糟。我事后才加了熔断逻辑——这本该从一开始就做。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;「换个实现就行」是个谎言&lt;&#x2F;strong&gt;：AHP 的很多语义（非阻塞入队、备份缓冲、共享内存心跳）都依赖 channel 的同步特性。等你真去换 gRPC 或 RabbitMQ，移植这些行为远比纸面上难——你需要重新实现一整套「看起来像 channel」的异步语义。抽象层能隔离接口，隔离不了语义差异。&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;blockquote&gt;
+&lt;p&gt;我差点信了「换个 transport 就行」这句话。直到我认真想换 gRPC 时才发现：channel 的同步语义和异步网络消息队列根本不是一回事，那些我以为是「实现细节」的东西，恰恰是 AHP 能跑起来的原因。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h2 id=&quot;jie-lun&quot;&gt;结论&lt;&#x2F;h2&gt;
+&lt;p&gt;设计模式最大的谎言，是它让你觉得「用了就专业了」。事实上，&lt;strong&gt;一个用对的简单 switch，胜过一个用错的设计模式一万倍&lt;&#x2F;strong&gt;。&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;模式是工具，不是勋章。挂在身上不用的模式，和挂在墙上的猎枪一样——除了显摆和走火，没别的用。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;判断一个模式该不该用，只看一句：&lt;strong&gt;删掉它，明天会不会真的痛？&lt;&#x2F;strong&gt; 如果答案是「不会，只是感觉不优雅」——那它就是在撒谎，删掉。&lt;&#x2F;p&gt;
+&lt;p&gt;AHP 那 2000 倍的减速，是我交过最贵的「为想象中的未来预支复杂度」的学费。它教会我一件事：&lt;strong&gt;模式对的时候，是你的问题刚好撞上它预设的场景；模式撒谎的时候，是你的问题还没到那个场景，你却提前把间接层买了单。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;p&gt;&lt;em&gt;Next: &lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;decision-archaeology&#x2F;09-when-to-say-no-to-async&#x2F;&quot;&gt;何时对异步说不&lt;&#x2F;a&gt; -- AHP 用 Go channel 做亚微秒级通信，goroutine 到处飞。但异步不是免费的信仰：ARES 的 Leader 曾因一个 goroutine 泄漏静默死亡 20 分钟才被发现。什么时候同步反而更诚实？&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
+    <entry xml:lang="en">
+        <title>重写还是演进</title>
+        <published>2026-06-12T00:00:00+00:00</published>
+        <updated>2026-06-12T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/10-the-fork-in-the-road/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/decision-archaeology/10-the-fork-in-the-road/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/decision-archaeology/10-the-fork-in-the-road/">&lt;h1 id=&quot;zhong-xie-huan-shi-yan-jin&quot;&gt;重写还是演进&lt;&#x2F;h1&gt;
+&lt;p&gt;先讲一段我自己都觉得好笑的开场。OmniScope 最早选型时，我在 Rust 和 &lt;strong&gt;C++&lt;&#x2F;strong&gt; 之间犹豫。原话是：「I&#x27;m sorry, I&#x27;m not very good at it」——我不太会写 C++。于是先看 Rust，又嫌 &lt;strong&gt;Rust 编译太慢&lt;&#x2F;strong&gt;，改用了 &lt;strong&gt;Zig&lt;&#x2F;strong&gt; 写下第一个工具，后来才出 &lt;strong&gt;omniscope-rs（Rust 重写）&lt;&#x2F;strong&gt;。&lt;&#x2F;p&gt;
+&lt;p&gt;所以 OmniScope 的语言路线是：C++ → Rust（太慢）→ Zig → Rust（omniscope-rs）。这不是朝三暮四，是每一步都在为一个约束投降。&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Problem&lt;&#x2F;strong&gt;: OmniScope 最早是 Zig 原型，后来改写成 Rust（omniscope-rs）；ARES 的前身叫 GoAgentX，整条系列从 GoAgentX 改名而来。每个项目都会撞上同一个岔路口：推倒重写，还是渐进演进？这条线到底该画在哪？&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h2 id=&quot;zhong-xie-shi-zui-xing-gan-de-tao-bi&quot;&gt;重写是最性感的逃避&lt;&#x2F;h2&gt;
+&lt;p&gt;程序员对重写有种本能的浪漫。现有代码「太脏了」「当时不懂」「架构不对」——重写的诱惑在于，它让你假装过去的自己不存在，从一张白纸重新开始。&lt;&#x2F;p&gt;
+&lt;p&gt;但重写是最贵的决策之一。你丢掉的不只是代码，还有&lt;strong&gt;代码里那些没写进文档的、靠踩坑换来的约束&lt;&#x2F;strong&gt;。每一次 &lt;code&gt;&#x2F;&#x2F; FIXME: don&#x27;t remove this, it breaks X&lt;&#x2F;code&gt; 都是前任（往往就是你自己）用生产事故买的教训。重写时这些教训最容易一起被丢进垃圾桶。&lt;&#x2F;p&gt;
+&lt;p&gt;所以「重写还是演进」从来不是技术审美问题，是&lt;strong&gt;风险分配问题&lt;&#x2F;strong&gt;。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zhen-shi-de-xin-hao-yue-shu-bian-liao-bu-shi-dai-ma-zang-liao&quot;&gt;真实的信号：约束变了，不是代码脏了&lt;&#x2F;h2&gt;
+&lt;p&gt;看 OmniScope 的改写。omniscope-rs 的起点是盯着 Rust 的 &lt;code&gt;CString::into_raw&lt;&#x2F;code&gt; 发呆——&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;After that pointer is sent out, who is supposed to free it? Rust&#x27;s allocator? C&#x27;s &lt;code&gt;free&lt;&#x2F;code&gt;? Or some third-party library?&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;这个追问不是「代码写得丑」，而是&lt;strong&gt;问题域的约束被重新认识了&lt;&#x2F;strong&gt;：跨语言 FFI 的内存安全责任边界，比最初原型设想的更锋利。Zig 原型验证了这个方向值得做，但真正要落地 21 个分析 pass、处理真实的多语言调用图时，语言级的内存安全保证从「nice to have」变成了「前提条件」。&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;重写的合理信号是：底层约束变了，旧代码的根基假设已经不成立。&lt;&#x2F;strong&gt; 而不是：旧代码难读了、你想用新框架了、上级要求了。&lt;&#x2F;p&gt;
+&lt;p&gt;这里还有个细节值得单独拎出来。AI 当初建议给 OmniScope 加一个&lt;strong&gt;白名单&lt;&#x2F;strong&gt;来识别危险函数，我实现了，结果发现——&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;maintaining a very large whitelist was necessary, which wasn&#x27;t what I wanted&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;维护一个巨型白名单不是我想要的。于是我回头，建了 &lt;strong&gt;MemoryGraph + CallGraph&lt;&#x2F;strong&gt; 做上下文感知，用「图模型」替代「穷举危险函数列表」。这同样是个「重写式」的决策：不是推倒代码，是推倒「白名单能解决问题」这个假设。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;yan-jin-de-dai-jia-bei-di-gu&quot;&gt;演进的代价被低估&lt;&#x2F;h2&gt;
+&lt;p&gt;反过来，渐进演进的陷阱是：你永远在给一个错误的根基打补丁。ARES 从 GoAgentX 改名这件事本身就有信息量——改名意味着&lt;strong&gt;对外契约变了&lt;&#x2F;strong&gt;，但底层还是同一套 Go 代码在演进。这不是重写，是「演进到一定程度，连名字都装不下自己了」。&lt;&#x2F;p&gt;
+&lt;p&gt;ARES 自己在这条路上也踩过坑。最早我想让 Agent「长命且坚韧」，试过熔断、重试循环、优雅降级——&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;It worked — until it didn&#x27;t.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;问题是你预测不了每一种失败模式。一个 goroutine 泄漏、一个死锁、一次 OOM kill——再多的防御性编码也覆盖不全。所以 ARES 最后选了&lt;strong&gt;让 Agent 可丢弃&lt;&#x2F;strong&gt;：它死了，Runtime 就造个新的，从 EventStore 恢复状态。这反而是最诚实的演进：与其给一个会错的根基不断打补丁，不如承认「任何失败都可恢复，因为你永远有个干净的起点」。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;lian-ares-zi-ji-ye-bei-zhong-xie-fan-shi-guo&quot;&gt;连 ARES 自己，也被「重写」反噬过&lt;&#x2F;h2&gt;
+&lt;p&gt;ARES 的诞生本身也是一次重写——从 Python 到 Go。我当初的动机很私人：有 HR 说我不会 Go、没有 Go 项目。作为一个有职业骄傲的开发者，&lt;strong&gt;我必须选 Go，堵住所有质疑&lt;&#x2F;strong&gt;。&lt;&#x2F;p&gt;
+&lt;p&gt;这话现在看有点赌气，但它也是「重写信号」的反面教材：我重写，有一部分动力不是「约束变了」，而是「想证明自己」。这类重写往往最贵，因为它带着情绪，容易 over-engineer。&lt;&#x2F;p&gt;
+&lt;p&gt;更要紧的是 ARES 自己的诚实复盘（第一篇）：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;The codebase is bigger than it needs to be... the periphery is still finding its shape.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;量化交易模块、面试 demo、MCP dashboard——这些本该住在独立仓库里的实验，全塞进了 ARES。核心（Runtime + Workflow + Memory + Events）是扎实的，外围还在找形状。也就是说，&lt;strong&gt;即使那次从 Python 到 Go 的重写方向是对的，它也没能躲开「重写会膨胀」这个老毛病&lt;&#x2F;strong&gt;。重写修好了根基，但新家的墙一样会越垒越多。&lt;&#x2F;p&gt;
+&lt;p&gt;把这件事和 OmniScope 放一起看更有意思：OmniScope 的重写（Zig → Rust）信号是&lt;strong&gt;技术约束&lt;&#x2F;strong&gt;（FFI 安全责任必须下沉到语言层），ARES 的重写（Python → Go）信号里混着&lt;strong&gt;个人赌气&lt;&#x2F;strong&gt;。前者我至今觉得诚实，后者我至今觉得「方向对、动机脏」。值不值得重写，不但要看约束，还得看你自己是不是在借题发挥。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;wo-dang-shi-zen-me-xiang-de-you-cuo-zai-na&quot;&gt;我当时怎么想的，又错在哪&lt;&#x2F;h2&gt;
+&lt;p&gt;我重写 ARES 时（从 Python 到 Go），理由是「Python 并发又慢又乱，内存管理是灾难，工作流逻辑退化成回调和状态机的意大利面」。这个重写是对的——新约束（要并发、要长运行、要可观测）旧根基确实扛不住。&lt;&#x2F;p&gt;
+&lt;p&gt;但我必须诚实：&lt;strong&gt;ARES 的代码库比它需要的更大&lt;&#x2F;strong&gt;。量化交易模块、面试 demo、MCP dashboard——这些是应该住在独立仓库里的实验。核心（Runtime + Workflow + Memory + Events）是扎实的，外围还在找形状。&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;真实项目就是这样工作的。你不会在第一天设计出完美架构。你解决问题、累积代码、偶尔停下来重构。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;所以「重写还是演进」这道题，我现在的答案比开头那句「重写最性感」复杂得多：&lt;strong&gt;重写不是对旧代码的审判，是对新约束的投降。&lt;&#x2F;strong&gt; 值不值得，只看那个新约束是不是真的「旧根基成立不了」，而不是「旧代码我不喜欢了」。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;jie-lun&quot;&gt;结论&lt;&#x2F;h2&gt;
+&lt;p&gt;判断重写与否，我只看一个问题：&lt;strong&gt;你是在逃避过去的决策，还是在响应一个过去不存在的约束？&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;如果是前者——你只会把同样的坑再踩一遍，只是换身衣服。&lt;&#x2F;li&gt;
+&lt;li&gt;如果是后者——比如 OmniScope 发现 FFI 安全责任必须下沉到语言层以下，比如 ARES 从 GoAgentX 长成连名字都装不下——那重写不是傲慢，是诚实。&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;blockquote&gt;
+&lt;p&gt;重写不是对旧代码的审判，是对新约束的投降。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;值得重写的系统，往往不是最烂的系统，而是&lt;strong&gt;最诚实地暴露了一个它诞生时还不存在的问题&lt;&#x2F;strong&gt;的系统。OmniScope 从 C++ 流浪到 Zig 再回 Rust，GoAgentX 长成 ARES，都是这个样子——不是旧的不好，是新的问题配不上旧的家。&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;p&gt;&lt;em&gt;Next: &lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;decision-archaeology&#x2F;11-the-test-you-skipped&#x2F;&quot;&gt;你跳过的那条测试&lt;&#x2F;a&gt; -- ARES 用 Arena 主动「谋杀」运行中的 Agent 来验证自愈（第九篇）。但大多数团队跳过了最该测的东西——不是功能，是「它死的时候怎么办」。哪些测试你明知道该写却没写？&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
 </feed>

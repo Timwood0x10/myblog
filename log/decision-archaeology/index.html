@@ -22,15 +22,15 @@
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
 
 
-    <meta name="description" content="决策考古：从代码回溯工程直觉。五篇文章，五个项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，每个决策背后都有一个信任模型在起作用。">
+    <meta name="description" content="决策考古：从代码回溯工程直觉。十六篇文章，横跨 ARES、OmniScope、omniscope-rs、memscope-rs、CodeTribunal、ethermint 等项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，到可观测性、重写、状态、设计模式、异步、测试，再到离开 Web3、在安全的 Rust 里做内存工具、OmniScope 的取舍、代码评审的戏剧与用遗传算法选 Agent。主线始终是：谁拥有什么，以及如何看见那些被语言藏起来的所有权。">
 
-    <meta property="og:description" content="决策考古：从代码回溯工程直觉。五篇文章，五个项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，每个决策背后都有一个信任模型在起作用。">
+    <meta property="og:description" content="决策考古：从代码回溯工程直觉。十六篇文章，横跨 ARES、OmniScope、omniscope-rs、memscope-rs、CodeTribunal、ethermint 等项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，到可观测性、重写、状态、设计模式、异步、测试，再到离开 Web3、在安全的 Rust 里做内存工具、OmniScope 的取舍、代码评审的戏剧与用遗传算法选 Agent。主线始终是：谁拥有什么，以及如何看见那些被语言藏起来的所有权。">
     <meta property="og:title" content="Decision Archaeology | Timwood0x10">
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/">
 
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:description" content="决策考古：从代码回溯工程直觉。五篇文章，五个项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，每个决策背后都有一个信任模型在起作用。">
+    <meta name="twitter:description" content="决策考古：从代码回溯工程直觉。十六篇文章，横跨 ARES、OmniScope、omniscope-rs、memscope-rs、CodeTribunal、ethermint 等项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，到可观测性、重写、状态、设计模式、异步、测试，再到离开 Web3、在安全的 Rust 里做内存工具、OmniScope 的取舍、代码评审的戏剧与用遗传算法选 Agent。主线始终是：谁拥有什么，以及如何看见那些被语言藏起来的所有权。">
     <meta name="twitter:title" content="Decision Archaeology | Timwood0x10">
     <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
     <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/">
@@ -1040,13 +1040,523 @@ flowchart LR
 <p><strong>两个项目应该互相利用。</strong> OmniScope 的静态分析结果可以指导 memscope-rs 的运行时追踪——只对静态分析标记为高风险的 FFI 边界启用运行时追踪，大幅减少运行时开销。反过来，memscope-rs 发现的真实 bug 可以反馈给 OmniScope，作为规则优化的依据。具体实现上，OmniScope 的 FFI Auditor 可以在分析完成后输出一份 <code>high_risk_ffi.json</code>，包含每个高风险调用点的文件路径、函数名、违规规则编号和风险等级。memscope-rs 启动时读取这份清单，在 <code>MemoryPassportTracker</code> 中只为清单上的 FFI 边界启用 Passport 追踪，其余边界只做轻量级的 alloc/free 计数。这样运行时开销从"追踪所有跨边界的内存"降到"只追踪静态分析怀疑有问题的那几个点"，在生产环境的性能开销可以忽略不计，同时保留了对关键边界的完整可观测性。</p>
 <p>这不是事后诸葛亮——这些想法在设计阶段都讨论过，但被"先让它工作"的优先级压下去了。这是工程中常见的权衡：完美设计和可交付产品之间的距离，往往就是这些被推迟的重构和技术债务。</p>
 <hr />
-<p><em>系列完结。五篇文章，五个项目的决策回溯。抽象、并发、错误处理、工具设计、安全边界——每个决策背后都有一个信任模型在起作用。</em></p>
+<p><em>抽象、并发、错误处理、工具设计、安全边界——每个决策背后都有一个信任模型在起作用。这个系列还在继续生长，后面的文章会回到同一条线上。</em></p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/06-the-cost-of-observability/">可观测性的代价</a> -- 记录一切的诱惑背后，是事件存储无限增长、全量 dump 把人淹死。记到什么程度才不算过度？</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/06-the-cost-of-observability/">可观测性的代价</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/event-sourcing/">#Event Sourcing</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/flight-recorder/">#Flight Recorder</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/observability/">#Observability</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="ke-guan-ce-xing-de-dai-jia">可观测性的代价</h1>
+<p>我见过最吓人的 bug，不是崩溃，是**「活着，但死了」**。</p>
+<p>有一次生产环境里一个 Agent 就这么停了——没崩溃、没 OOM，进程好好的，goroutine 也活着，就是不干活。我查日志，日志说一切正常；查 LLM 调用，返回也正常；查工具调用，全都成功。最后花了<strong>两天</strong>才定位到：Agent 把 LLM 的 JSON 结果解析错了，重试了五次全失败，然后落进一个<strong>没人想到要去检查的分支</strong>——它静默跳过了剩下的所有步骤，没有报错、没有重试、没有任何失败迹象。</p>
+<p>那两天教会我三件事：日志里写「一切正常」，通常意味着你记错了东西；最危险的系统故障不是崩溃，是<strong>静默地什么都不做</strong>；以及，我得给 Agent 装个黑匣子。</p>
+<p>但黑匣子这个念头，又来自更早的一次痛。一个 Agent 下午在生产环境跑了一整个下午，处理了 30 多个用户请求，每个都涉及多轮对话和工具调用。然后进程被 OOM 杀掉，日志里只有一行 <code>signal: killed</code>。所有状态全没了——没有 checkpoint、没有恢复路径、不知道它死的时候在干什么。用户来问「Agent 怎么不回话了」，我只能说「它失忆了」。</p>
+<p>这两件事，正是 ARES 事件溯源和 Flight Recorder 的出生证。也是这篇要考古的起点：<strong>记录一切的诱惑，和它背后那笔迟早要还的账。</strong></p>
+<blockquote>
+<p><strong>Problem</strong>: 既然把每一步都记下来能救命，为什么不记更多？每步都打点、每个分支都埋日志、每个 goroutine 都上 trace。记少了出事查不到，记多了可观测性本身成了瓶颈——不压缩的事件存储会反噬，全量的原始 dump 会把人淹死。记录到底该做到什么程度？</p>
+</blockquote>
+<h2 id="ji-lu-yi-qie-de-you-huo-he-wo-cai-guo-de-di-yi-ge-keng">记录一切的诱惑，和我踩过的第一个坑</h2>
+<p>事件溯源的思路很迷人，一句话就能讲清：<strong>不要存当前状态，存每一个改变状态的操作。想要当前状态？自己重放去算。</strong></p>
+<p>ARES 的 <code>internal/ares_events/types.go</code> 里，每个事件都被打上 <code>ModuleName</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Event</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">         string</span><span style="color: #A6E3A1;">         `json:&quot;id&quot;`</span></span>
+<span class="giallo-l"><span>    StreamID</span><span style="color: #CBA6F7;">   string</span><span style="color: #A6E3A1;">         `json:&quot;stream_id&quot;`</span></span>
+<span class="giallo-l"><span>    Type</span><span style="color: #F9E2AF;font-style: italic;">       EventType</span><span style="color: #A6E3A1;">      `json:&quot;type&quot;`</span></span>
+<span class="giallo-l"><span>    ModuleName</span><span style="color: #CBA6F7;"> string</span><span style="color: #A6E3A1;">         `json:&quot;module_name,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Payload</span><span style="color: #CBA6F7;">    map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #A6E3A1;"> `json:&quot;payload&quot;`</span></span>
+<span class="giallo-l"><span>    Metadata</span><span style="color: #CBA6F7;">   map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #A6E3A1;"> `json:&quot;metadata,omitempty&quot;`</span></span>
+<span class="giallo-l"><span>    Version</span><span style="color: #CBA6F7;">    int64</span><span style="color: #A6E3A1;">          `json:&quot;version&quot;`</span></span>
+<span class="giallo-l"><span>    Timestamp</span><span style="color: #F9E2AF;font-style: italic;">  time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span><span style="color: #A6E3A1;">      `json:&quot;timestamp&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>ModuleName</code> 记的是「这条事件是谁发出的」——runtime、workflow、memory。这东西听起来不起眼，直到你试着重放一条事件流，发现你分不清 <code>step.started</code> 是 workflow 引擎发的还是插件总线发的。没有它，你得靠 payload 的形状反推来源；有了它，你一看就知道。</p>
+<p>这很容易让人上头。既然记下来能救命，那为什么不记更多？我把记录当成银弹，结果差点把自己淹死——<strong>可观测性不是免费的。</strong></p>
+<h2 id="bu-ya-suo-de-shi-jian-cun-chu-hui-fan-guo-lai-yao-ni">不压缩的事件存储，会反过来咬你</h2>
+<p>ARES 事件系统自己就承认了这件事。<code>internal/ares_events/compactor.go</code> 里的 <code>CompactionConfig</code> 是这么定义的：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> CompactionConfig</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Threshold</span><span style="color: #CBA6F7;">              int</span><span style="color: #9399B2;font-style: italic;">           // Events triggering compaction (default: 500)</span></span>
+<span class="giallo-l"><span>    KeepRecent</span><span style="color: #CBA6F7;">             int</span><span style="color: #9399B2;font-style: italic;">           // Raw events to retain (default: 100)</span></span>
+<span class="giallo-l"><span>    MaxSummariesPerStream</span><span style="color: #CBA6F7;">  int</span><span style="color: #9399B2;font-style: italic;">           // Max summaries per stream</span></span>
+<span class="giallo-l"><span>    SummaryTTL</span><span style="color: #F9E2AF;font-style: italic;">             time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;"> // Summary retention (default: 30 days)</span></span>
+<span class="giallo-l"><span>    EnableTrimming</span><span style="color: #CBA6F7;">         bool</span><span style="color: #9399B2;font-style: italic;">          // Delete raw events after compaction</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>默认行为：当一个 stream 超过 500 条事件，把最旧的 400 条压缩成一个 summary，只保留最近 100 条原始事件。</p>
+<p>这暴露了一个自我否定的闭环：<strong>为了能重建状态而记录一切，结果记录本身需要被「遗忘」才能活下去。</strong> 事件流是只追加（append-only）的，Agent 跑得越久，事件越多，存储无限增长。Compactor 的存在就是证据——它把旧事件压缩成快照，否则事件存储本身会变成系统最严重的内存/磁盘负债。</p>
+<p>一个不敢删数据的系统，终将被自己记录的东西压垮。ARES 的诚实之处，在于它没把事件溯源当成银弹——它建了 Compactor，等于亲口承认<strong>遗忘是可观测性的一部分</strong>。</p>
+<h2 id="ji-shen-me-bi-ji-duo-shao-geng-zhong-yao">记什么，比记多少更重要</h2>
+<p>Flight Recorder 刚设计时也喊过「记录一切」。任何事件都能进 Timeline。但我后来发现：<strong>不是所有数据都值得记。</strong> 真正该问的不是「能不能记」，而是「从这些数据里能不能挖出有用的调试信息」。</p>
+<p>Flight Recorder 现在记这些：</p>
+<table><thead><tr><th>记录项</th><th>例子</th><th>为什么值得</th></tr></thead><tbody>
+<tr><td>每次 LLM 调用的起止和 token 消耗</td><td>type=llm.call</td><td>Timeline 里能看到耗时分布</td></tr>
+<tr><td>每次工具调用的参数和结果</td><td>type=tool.call</td><td>出错时能定位是哪个工具</td></tr>
+<tr><td>每个 Agent 决策</td><td>Candidates/Selected/Reason/Confidence</td><td>调试「为什么选了这个工具」的黄金数据</td></tr>
+<tr><td>记忆蒸馏的输入/输出比</td><td>CompressionRatio</td><td>知道压缩了多少</td></tr>
+</tbody></table>
+<p>它<strong>不记</strong>这些：</p>
+<table><thead><tr><th>不记项</th><th>原因</th></tr></thead><tbody>
+<tr><td>LLM 的完整回复文本</td><td>几十 K token 的原始文本你永远不会去读</td></tr>
+<tr><td>工具的完整输出</td><td>太臃肿、太噪，对黑匣子没用</td></tr>
+<tr><td>每一次细粒度状态迁移</td><td>廉价噪声，淹没真正有用的元数据</td></tr>
+</tbody></table>
+<p>这里有个很妙的实现细节。Timeline 算总时长，用的不是「所有 Duration 简单相加」，而是时间轴范围 <code>max(EndAt) - min(StartAt)</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>t</span><span style="color: #9399B2;">.</span><span>events</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    minStart</span><span style="color: #94E2D5;"> :=</span><span> t</span><span style="color: #9399B2;">.</span><span>events</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">].</span><span>StartAt</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> maxEnd</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> e</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> t</span><span style="color: #9399B2;">.</span><span>events</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> e</span><span style="color: #9399B2;">.</span><span>StartAt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Before</span><span style="color: #9399B2;">(</span><span>minStart</span><span style="color: #9399B2;">) {</span><span> minStart</span><span style="color: #94E2D5;"> =</span><span> e</span><span style="color: #9399B2;">.</span><span>StartAt</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span>e</span><span style="color: #9399B2;">.</span><span>EndAt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">IsZero</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> &amp;&amp;</span><span style="color: #9399B2;"> (</span><span>maxEnd</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">IsZero</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> ||</span><span> e</span><span style="color: #9399B2;">.</span><span>EndAt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">After</span><span style="color: #9399B2;">(</span><span>maxEnd</span><span style="color: #9399B2;">)) {</span></span>
+<span class="giallo-l"><span>            maxEnd</span><span style="color: #94E2D5;"> =</span><span> e</span><span style="color: #9399B2;">.</span><span>EndAt</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>maxEnd</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">IsZero</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> maxEnd</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">After</span><span style="color: #9399B2;">(</span><span>minStart</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>        summary</span><span style="color: #9399B2;">.</span><span>TotalDuration</span><span style="color: #94E2D5;"> =</span><span> maxEnd</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sub</span><span style="color: #9399B2;">(</span><span>minStart</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>好处是：<strong>事件之间的空隙（空闲/等待时间）被算进去了</strong>。一次 LLM 调用花了 3 秒，一次工具调用花了 2 秒，中间 Agent 闲等了 5 秒——相加只给你 5 秒，而 <code>maxEnd - minStart</code> 给你 10 秒。那 5 秒的空闲，恰恰是你最该去查的等待/阻塞。</p>
+<blockquote>
+<p>可观测性的上限，不是你能记多少，而是你敢忘多少。</p>
+</blockquote>
+<p>代价也得摊开讲。Timeline、Graph、DecisionLog 的每次读操作，返回的都是内部 slice 的<strong>深拷贝</strong>（defensive copy），保证调用方随便改返回数据都不会破坏 Flight Recorder 的内部状态。但代价是每次读都是 O(n) 的内存分配和拷贝。Dashboard 每 5 秒轮询一次、每次返回 5000 条事件——那就是每 5 秒一次 <code>make([]TimelineEvent, 5000)</code> + <code>copy</code>。高频率轮询下，这东西会成瓶颈。我留了个 <code>EventsSince(t)</code> 的优化口子，但说实话，我到现在还没去填。</p>
+<h2 id="wo-dang-shi-zen-me-xiang-de-you-cuo-zai-na">我当时怎么想的，又错在哪</h2>
+<p>我最早以为可观测性就是「能记多少记多少」，越多越安全。后来被两件事打脸：</p>
+<p>一是事件存储无限增长，不压缩就把自己压死——我建的 Compactor 就是承认「我记太多了，得忘一点」。</p>
+<p>二是我一度想把所有原始数据都塞进黑匣子，结果发现 LLM 那几十 K token 的回复文本，从来没人去读。真正救人的是「为什么选了这个工具」这种<strong>结构化、可归因的元数据</strong>，不是原始流量。</p>
+<p>所以 Flight Recorder 真正的原则，不是「记录一切」，而是**「记录每一个可调试的元数据」**——关键词是元数据。原始数据对黑匣子来说太臃肿、太噪；提取过、分类过、归因过的元数据，才配进黑匣子。</p>
+<h2 id="jie-lun">结论</h2>
+<p>大多数团队在可观测性上犯的错，不是「记太少」，而是<strong>记得太民主</strong>——把所有信号一视同仁地塞进同一个管道，然后被自己的数据淹死。</p>
+<p>这跟「抽象的债务」是同一个命题的两种说法：抽象要画一条线，记录也要画一条线。线画错了，救命的工具就变成慢性自杀。</p>
+<blockquote>
+<p>事件溯源让你能重建过去，但 Compactor 提醒你：连「重建过去」这件事，都需要你先学会丢掉大部分过去。</p>
+</blockquote>
+<p>ARES 的聪明，不是它记了多少，而是它在同一个系统里同时承认两件事——<strong>记录一切是必要的，敢忘一部分更是必要的</strong>。一个不敢删数据的可观测系统，和一个不敢删代码的架构一样，迟早会把自己撑爆。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/07-state-vs-behavior/">状态还是行为</a> -- 事件溯源把状态重放出来、记忆蒸馏把上下文压缩掉：同一个 ARES，在两端站着回答同一个问题——什么该固化成状态，什么该保留成可重放的行为。</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/07-state-vs-behavior/">状态还是行为</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/event-sourcing/">#Event Sourcing</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory/">#Memory</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/state/">#State</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="zhuang-tai-huan-shi-xing-wei">状态还是行为</h1>
+<p>先讲一段我自己的弯路。ARES 的记忆系统，最早我没想搞三层架构，我想的是<strong>词频分析</strong>——把对话历史切成词，数哪个词出现得最频繁，出现得多就值得记住。</p>
+<p>当时我撸了个极简版本，觉得自己美极了：O(n) 扫一遍，一个 <code>map[string]int</code> 全搞定，不需要 LLM、不需要数据库、甚至连网络请求都不用发。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">e </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">KeywordExtractor</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Extract</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> messages</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">Message</span><span style="color: #9399B2;">) ([]</span><span style="color: #F9E2AF;font-style: italic;">Keyword</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    freq</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> msg</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> messages</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        for</span><span> _</span><span style="color: #9399B2;">,</span><span> word</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span style="color: #89B4FA;font-style: italic;"> tokenize</span><span style="color: #9399B2;">(</span><span>msg</span><span style="color: #9399B2;">.</span><span>Content</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span style="color: #94E2D5;"> !</span><span>e</span><span style="color: #9399B2;">.</span><span>stopwords</span><span style="color: #9399B2;">[</span><span>word</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span>                freq</span><span style="color: #9399B2;">[</span><span>word</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">++</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Sort by frequency, take top-K</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> keywords</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">Keyword</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> word</span><span style="color: #9399B2;">,</span><span> count</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> freq</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        keywords</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>keywords</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Keyword</span><span style="color: #9399B2;">{</span><span>Word</span><span style="color: #9399B2;">:</span><span> word</span><span style="color: #9399B2;">,</span><span> Freq</span><span style="color: #9399B2;">:</span><span> count</span><span style="color: #9399B2;">})</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这段代码现在看很蠢，但当时我觉得它漂亮。问题在哪？词频只看「出现多少次」。Agent 对话里出现最频繁的词永远是「你好」「好的」「谢谢」——你过滤掉停用词，真正有价值的概念（「数据库连接池」「索引优化」「查询超时」）出现的频率比「好的」低一个数量级。你只能知道「哪个词出现得多」，却不知道「用户遇到了什么问题、Agent 怎么解决的」。</p>
+<blockquote>
+<p>词频分析为什么不行，一句话就能说清：<strong>Agent 记忆要解决的不是「哪些词出现过」，而是「哪些经验值得复用」。</strong> 这两个问题差着一个维度——前者是统计问题，后者是语义问题。</p>
+</blockquote>
+<p>这段弯路，正是「状态 vs 行为」这个决策最鲜活的注脚。</p>
+<blockquote>
+<p><strong>Problem</strong>: 配置要落盘吗？缓存算状态吗？Agent 的会话历史是状态还是行为？ARES 一边用事件溯源把状态重算出来（第八篇），一边用记忆蒸馏把上下文压缩掉（第三篇）——这两个相反的动作，其实在回答同一个问题：什么该固化成状态，什么该保留成可重放的行为？</p>
+</blockquote>
+<h2 id="yi-ge-bei-hun-yao-de-er-fen-fa">一个被混淆的二分法</h2>
+<p>大多数工程师把「状态」和「行为」当成数据和函数的老生常谈。但决策层面上，它们是<strong>两种对待时间的方式</strong>：</p>
+<ul>
+<li><strong>状态</strong>是对过去的<strong>定论</strong>：一个值，代表「到此为止的结果」。</li>
+<li><strong>行为</strong>是对过去的<strong>保留</strong>：一串动作，代表「如果想知道结果，可以重来」。</li>
+</ul>
+<p>ARES 的事件系统选了行为端：不存当前状态，存每个改变状态的操作，想要状态就重放（<code>internal/ares_events/types.go</code> 里那条只追加的不可变日志）。记忆蒸馏却选了状态端：对话历史太长会撑爆上下文窗口，所以要教 Agent 学会遗忘和提炼（<code>internal/memory/distillation/service.go</code> 里的 <code>Experience</code>）。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Experience</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">               string</span></span>
+<span class="giallo-l"><span>    Problem</span><span style="color: #CBA6F7;">          string</span><span style="color: #9399B2;font-style: italic;">           // The user&#39;s problem/request</span></span>
+<span class="giallo-l"><span>    Solution</span><span style="color: #CBA6F7;">         string</span><span style="color: #9399B2;font-style: italic;">           // The Agent&#39;s solution</span></span>
+<span class="giallo-l"><span>    Confidence</span><span style="color: #CBA6F7;">       float64</span><span style="color: #9399B2;font-style: italic;">          // Confidence [0, 1]</span></span>
+<span class="giallo-l"><span>    ExtractionMethod</span><span style="color: #F9E2AF;font-style: italic;"> ExtractionMethod</span><span style="color: #9399B2;font-style: italic;"> // direct / summary / pattern</span></span>
+<span class="giallo-l"><span>    Vector</span><span style="color: #9399B2;">           []</span><span style="color: #CBA6F7;">float64</span><span style="color: #9399B2;font-style: italic;">        // Vector embedding</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>注意 <code>Problem</code> + <code>Solution</code> 的分开存储——这是最有价值的知识形态：不是「用户说了什么」，而是「用户遇到了什么问题、Agent 怎么解决的」。</p>
+<p>同一个框架，在两个模块里站在了天平两端。这不是矛盾，是诚实——因为两个模块面对的时间尺度不同。</p>
+<h2 id="xing-wei-duan-shi-jian-su-yuan-wei-shen-me-gan-bu-cun-zhuang-tai">行为端：事件溯源为什么敢不存状态</h2>
+<p>事件溯源选行为，是因为 Agent 的崩溃不可预测。你不知道它死在哪一步，所以必须把每一步都留着，死了能从任意点重建。</p>
+<p>最狠的一个真实案例：一个 Agent 跑一个复杂的多步工作流，中途崩溃了。搁以前，我对着日志瞎猜——是 prompt 问题？LLM 幻觉？工具参数错了？猜、改、重跑，来回三四个循环才定位。这次我打开 Dashboard，找到那个 Agent 的事件流，从开头一步步重放。到第 7 个事件我就笑了——<code>tool.call:7</code> 从搜索 API 返回了空结果，Agent 没做空值检查，直接把空结果拼进了下一个 LLM prompt。</p>
+<p>bug 本身不复杂——新鲜的是<strong>我看见了完整的因果链，一个事件一个事件地 unfold</strong>。不是猜，是看。那一刻我觉得自己不是在调试，是在看一个黑匣子飞行记录仪。</p>
+<p>但事件溯源自己也要承认：它靠「记全」成立，又必须靠「删旧」才能续命（这就是上一篇讲的 Compactor）。<strong>连最坚定的「行为派」，最终也得向状态投降——把旧事件压成快照。</strong> 行为端不是不要状态，是推迟到不得不固化时才固化。</p>
+<h2 id="zhuang-tai-duan-ji-yi-zheng-liu-wei-shen-me-gan-diu-xing-wei">状态端：记忆蒸馏为什么敢丢行为</h2>
+<p>记忆蒸馏选状态，是因为 LLM 的上下文窗口是硬约束。你不可能把 50 轮对话全塞回去。ARES 的三层架构，每层都比上层更精炼、更持久、更贵：</p>
+<table><thead><tr><th>层</th><th>生命周期</th><th>容量上限</th><th>本质</th></tr></thead><tbody>
+<tr><td>Session Memory</td><td>24h，纯内存，重启即丢</td><td>100 条</td><td>短期工作记忆</td></tr>
+<tr><td>Task Memory</td><td>7d，可持久化</td><td>1000 条</td><td>单次执行记录</td></tr>
+<tr><td>Distilled Memory</td><td>LRU 淘汰</td><td>5000 条</td><td>可复用的结构化经验</td></tr>
+</tbody></table>
+<p>关键决策藏在 <code>internal/memory/context</code> 的 <code>BuildContext</code> 里——它用的是<strong>滑动窗口</strong>，不是简单截断：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">sm </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">SessionMemory</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> BuildContext</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> input</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> sessionID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    session</span><span style="color: #9399B2;">,</span><span> ok</span><span style="color: #94E2D5;"> :=</span><span> sm</span><span style="color: #9399B2;">.</span><span>sessions</span><span style="color: #9399B2;">[</span><span>sessionID</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>ok</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> input</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span>    session</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RLock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> session</span><span style="color: #9399B2;">.</span><span>mu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RUnlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>    start</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>session</span><span style="color: #9399B2;">.</span><span>Messages</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span> sm</span><span style="color: #9399B2;">.</span><span>maxHistory</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        start</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>session</span><span style="color: #9399B2;">.</span><span>Messages</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -</span><span> sm</span><span style="color: #9399B2;">.</span><span>maxHistory</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    relevant</span><span style="color: #94E2D5;"> :=</span><span> session</span><span style="color: #9399B2;">.</span><span>Messages</span><span style="color: #9399B2;">[</span><span>start</span><span style="color: #9399B2;">:]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 拼接成 context 字符串</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>哪怕一个 session 有 100 条消息，LLM 永远只收到最近 10 条。更老的内容<strong>自然地「被遗忘」</strong>。</p>
+<p>真实数据最能说明问题。ARES 自己跑的基准测试（部分经真实 LLM 调用验证）：</p>
+<table><thead><tr><th>对话轮数</th><th style="text-align: right">原始上下文 (tokens)</th><th style="text-align: right">蒸馏后 (tokens)</th><th style="text-align: right">节省</th></tr></thead><tbody>
+<tr><td>10</td><td style="text-align: right">1,121</td><td style="text-align: right">379</td><td style="text-align: right"><strong>66.2%</strong></td></tr>
+<tr><td>50</td><td style="text-align: right">5,387</td><td style="text-align: right">443</td><td style="text-align: right"><strong>91.8%</strong></td></tr>
+<tr><td>100</td><td style="text-align: right">10,972</td><td style="text-align: right">339</td><td style="text-align: right"><strong>96.9%</strong></td></tr>
+</tbody></table>
+<p>蒸馏后的上下文大小几乎恒定在 330–443 token（约 3 条经验），不随对话轮数增长。轮数越长，收益越大。按 GPT 定价算，100 轮对话每次请求省下约 $0.053——每天 10 万次调用就是<strong>每天省 $5,300</strong>。</p>
+<p>但这里有个我必须诚实交代的代价：蒸馏丢的是<strong>信息完整性</strong>。滑动窗口截断直接丢信息，蒸馏是「提炼后存储」。前者是「省钱但挨饿」，后者是「省钱还吃得饱」——可后者需要 LLM 调用和向量生成，更贵，也更慢。ARES 用两条并行路径来平衡：高频低价值的任务走轻量 <code>DistillTask</code>（O(1)，不调 LLM），低频高价值的任务才走完整蒸馏。</p>
+<h2 id="jie-lun">结论</h2>
+<p>「状态还是行为」的争论，90% 是伪争论。人们吵的不是哪个更好，而是<strong>懒得想自己面对的是哪种时间尺度</strong>。</p>
+<ul>
+<li>不确定未来要不要解释过去 → 留行为（事件溯源）。</li>
+<li>确定未来只关心结果、且细节会压垮系统 → 固化状态（记忆蒸馏）。</li>
+</ul>
+<blockquote>
+<p>状态是行为的尸体，行为状态的胚胎。区别只在于：你更愿意在哪一刻动刀。</p>
+</blockquote>
+<p>最讽刺的一点是：<strong>ARES 里最坚定的「行为派」（事件溯源），最终也得靠 Compactor 把旧事件压成状态快照才能活下去。</strong> 连行为端都逃不过「最终总要固化成状态」。这恰恰说明，状态和行为不是非此即彼的敌人——它们是一个连续体上的两个点，区别只在你愿意为「可重放」支付多少存储和复杂度。</p>
+<p>ARES 的聪明不是「选了哪边」，而是它<strong>在同一个系统里同时承认两边都对，只是用在不同层</strong>。这比任何一边倒的教条都诚实——也贵得多。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/08-the-pattern-that-lied/">撒谎的设计模式</a> -- 教科书说工厂、策略、观察者模式解耦，可 ARES 的 LLMService 和 AHP 通信协议落地时跟教科书长得完全不一样：一个用对了，一个若用错就是 2000 倍的减速。设计模式什么时候开始撒谎？</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/08-the-pattern-that-lied/">撒谎的设计模式</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/architecture/">#Architecture</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/design-pattern/">#Design Pattern</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="sa-huang-de-she-ji-mo-shi">撒谎的设计模式</h1>
+<p>先讲一个让我肉疼的故事。ARES 最早做多 Agent 通信时，我没用 Go channel，而是花了<strong>整整两天</strong>跟 RabbitMQ 搏斗——第一天装 Erlang、配 vhost、建 exchange、映射 binding key；第二天写了 200 多行胶水代码，就为了把一条消息从 Agent A 送到 Agent B。</p>
+<p>等我终于跑完基准测试，端到端延迟从 <strong>&lt;1μs（Go channel）涨到了 2ms+——那是 2000 倍的减速</strong>。而且这还不是网络延迟造成的，因为两个 Agent 就在同一个进程里。纯序列化和路由开销。</p>
+<p>那一刻我想的是：<strong>同一个进程、两个 goroutine，发个消息还得走网络？这他妈太荒谬了。</strong></p>
+<p>于是我把 RabbitMQ 全删了，写了 AHP——一个不碰网线的纯进程内通信协议。这就是设计模式撒谎最典型的一课。</p>
+<blockquote>
+<p><strong>Problem</strong>: 「要面向接口编程」「用策略模式解耦」「观察者模式降低耦合」——教科书句句是真理。可 ARES 的 <code>LLMService</code> 接口（第一篇）、AHP 的通信协议（第二篇），落地时都跟教科书长得很不一样。设计模式什么时候开始撒谎？</p>
+</blockquote>
+<h2 id="mo-shi-fan-mai-de-shi-wei-lai-de-ke-neng-xing">模式贩卖的是「未来的可能性」</h2>
+<p>每个设计模式推销时都带着一个隐藏状语：<strong>「当你未来需要……的时候」</strong>。</p>
+<ul>
+<li>工厂模式：「当你未来要创建 N 种实现时。」</li>
+<li>策略模式：「当你未来要切换算法时。」</li>
+<li>观察者模式：「当你未来要加 N 个监听者时。」</li>
+</ul>
+<p>问题来了：你<strong>现在</strong>需要吗？大多数情况下不需要。但你买了，因为「万一呢」。于是模式在你用不上的地方提前支取了复杂度。</p>
+<p>ARES 第一篇讲的「抽象的债务」就是同一个病：抽象到什么粒度？做多了，接口本身变成维护负担。设计模式是抽象的具名版本——它比裸抽象更危险，因为它披着「最佳实践」的外衣，让你不好意思质疑。</p>
+<h2 id="zhen-shi-fu-zai-hui-si-diao-mo-shi-de-bao-zhuang">真实负载会撕掉模式的包装</h2>
+<p>看 ARES 的 AHP 协议（第二篇）。教科书会建议你用消息队列 / 观察者模式做多 Agent 通信。我<strong>真试过</strong>——就是上面那两天。</p>
+<blockquote>
+<p>我花了两天跟 RabbitMQ 搏斗……端到端延迟从 &lt;1μs（Go channel）涨到 2ms+——2000 倍的减速。</p>
+</blockquote>
+<p>消息队列这个「模式」在同一进程内是撒谎的：它解决的是「不同进程/机器要通信」的问题，而你面对的是「同一进程两个 goroutine」。模式答非所问，你还以为是自己用错了。</p>
+<p>AHP 最后落在了 <code>internal/ares_ahp/message_queue.go</code> 里一个基于带缓冲 channel 的 <code>MessageQueue</code>，入队是非阻塞的：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">q </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MessageQueue</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Enqueue</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> msg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">AHPMessage</span><span style="color: #9399B2;">) (</span><span style="color: #EBA0AC;font-style: italic;">retErr</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> q</span><span style="color: #9399B2;">.</span><span>closed</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Load</span><span style="color: #9399B2;">() {</span><span style="color: #CBA6F7;"> return</span><span> errors</span><span style="color: #9399B2;">.</span><span>ErrQueueClosed</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> recover</span><span style="color: #9399B2;">();</span><span> r</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span> retErr</span><span style="color: #94E2D5;"> =</span><span> errors</span><span style="color: #9399B2;">.</span><span>ErrQueueClosed</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> q</span><span style="color: #9399B2;">.</span><span>messages</span><span style="color: #94E2D5;"> &lt;-</span><span> msg</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    default</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> errors</span><span style="color: #9399B2;">.</span><span>ErrQueueFull</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>非阻塞、锁无关地检查关闭标志、<code>defer recover()</code> 兜住 <code>send on closed channel</code> 的 panic——这些细节都不是「消息队列模式」教科书会告诉你的。它们是<strong>同一个进程、同一个内存空间</strong>这个真实约束逼出来的。</p>
+<p><strong>模式不撒谎的时候，是你的问题恰好匹配它预设的场景。</strong> 不匹配时，它比没有模式更糟——因为它用一套你不懂的间接层，把你简单的问题藏了起来。</p>
+<h2 id="mo-shi-yong-dui-de-na-ci">模式用对的那次</h2>
+<p>也不是所有模式都在 ARES 里翻车。ARES 第一篇的 <code>LLMService</code> 接口就是用对了的例子——它抽象的是<strong>行为</strong>，不是数据：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> LLMService</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Chat</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> req</span><span style="color: #F9E2AF;font-style: italic;"> ChatRequest</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">ChatResponse</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Embed</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> req</span><span style="color: #F9E2AF;font-style: italic;"> EmbedRequest</span><span style="color: #9399B2;">) (</span><span style="color: #F9E2AF;font-style: italic;">EmbedResponse</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>四个 provider（OpenAI / Ollama / DeepSeek / 本地）的差异是<strong>真实存在的</strong>，不是假想的未来需求。抽象它，是因为我明天就可能要切 provider，而调用方的业务代码一行都不用改。这跟 AHP 用 channel 而不是 MQ 是同一个判断：<strong>通信双方就在同一进程，这是被实测确认的场景，不是想象。</strong></p>
+<p>两条规律：</p>
+<ul>
+<li>模式只为<strong>已经存在的差异</strong>服务，不为想象中的差异预支。</li>
+<li>模式的价值在<strong>它消除的重复</strong>，不在它增加的「可扩展性」。</li>
+</ul>
+<h2 id="wo-dang-shi-xin-liao-mo-shi-hou-lai-bei-da-lian-de-di-fang">我当时信了模式，后来被打脸的地方</h2>
+<p>AHP 我自己写完后，诚实列过它的短板（第二篇的「What's Missing」一节），有几条是模式教我的反面教材：</p>
+<ul>
+<li><strong>没有广播</strong>：想给多个 Sub Agent 发消息？你只能在 Leader 侧写 for 循环一个个发。有一次我要同时通知 6 个 Sub，等 Leader 发到第 3 个时，第 1 个已经执行完了——串行发送成了整个工作流的瓶颈。</li>
+<li><strong>重试策略太天真</strong>：DLQ 的重试间隔是固定的，没有指数退避。有一次下游 API 挂了 10 分钟，DLQ 用固定间隔疯狂重试，把本就脆弱的局面搞得更糟。我事后才加了熔断逻辑——这本该从一开始就做。</li>
+<li><strong>「换个实现就行」是个谎言</strong>：AHP 的很多语义（非阻塞入队、备份缓冲、共享内存心跳）都依赖 channel 的同步特性。等你真去换 gRPC 或 RabbitMQ，移植这些行为远比纸面上难——你需要重新实现一整套「看起来像 channel」的异步语义。抽象层能隔离接口，隔离不了语义差异。</li>
+</ul>
+<blockquote>
+<p>我差点信了「换个 transport 就行」这句话。直到我认真想换 gRPC 时才发现：channel 的同步语义和异步网络消息队列根本不是一回事，那些我以为是「实现细节」的东西，恰恰是 AHP 能跑起来的原因。</p>
+</blockquote>
+<h2 id="jie-lun">结论</h2>
+<p>设计模式最大的谎言，是它让你觉得「用了就专业了」。事实上，<strong>一个用对的简单 switch，胜过一个用错的设计模式一万倍</strong>。</p>
+<blockquote>
+<p>模式是工具，不是勋章。挂在身上不用的模式，和挂在墙上的猎枪一样——除了显摆和走火，没别的用。</p>
+</blockquote>
+<p>判断一个模式该不该用，只看一句：<strong>删掉它，明天会不会真的痛？</strong> 如果答案是「不会，只是感觉不优雅」——那它就是在撒谎，删掉。</p>
+<p>AHP 那 2000 倍的减速，是我交过最贵的「为想象中的未来预支复杂度」的学费。它教会我一件事：<strong>模式对的时候，是你的问题刚好撞上它预设的场景；模式撒谎的时候，是你的问题还没到那个场景，你却提前把间接层买了单。</strong></p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/09-when-to-say-no-to-async/">何时对异步说不</a> -- AHP 用 Go channel 做亚微秒级通信，goroutine 到处飞。但异步不是免费的信仰：ARES 的 Leader 曾因一个 goroutine 泄漏静默死亡 20 分钟才被发现。什么时候同步反而更诚实？</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/09-when-to-say-no-to-async/">何时对异步说不</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/async/">#Async</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/concurrency/">#Concurrency</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="he-shi-dui-yi-bu-shuo-bu">何时对异步说不</h1>
+<p>先讲一个让我肉疼的调试故事。ARES 最早的雏形，是一个简单的 chatbot：一个 Leader、两个 Sub、几个工具。开发环境跑得好好的。一上生产，Leader 会在 <strong>20 分钟后静默停止响应</strong>——没报错、没 panic、没崩溃日志。就……沉默。</p>
+<p>我花了<strong>三天</strong>才找到根因：LLM 客户端里有个 <strong>goroutine 泄漏</strong>。每个请求泄漏一个 goroutine，最终撞上 OS 的线程上限。修复是一行。但找到它花了 72 小时，因为我对 Agent 内部<strong>发生了什么零可见性</strong>。</p>
+<p>那次之后我才明白：问题从来不是「怎么造一个 Agent」，是「怎么让一个 Agent 在生产环境里活着」。</p>
+<p>异步，在这个故事里是氧气，也是那颗泄漏的螺丝。</p>
+<blockquote>
+<p><strong>Problem</strong>: ARES 的 AHP 协议用 Go channel 做同进程通信，延迟 &lt;1μs（第二篇）；goroutine 泄漏曾让 Leader 静默死亡 20 分钟才被发现（第一篇架构篇）。异步是 ARES 的氧气。但异步不是信仰——什么时候该对「全异步」说不？</p>
+</blockquote>
+<h2 id="yi-bu-fan-mai-de-shi-bu-deng-dai">异步贩卖的是「不等待」</h2>
+<p>异步的 selling point 永远是那句话：<strong>别阻塞，让调用方先走</strong>。听起来无敌。ARES 的 Leader 把任务扔给 Sub 就继续干别的，不用等 Sub 跑完（第二篇）——这确实是异步对的场景。</p>
+<p>但「不等待」的代价是<strong>因果链断裂</strong>。同步调用里，A 调 B，B 挂了，栈告诉你就在 A 调 B 那一行。异步里，A 发了个消息就走了，B 三秒后在另一个 goroutine 炸了——你拿到的栈和 A 毫无关系。调试异步 bug，本质是在拼一幅你没有碎片的拼图。</p>
+<p>AHP 的入队是非阻塞的，返回 <code>ErrQueueFull</code> 立刻走人，绝不阻塞调用方（第二篇 <code>MessageQueue.Enqueue</code>）。这设计没错——但「立刻走人」意味着：如果 Sub 那边出了问题，Leader 这边不会停，它已经去干下一摊事了。</p>
+<h2 id="xin-ren-mo-xing-jue-ding-gai-bu-gai-yi-bu">信任模型决定该不该异步</h2>
+<p>「并发的本质是信任」那篇讲过：并发策略选错，追踪器本身成了瓶颈（memscope-rs 篇）。异步同理——<strong>你敢不敢信任下游会按时回来，决定了你能不能放心地不等待。</strong></p>
+<ul>
+<li>下游是同进程、确定性、毫秒级返回（如 AHP 的 channel）→ 异步划算，信任成本低。</li>
+<li>下游是外部 API、人类、不可控的 Agent → 你「不等待」只是把等待<strong>藏起来</strong>了，问题没消失，只是你失去了在出错现场的位置。</li>
+</ul>
+<p>ARES 第一篇架构篇里那个 20 分钟静默死亡，根因正是 goroutine 泄漏：异步的东西死了，没人通知同步的世界。异步把「它还活着吗」这个问题，从显式的返回值，变成了你必须额外建造的观测系统（见「可观测性的代价」）。</p>
+<h2 id="20-fen-zhong-jing-mo-si-wang-yi-bu-de-fan-mian-jiao-cai">20 分钟静默死亡：异步的反面教材</h2>
+<p>回到开头那个故事。Leader 静默停止响应，不是因为它「崩溃了」——崩溃至少会留个栈、写个日志。它是<strong>异步地、悄悄地</strong>死掉的：一个泄漏的 goroutine 每次请求一个，慢慢把线程池吃光，等到 OS 线程上限被撞上，Leader 就已经没法再处理任何新请求了。</p>
+<p>整个过程里，没有任何一个同步的、会立刻回报错误的路径被触发。所有「我还活着吗」的检查，都是异步的、延迟的、可以被泄漏绕过的。等我发现时，它已经「活着但死了」20 分钟。</p>
+<blockquote>
+<p>异步把「它挂了」这个事实，从「调用方立刻拿到的返回值」，降级成了「某个后台机制将来某刻可能会注意到」。区别就在这：同步逼你<strong>当场</strong>看见失败，异步让你<strong>将来某刻</strong>才可能发现。</p>
+</blockquote>
+<h2 id="ahp-de-yi-bu-shi-ke-yi-she-ji-chu-lai-de">AHP 的异步，是刻意设计出来的</h2>
+<p>补一个 AHP 里的细节，说明 ARES 对异步的态度不是「默认全异步」，而是「每一处异步都得过脑子」。</p>
+<p><code>Enqueue</code> 那个 <code>ctx</code> 参数其实是<strong>摆设</strong>——它的 <code>select</code> 里 <code>default</code> 分支永远先命中，根本不会去选 <code>ctx.Done()</code>。设计者明说这是有意的：入队要的是「立刻走人」，不是「等到上下文取消」。把 <code>ctx</code> 摆在那儿，是接口对称性，不是真要阻塞等它。</p>
+<p>还有个更刁钻的点叫 <strong>TOCTOU 规避</strong>：<code>SendMessage</code> 故意<strong>不</strong>在入队前先 <code>IsFull()</code> 检查一下。因为如果先检查、再入队，这中间队列可能从「没满」变成「满了」（竞态），反而丢消息。直接干、再处理错误，比「先看再干」更稳。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">q </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MessageQueue</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Enqueue</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> msg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">AHPMessage</span><span style="color: #9399B2;">) (</span><span style="color: #EBA0AC;font-style: italic;">retErr</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> q</span><span style="color: #9399B2;">.</span><span>closed</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Load</span><span style="color: #9399B2;">() {</span><span style="color: #CBA6F7;"> return</span><span> errors</span><span style="color: #9399B2;">.</span><span>ErrQueueClosed</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> recover</span><span style="color: #9399B2;">();</span><span> r</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span> retErr</span><span style="color: #94E2D5;"> =</span><span> errors</span><span style="color: #9399B2;">.</span><span>ErrQueueClosed</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> q</span><span style="color: #9399B2;">.</span><span>messages</span><span style="color: #94E2D5;"> &lt;-</span><span> msg</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    default</span><span style="color: #9399B2;">:</span><span style="color: #9399B2;font-style: italic;">                        // 永远先命中，从不会等 ctx.Done()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> errors</span><span style="color: #9399B2;">.</span><span>ErrQueueFull</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这些细节都指向一件事：ARES 的异步是<strong>被设计出来的诚实</strong>，不是框架默认的信仰。它知道异步会把失败藏起来，所以给心跳检测、给 DLQ、给 Compactor——用一整套观测设施，去补异步偷走的那个「出错现场」。</p>
+<h2 id="tong-bu-de-cheng-shi-zhi-chu">同步的诚实之处</h2>
+<p>同步最被低估的价值是：<strong>它强制你在出错的地方看到出错。</strong> 一个返回 <code>error</code> 的同步调用，逼你把失败写进主路径。异步把失败降级成「某处的一个事件」，主路径假装一切都好。</p>
+<p>ARES 那个 goroutine 泄漏，如果发生在一条同步的、每次调用都立刻检查返回值的路径上，可能几分钟内就会被告警抓住——因为它会表现为「请求开始失败、错误率飙升」，而不是「系统悄悄变慢直到彻底没反应」。</p>
+<p>很多系统不是需要更多异步，而是需要<strong>更少的假装成功</strong>。</p>
+<h2 id="wo-dang-shi-zen-me-xiang-de-you-cuo-zai-na">我当时怎么想的，又错在哪</h2>
+<p>我一度是异步的信徒。goroutine 轻、channel 快、非阻塞入队优雅——我把「能异步就异步」当教条。那个 72 小时才定位的泄漏，把我打醒了。</p>
+<p>我错在把异步当成了<strong>信任的替代品</strong>，而它其实只是信任的<strong>延伸</strong>。当你其实不信任下游、却假装异步时——你不是在设计系统，是在给自己埋雷。ARES 的 AHP 用 channel 是对的，因为同进程通信满足「确定性」这个前提；但 20 分钟静默死亡也是 ARES 的，因为它把本该同步感知的「我还活着吗」也异步化了。</p>
+<blockquote>
+<p>异步不是去掉了等待，只是把等待从你能看见的地方，搬到了你看不见的地方。看不见的等待，才是真的成本。</p>
+</blockquote>
+<h2 id="jie-lun">结论</h2>
+<p>「全异步」和「全同步」一样愚蠢。区别只在于你愿不愿意为每一次「不等待」支付调试税。</p>
+<p>我的判断线很简单：<strong>如果出错的现场必须和调用的现场在同一视野里，就同步。如果下游的生死对你当下的决策无关紧要，才异步。</strong></p>
+<p>AHP 对，是因为同进程通信满足前者里的「确定性」；20 分钟静默死亡错，是因为它把本该同步感知的「我还活着吗」也异步化了。</p>
+<p>异步是信任的延伸，不是信任的替代品。当你其实不信任下游、却假装异步时——你不是在设计系统，是在给自己埋雷。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/10-the-fork-in-the-road/">重写还是演进</a> -- OmniScope 从 Zig 原型改写成 Rust，ARES 从 GoAgentX 改名重生。每个项目都会撞上同一个岔路口：推倒重写，还是渐进演进？这条线到底该画在哪。</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/10-the-fork-in-the-road/">重写还是演进</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/architecture/">#Architecture</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rewrite/">#Rewrite</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="zhong-xie-huan-shi-yan-jin">重写还是演进</h1>
+<p>先讲一段我自己都觉得好笑的开场。OmniScope 最早选型时，我在 Rust 和 <strong>C++</strong> 之间犹豫。原话是：「I'm sorry, I'm not very good at it」——我不太会写 C++。于是先看 Rust，又嫌 <strong>Rust 编译太慢</strong>，改用了 <strong>Zig</strong> 写下第一个工具，后来才出 <strong>omniscope-rs（Rust 重写）</strong>。</p>
+<p>所以 OmniScope 的语言路线是：C++ → Rust（太慢）→ Zig → Rust（omniscope-rs）。这不是朝三暮四，是每一步都在为一个约束投降。</p>
+<blockquote>
+<p><strong>Problem</strong>: OmniScope 最早是 Zig 原型，后来改写成 Rust（omniscope-rs）；ARES 的前身叫 GoAgentX，整条系列从 GoAgentX 改名而来。每个项目都会撞上同一个岔路口：推倒重写，还是渐进演进？这条线到底该画在哪？</p>
+</blockquote>
+<h2 id="zhong-xie-shi-zui-xing-gan-de-tao-bi">重写是最性感的逃避</h2>
+<p>程序员对重写有种本能的浪漫。现有代码「太脏了」「当时不懂」「架构不对」——重写的诱惑在于，它让你假装过去的自己不存在，从一张白纸重新开始。</p>
+<p>但重写是最贵的决策之一。你丢掉的不只是代码，还有<strong>代码里那些没写进文档的、靠踩坑换来的约束</strong>。每一次 <code>// FIXME: don't remove this, it breaks X</code> 都是前任（往往就是你自己）用生产事故买的教训。重写时这些教训最容易一起被丢进垃圾桶。</p>
+<p>所以「重写还是演进」从来不是技术审美问题，是<strong>风险分配问题</strong>。</p>
+<h2 id="zhen-shi-de-xin-hao-yue-shu-bian-liao-bu-shi-dai-ma-zang-liao">真实的信号：约束变了，不是代码脏了</h2>
+<p>看 OmniScope 的改写。omniscope-rs 的起点是盯着 Rust 的 <code>CString::into_raw</code> 发呆——</p>
+<blockquote>
+<p>After that pointer is sent out, who is supposed to free it? Rust's allocator? C's <code>free</code>? Or some third-party library?</p>
+</blockquote>
+<p>这个追问不是「代码写得丑」，而是<strong>问题域的约束被重新认识了</strong>：跨语言 FFI 的内存安全责任边界，比最初原型设想的更锋利。Zig 原型验证了这个方向值得做，但真正要落地 21 个分析 pass、处理真实的多语言调用图时，语言级的内存安全保证从「nice to have」变成了「前提条件」。</p>
+<p><strong>重写的合理信号是：底层约束变了，旧代码的根基假设已经不成立。</strong> 而不是：旧代码难读了、你想用新框架了、上级要求了。</p>
+<p>这里还有个细节值得单独拎出来。AI 当初建议给 OmniScope 加一个<strong>白名单</strong>来识别危险函数，我实现了，结果发现——</p>
+<blockquote>
+<p>maintaining a very large whitelist was necessary, which wasn't what I wanted</p>
+</blockquote>
+<p>维护一个巨型白名单不是我想要的。于是我回头，建了 <strong>MemoryGraph + CallGraph</strong> 做上下文感知，用「图模型」替代「穷举危险函数列表」。这同样是个「重写式」的决策：不是推倒代码，是推倒「白名单能解决问题」这个假设。</p>
+<h2 id="yan-jin-de-dai-jia-bei-di-gu">演进的代价被低估</h2>
+<p>反过来，渐进演进的陷阱是：你永远在给一个错误的根基打补丁。ARES 从 GoAgentX 改名这件事本身就有信息量——改名意味着<strong>对外契约变了</strong>，但底层还是同一套 Go 代码在演进。这不是重写，是「演进到一定程度，连名字都装不下自己了」。</p>
+<p>ARES 自己在这条路上也踩过坑。最早我想让 Agent「长命且坚韧」，试过熔断、重试循环、优雅降级——</p>
+<blockquote>
+<p>It worked — until it didn't.</p>
+</blockquote>
+<p>问题是你预测不了每一种失败模式。一个 goroutine 泄漏、一个死锁、一次 OOM kill——再多的防御性编码也覆盖不全。所以 ARES 最后选了<strong>让 Agent 可丢弃</strong>：它死了，Runtime 就造个新的，从 EventStore 恢复状态。这反而是最诚实的演进：与其给一个会错的根基不断打补丁，不如承认「任何失败都可恢复，因为你永远有个干净的起点」。</p>
+<h2 id="lian-ares-zi-ji-ye-bei-zhong-xie-fan-shi-guo">连 ARES 自己，也被「重写」反噬过</h2>
+<p>ARES 的诞生本身也是一次重写——从 Python 到 Go。我当初的动机很私人：有 HR 说我不会 Go、没有 Go 项目。作为一个有职业骄傲的开发者，<strong>我必须选 Go，堵住所有质疑</strong>。</p>
+<p>这话现在看有点赌气，但它也是「重写信号」的反面教材：我重写，有一部分动力不是「约束变了」，而是「想证明自己」。这类重写往往最贵，因为它带着情绪，容易 over-engineer。</p>
+<p>更要紧的是 ARES 自己的诚实复盘（第一篇）：</p>
+<blockquote>
+<p>The codebase is bigger than it needs to be... the periphery is still finding its shape.</p>
+</blockquote>
+<p>量化交易模块、面试 demo、MCP dashboard——这些本该住在独立仓库里的实验，全塞进了 ARES。核心（Runtime + Workflow + Memory + Events）是扎实的，外围还在找形状。也就是说，<strong>即使那次从 Python 到 Go 的重写方向是对的，它也没能躲开「重写会膨胀」这个老毛病</strong>。重写修好了根基，但新家的墙一样会越垒越多。</p>
+<p>把这件事和 OmniScope 放一起看更有意思：OmniScope 的重写（Zig → Rust）信号是<strong>技术约束</strong>（FFI 安全责任必须下沉到语言层），ARES 的重写（Python → Go）信号里混着<strong>个人赌气</strong>。前者我至今觉得诚实，后者我至今觉得「方向对、动机脏」。值不值得重写，不但要看约束，还得看你自己是不是在借题发挥。</p>
+<h2 id="wo-dang-shi-zen-me-xiang-de-you-cuo-zai-na">我当时怎么想的，又错在哪</h2>
+<p>我重写 ARES 时（从 Python 到 Go），理由是「Python 并发又慢又乱，内存管理是灾难，工作流逻辑退化成回调和状态机的意大利面」。这个重写是对的——新约束（要并发、要长运行、要可观测）旧根基确实扛不住。</p>
+<p>但我必须诚实：<strong>ARES 的代码库比它需要的更大</strong>。量化交易模块、面试 demo、MCP dashboard——这些是应该住在独立仓库里的实验。核心（Runtime + Workflow + Memory + Events）是扎实的，外围还在找形状。</p>
+<blockquote>
+<p>真实项目就是这样工作的。你不会在第一天设计出完美架构。你解决问题、累积代码、偶尔停下来重构。</p>
+</blockquote>
+<p>所以「重写还是演进」这道题，我现在的答案比开头那句「重写最性感」复杂得多：<strong>重写不是对旧代码的审判，是对新约束的投降。</strong> 值不值得，只看那个新约束是不是真的「旧根基成立不了」，而不是「旧代码我不喜欢了」。</p>
+<h2 id="jie-lun">结论</h2>
+<p>判断重写与否，我只看一个问题：<strong>你是在逃避过去的决策，还是在响应一个过去不存在的约束？</strong></p>
+<ul>
+<li>如果是前者——你只会把同样的坑再踩一遍，只是换身衣服。</li>
+<li>如果是后者——比如 OmniScope 发现 FFI 安全责任必须下沉到语言层以下，比如 ARES 从 GoAgentX 长成连名字都装不下——那重写不是傲慢，是诚实。</li>
+</ul>
+<blockquote>
+<p>重写不是对旧代码的审判，是对新约束的投降。</p>
+</blockquote>
+<p>值得重写的系统，往往不是最烂的系统，而是<strong>最诚实地暴露了一个它诞生时还不存在的问题</strong>的系统。OmniScope 从 C++ 流浪到 Zig 再回 Rust，GoAgentX 长成 ARES，都是这个样子——不是旧的不好，是新的问题配不上旧的家。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/11-the-test-you-skipped/">你跳过的那条测试</a> -- ARES 用 Arena 主动「谋杀」运行中的 Agent 来验证自愈（第九篇）。但大多数团队跳过了最该测的东西——不是功能，是「它死的时候怎么办」。哪些测试你明知道该写却没写？</em></p>
 
         </div>
 
                 </div>
             <div class="pagination">
-                <div class="pagination__buttons"></div>
+                <div class="pagination__buttons">
+                    <span class="button next">
+                        <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/page/2/">
+                            <span class="button__text">Older posts</span>&nbsp;
+                            <span class="button__icon">&#8594;</span>
+                        </a>
+                    </span>
+                </div>
             </div>
         </div>
         

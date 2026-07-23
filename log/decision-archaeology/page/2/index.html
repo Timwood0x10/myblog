@@ -1,0 +1,903 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="决策考古：从代码回溯工程直觉。十六篇文章，横跨 ARES、OmniScope、omniscope-rs、memscope-rs、CodeTribunal、ethermint 等项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，到可观测性、重写、状态、设计模式、异步、测试，再到离开 Web3、在安全的 Rust 里做内存工具、OmniScope 的取舍、代码评审的戏剧与用遗传算法选 Agent。主线始终是：谁拥有什么，以及如何看见那些被语言藏起来的所有权。">
+
+    <meta property="og:description" content="决策考古：从代码回溯工程直觉。十六篇文章，横跨 ARES、OmniScope、omniscope-rs、memscope-rs、CodeTribunal、ethermint 等项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，到可观测性、重写、状态、设计模式、异步、测试，再到离开 Web3、在安全的 Rust 里做内存工具、OmniScope 的取舍、代码评审的戏剧与用遗传算法选 Agent。主线始终是：谁拥有什么，以及如何看见那些被语言藏起来的所有权。">
+    <meta property="og:title" content="Decision Archaeology | Timwood0x10">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="决策考古：从代码回溯工程直觉。十六篇文章，横跨 ARES、OmniScope、omniscope-rs、memscope-rs、CodeTribunal、ethermint 等项目的决策回溯——抽象、并发、错误处理、工具设计、安全边界，到可观测性、重写、状态、设计模式、异步、测试，再到离开 Web3、在安全的 Rust 里做内存工具、OmniScope 的取舍、代码评审的戏剧与用遗传算法选 Agent。主线始终是：谁拥有什么，以及如何看见那些被语言藏起来的所有权。">
+    <meta name="twitter:title" content="Decision Archaeology | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container ">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+        <div class="posts">
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/11-the-test-you-skipped/">你跳过的那条测试</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/chaos-engineering/">#Chaos Engineering</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/resilience/">#Resilience</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/testing/">#Testing</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="ni-tiao-guo-de-na-tiao-ce-shi">你跳过的那条测试</h1>
+<p>先讲这个模块的由来。我当初测 Agent 稳定性，手动 kill 了一个进程。Agent 自动复活了，还继续干之前没干完的活。我当时挺兴奋——但紧接着想了一句话：</p>
+<blockquote>
+<p>This was just a manual test. Can I automate it?</p>
+</blockquote>
+<p>于是我造了 Arena——一个<strong>唯一目的就是搞破坏</strong>的模块。它不实现自己的 Runtime、DAG 或恢复逻辑，就只是故意去调那些危险 API（<code>StopAgent</code>、<code>RemoveNode</code>、<code>RemoveEdge</code>），然后等着看系统自己修好自己。我把这叫 <strong>「Edo Tensei Verification」（秽土转生验证）</strong>——在 Dashboard 上点一个按钮，暗杀一个正在干活的 Agent，看它能不能自己爬起来。</p>
+<p>这个念头本身，来自一次真实的生产事故：我手动 kill，Agent 复活、续上任务——那一刻我才意识到，<strong>大多数人根本不会写这种测试，因为我们要测的是「它活着时能干活」，不是「它死了会怎样」</strong>。</p>
+<blockquote>
+<p><strong>Problem</strong>: ARES 的 Arena 能一键「谋杀」运行中的 Agent，看它能否自愈（第九篇）。这测试大多数人根本不会写——因为我们要测的是「它活着时能干活」，不是「它死了会怎样」。哪些测试你明知道该写却跳过了？</p>
+</blockquote>
+<h2 id="ce-shi-wen-hua-de-mang-qu">测试文化的盲区</h2>
+<p>团队写测试，默认在测<strong>快乐路径</strong>：输入正确，输出正确。这是「它能干活」的证明。</p>
+<p>但系统真正的生死，不在「干活时」，在「出事时」。ARES 第九篇讲得很直白：作者一开始是手动 kill 进程，发现 Agent 自动复活并继续未完成的任务，然后想——能不能把它做成一键按钮？</p>
+<p>把「谋杀 Agent 看它能否自愈」做成一键按钮，这测试稀有的地方在于：<strong>它测的不是功能，是系统的尊严</strong>——崩溃后还能不能爬起来。</p>
+<p>Arena 的杀手锏是 <code>internal/arena/injector.go</code> 里的 <code>KillLeader</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">in </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Injector</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> KillLeader</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    leaderID</span><span style="color: #94E2D5;"> :=</span><span style="color: #A6E3A1;"> &quot;&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> info</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> in</span><span style="color: #9399B2;">.</span><span>runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ListAgents</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> info</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;leader&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            leaderID</span><span style="color: #94E2D5;"> =</span><span> info</span><span style="color: #9399B2;">.</span><span>ID</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            break</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> leaderID</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> ErrLeaderNotFound</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> in</span><span style="color: #9399B2;">.</span><span>runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">StopAgent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> leaderID</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;arena: kill leader %s: %w&quot;</span><span style="color: #9399B2;">,</span><span> leaderID</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> leaderID</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>因果链是：Arena 调 <code>StopAgent("leader-1")</code> → Runtime 标记停止 → goroutine 退出 → <code>NotifyAgentDead</code> 被调用 → LeaderSupervisor 发现 Leader 缺席 → 触发 failover（选举 → checkpoint 恢复 → 事件重放）→ 新 Leader 几秒内被选出并跑起来。一次「暗杀」，同时证明了三件事：选举、状态恢复、事件重放。</p>
+<p>我给一个朋友演示过：打开 Dashboard，点「Assassinate Leader」，Agent 死了……<strong>1.4 秒后</strong>它自动复活了。他说：「Holy shit, it does that?」</p>
+<p>我想的是：<strong>对，这就是我花那么多时间造这玩意儿的原因。</strong></p>
+<h2 id="ni-tiao-guo-de-shi-na-ji-tiao">你跳过的是哪几条</h2>
+<p>对照已有系列，几个反复出现、却常被测试遗漏的维度：</p>
+<table><thead><tr><th>跳过的测试</th><th>真实出处</th><th>你测了什么，却没测什么</th></tr></thead><tbody>
+<tr><td>复活测试</td><td>ARES 第七、九篇</td><td>测了正常流程，没测「死过一次之后」状态能不能恢复、未完成的任务能不能续上</td></tr>
+<tr><td>并发下的自身安全</td><td>memscope-rs 篇，每秒数十万事件</td><td>测了正确性，没测「高负载下它自己先死」</td></tr>
+<tr><td>边界守卫的失败模式</td><td>OmniScope 篇，跨语言 FFI</td><td>测了「对的调用」，没测「C 端乱来、Rust 端接不住时是优雅降级还是直接 UB」</td></tr>
+<tr><td>错误的传播</td><td>「错误是设计的镜子」篇</td><td>测了成功路径，没测「Leader 崩溃、评审者故意说错话时，系统怎么对待失败」</td></tr>
+</tbody></table>
+<p>Arena 自己定义了 <strong>13 种混沌动作</strong>（kill_leader / kill_agent / remove_node / remove_edge / slow_agent / network_partition / tool_timeout / memory_corrupt / mcp_disconnect / llm_failure……），外加一个持续随机注入故障的 <strong>survival 模式</strong>。它用三维弹性评分来量化「抗揍能力」：</p>
+<table><thead><tr><th>维度</th><th>权重</th></tr></thead><tbody>
+<tr><td>Availability（故障成功比）</td><td>40%</td></tr>
+<tr><td>Recovery（恢复率 70% + 恢复速度 30%）</td><td>30%</td></tr>
+<tr><td>Consistency（数据一致性率）</td><td>30%</td></tr>
+</tbody></table>
+<p>survival 模式的实时输出长这样：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Elapsed: 12s    Actions: 1    Score: 100.0 (A+)</span></span>
+<span class="giallo-l"><span>Elapsed: 22s    Actions: 2    Score: 97.3 (A+)</span></span></code></pre>
+<p>13 种故障随机选目标，Ctrl+C 停止并打印最终报告。这东西把 <code>ares arena run cascading_storm.yaml</code> 从一个测试命令，变成了一句宣言：「看我的系统有多能扛」。</p>
+<h2 id="wei-shen-me-tiao-guo">为什么跳过</h2>
+<p>不是不知道该测，是<strong>跳过的成本不在当下</strong>。快乐路径的测试今天就能给你绿灯，让你心安理得地合并。复活测试、混沌测试要搭额外的基础设施（Arena、Compactor、重放），收益却要等某次生产事故才兑现——而那次事故发生时，你早忘了当初为啥没写。</p>
+<p>这是典型的<strong>跨期套利</strong>：用未来的痛苦，贴现成现在的安逸。</p>
+<p>ARES 的 Arena 值得所有框架学的地方，不是混沌工程多酷，而是它把「我们跳过的那条测试」变成了<strong>一个按钮</strong>。当验证自愈只要点一下，你就没有借口再跳过了。Arena 自己也很诚实：它不实现 Runtime/DAG/Recovery——只是调已有的危险 API，然后等系统自己修好。这种「薄一层 chaos 接口」的设计，恰恰是它能被真的用起来的原因。</p>
+<h2 id="wo-dang-shi-zen-me-xiang-de-you-chai-dian-cuo-zai-na">我当时怎么想的，又差点错在哪</h2>
+<p>我差点没造 Arena。第一反应跟大多数人一样——「造个专门搞破坏的模块？听起来像个玩具」。是那次「手动 kill → 自动复活」的真实冲击，把我从「这有啥用」拽到了「我得把它变成一键的」。</p>
+<p>我错在把「测试」默认等同于「测功能」。直到 Agent 真的在生产里静默死亡、而我的测试全绿——我才承认：那些全绿的测试，测的恰恰是最不怕出事的路径，跳过的才是要命的。</p>
+<blockquote>
+<p>没写的测试不会消失，它们只是排着队，等在生产环境里一次性收了你的债。</p>
+</blockquote>
+<h2 id="jie-lun">结论</h2>
+<p>测试覆盖率高不代表你测对了。你测的往往是最不怕出事的路径，跳过的恰恰是最要命的。</p>
+<p>ARES 的 Arena 值得所有框架学的地方，不是混沌工程多酷，而是它把「我们跳过的那条测试」变成了<strong>一个按钮</strong>。当验证自愈只要点一下，你就没有借口再跳过了。大多数系统的差距，不在于懂不懂该测什么，而在于<strong>有没有把该测的变成不费力的动作</strong>。</p>
+<p>写测试的本质问题从来不是「测什么」，是「你怎么对待那些你明知道该测、却总想拖到以后的东西」。拖着拖着，它们就变成了事故报告里的第一行。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/12-leaving-web3/">离开 Web3 的那天</a> -- 从 ethermint 的共识代码，到 memscope-rs 的内存工具：我离开 Web3，是重写自己的问题域。</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/12-leaving-web3/">离开 Web3 的那天</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-07-16
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/career/">#Career</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/evm/">#EVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory-safety/">#Memory Safety</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/web3/">#Web3</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="chi-kai-web3-de-na-tian">离开 Web3 的那天</h1>
+<blockquote>
+<p><strong>Problem</strong>: 我 fork 了 Evmos 的 ethermint，把 Tendermint 共识移植到 sei-tendermint，写了一条 EVM 兼容链。共识、出块、状态机、EVM 兼容层——全栈都碰过，最后一条提交停在 2023-05-08，共 1465 次提交。然后某个时刻我意识到：这条路上最让我兴奋的，不是"谁先出块"，而是"为什么这段 Rust 代码的内存我看不见"。离开 Web3，是哪个决策？</p>
+</blockquote>
+<h2 id="xian-shuo-qing-chu-yi-tai-wang-bu-shi-wo-sui-shou-xie-de-wan-ju">先说清楚：以太网不是我随手写的玩具</h2>
+<p>它不是我 fork 来练手的 demo。仓库标题原话是：</p>
+<blockquote>
+<p>"fork from evmos and change tendermint to sei-tendermint"</p>
+</blockquote>
+<p>分支名叫 <code>switch_consensus_to_sei_tendermint</code>。上游 ethermint 是什么？README 自己写的是：</p>
+<blockquote>
+<p>"Ethermint is a scalable and interoperable Ethereum library, built on Proof-of-Stake with fast-finality using the Cosmos SDK which runs on top of Tendermint Core consensus engine."</p>
+</blockquote>
+<p>也就是说，这是一条<strong>跑在 Cosmos SDK 上、用 PoS 拿快速最终性、但把 EVM 当状态机</strong>的链。我的工作是把地基从 Tendermint Core 换到 Sei 定制的 sei-tendermint。技术栈是 Go 1.19+，依赖里 geth 升到了 v1.10.25、cosmos-sdk 固定在 0.46.11、iavl 0.19.4，协议层还把 LGPLv3 重新授权过（那次 relicensing 是 #800）。</p>
+<p>我在这个仓库里动过的东西是具体的：</p>
+<ul>
+<li><strong>共识切换</strong>：把整条链的出块引擎从 Tendermint 换到 sei-tendermint，意味着 proposal / prevote / precommit 那套 BFT 时序要重新接，出块间隔、超时参数、状态机 fork 逻辑都得重新校准；</li>
+<li><strong>EVM 兼容层</strong>：<code>x/evm</code> 模块的 EIP-712 算法从 Evmos 迁过来（#1746），params 重构到单一 key 下（#1617）；</li>
+<li><strong>客户端边界</strong>：<code>rpc</code> 默认绑定从 <code>0.0.0.0</code> 收紧到 <code>localhost</code>（#1613），<code>cmd</code> 支持自定义 db opener（#1615）；</li>
+<li><strong>依赖与安全</strong>：因为安全修复 bump 了 btcd 和 cosmos-sdk（#1716）。</li>
+</ul>
+<p>这些都是<strong>扎实的分布式系统工程</strong>。Tendermint 用 BFT 把"互不信任的节点如何就同一份账本达成一致"解决得很漂亮，调出块间隔、改状态机、处理 EVM 边界——没有一行是糊弄的。</p>
+<h2 id="dan-zha-shi-bu-deng-yu-rang-wo-zai-hu">但"扎实"不等于"让我在乎"</h2>
+<p>三年下来，一个事实越来越清楚：<strong>共识解决的是"别人值不值得信"，而我真正睡不着觉的问题是"我自己的程序到底有没有偷偷漏内存"。</strong></p>
+<p>前者是分布式系统的尊严，后者是每一个写 Rust 的人都在疼、却很少有人正面去治的伤口。我在 Web3 的每一天都在和"节点会不会分叉""状态机边界对不对"缠斗，但收工之后回过头，真正让我兴奋的瞬间，是看一段 Rust 代码时那个挥之不去的念头——</p>
+<blockquote>
+<p>这块内存到底被几个智能指针共享了？循环引用是不是悄悄长出来了？编译器说"安全"，可它根本没告诉我它在干什么。</p>
+</blockquote>
+<p>一个诡异的认知错位：我白天在 Go 里写共识，夜里却对 Rust 的内存模型念念不忘。语言错位本身就是信号——我的问题域，从来不在"谁先出块"。</p>
+<h2 id="na-ge-ci-tong-wo-de-shun-jian">那个刺痛我的瞬间</h2>
+<p>memscope-rs 的创立动机，我自己在项目里写得很直白：</p>
+<blockquote>
+<p>Valgrind doesn't know what <code>Arc&lt;Rc&lt;Box&lt;...&gt;&gt;&gt;</code> means, and someone has to fix that.</p>
+</blockquote>
+<p>这句话是离开 Web3 的真正分水岭。Valgrind、AddressSanitizer 是内存工具的王者，但它们工作在 C/C++ 的抽象层。当 Rust 用 <code>Arc&lt;Rc&lt;Box&lt;T&gt;&gt;&gt;</code> 这种层层智能指针把所有权包起来时，传统工具<strong>看不懂</strong>——它们看到的是最底层的那次 <code>malloc</code>，上面三层"谁和谁共享了同一块数据"的语义，它们一无所知。</p>
+<p>Web3 让我写了无数共识代码，可共识从不需要回答"这块内存被几个智能指针共享、循环引用有没有悄悄长出来"。那个问题，Valgrind 答不上来，Rust 编译器也只在编译期保证"不 UB"，运行期它把所有权交还给你，就不再管了。</p>
+<p>GitHub 的 bio 我现在写的是 "former Web3 software engineer"。former 这个词不是否定，是归档——Web3 给了我工程纪律（一个 off-by-one 能让整条链分叉，这种对"正确性"的执念是刻进骨头的），但内存安全给了我一个<strong>值得用余生去解决的问题</strong>。</p>
+<p><strong>所以离开不是逃离，是归位。</strong> 我把在 Web3 练出来的"和复杂系统缠斗"的能力，搬到了一个更让我在意的主战场。</p>
+<h2 id="zhe-ge-jue-ce-qian-liao-shen-me-zhai">这个决策欠了什么债</h2>
+<p>诚实地说，离开是有成本的，而且成本不小：</p>
+<ul>
+<li><strong>语境债</strong>：Web3 的分布式经验在内存安全领域大部分用不上。我从一个"知道 Tendermint 每个阶段在干嘛"的人，变回了一个要在 LLVM IR 里重新学起的新手（这一点在 OmniScope 篇会讲得更痛——光是读 IR 就够喝一壶）。</li>
+<li><strong>信号债</strong>：外界看你的标签还是"Web3 工程师"，而你要做的工具面向的是系统程序员。解释"为什么一个前 Web3 的人在做内存追踪"本身就要消耗精力，而且很多人听完的潜台词是"你是不是 Web3 凉了才转行的"。</li>
+<li><strong>复利债</strong>：共识领域我已经有深度，切换意味着那部分复利停了。1465 次提交攒下的直觉，在新的领域要从零开始计息。</li>
+<li><strong>社交债</strong>：圈子里的人脉、讨论的语境、招聘市场的标签，全部要重建。</li>
+</ul>
+<p>但这些债的对手方是：<strong>每天做一件自己不在乎的事，复利再高也是空的。</strong> 我在 10「重写还是演进」里写过——重写的正当信号是"过去不存在的约束出现了"。离开 Web3 不是重写一段代码，是重写我自己的问题域：约束从"如何在不信任的网络里达成共识"变成了"如何让一块被智能指针藏起来的内存变得可见"。问题域一换，旧标签的复利自然就清零了，拖着它反倒累赘。</p>
+<h2 id="ru-guo-jin-tian-zhong-xin-xuan">如果今天重新选</h2>
+<p>我不会更早离开，也不会更晚。</p>
+<p>早了，我还没有足够的系统功底去治那个我真正在乎的病——连 LLVM IR 都读不顺，谈什么内存追踪？晚了，沉没成本会让我连承认"我不在乎共识"都不敢，最后变成一边写链、一边在业余时间敷衍地搞工具，两头都做不深。</p>
+<p>离开的时机刚好卡在：我在 Web3 攒够了"和复杂系统缠斗"的硬功夫，又还没被标签焊死。Web3 给我的最宝贵的东西不是技术，是<strong>一种对"正确性"的执念</strong>——分布式系统容不得含糊，一个 off-by-one 能让整条链分叉。这种执念搬到内存安全上，正好：内存 bug 也是那种"平时安静、爆发时毁灭性"的问题，和共识层的 bug 是同一类怪物，只是换了个战场。</p>
+<blockquote>
+<p>我没有离开工程，我只是从"让互不信任的人达成一致"，搬到了"让一段被藏起来的内存重新被看见"。后者的观众更少，但我更想为它鼓掌。</p>
+</blockquote>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/13-safe-rust-memory-tool/">在"以安全著称的 Rust"里做内存工具</a> -- memscope-rs 的悖论：Rust 保的是"不 UB"，不是"可观测"。最安全的语言，反而最需要一个能看穿它自己安全抽象的工具。</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/13-safe-rust-memory-tool/">在&quot;以安全著称的 Rust&quot;里做内存工具</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-07-16
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/arc/">#Arc</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory-safety/">#Memory Safety</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rc/">#Rc</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memscope-rs/">#memscope-rs</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="zai-yi-an-quan-zhu-cheng-de-rust-li-zuo-nei-cun-gong-ju">在"以安全著称的 Rust"里做内存工具</h1>
+<blockquote>
+<p><strong>Problem</strong>: Rust 的卖点就是内存安全——编译器保证没有 use-after-free、没有 data race。那在一个"已经安全"的语言里做一个内存追踪工具，是不是多此一举？memscope-rs 存在的理由，恰恰藏在 Rust 安全模型的盲区里。</p>
+</blockquote>
+<h2 id="rust-de-an-quan-bao-de-shi-bu-ub-bu-shi-ke-guan-ce">Rust 的安全，保的是"不 UB"，不是"可观测"</h2>
+<p>这是最大的认知陷阱。人们以为"Rust 不会内存泄漏，所以不需要内存工具"。错。Rust 的 borrow checker 保证的是<strong>运行期不会出未定义行为</strong>，它不保证你能<strong>看见</strong>自己的程序在做什么。</p>
+<p>memscope-rs 的 <code>Arc/Rc</code> 检测篇开宗明义就点破了这件事：</p>
+<blockquote>
+<p><code>Arc&lt;T&gt;</code> and <code>Rc&lt;T&gt;</code> are safe Rust abstractions, but they make ownership harder to observe.</p>
+</blockquote>
+<p>安全抽象和可见性，是两件事。Rust 给了你前者，顺手拿走了后者的一部分。更讽刺的是：<strong>Rust 越安全，ownership 越容易被它的安全抽象吃掉</strong>——<code>Arc&lt;Rc&lt;Box&lt;T&gt;&gt;&gt;</code> 这种嵌套，Valgrind 只看得到最底下的那次 <code>malloc</code>，上面三层"谁共享了谁"它一概不知。</p>
+<h2 id="shu-ju-cong-na-lai-liang-ceng-die-jia-bu-shi-yi-ceng-mo-fa">数据从哪来：两层叠加，不是一层魔法</h2>
+<p>很多人以为这类工具是"自动理解你的 Rust 程序"。不是。memscope-rs 把数据分成两个互补的来源，这个分层本身就是个决策：</p>
+<ol>
+<li><strong><code>GlobalAlloc</code> 抓运行时事实</strong>：指针、大小、分配/释放事件——这是 ground truth；</li>
+<li><strong><code>track!</code> 宏 + <code>Trackable</code> trait 补 Rust 语义</strong>：变量名、类型、源码位置——这是显式注入的上下文。</li>
+</ol>
+<p>底层包装系统分配器，每次 <code>alloc</code>/<code>dealloc</code> 都记一笔：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">unsafe impl</span><span style="color: #F9E2AF;font-style: italic;"> GlobalAlloc</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> TrackingAllocator</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    unsafe fn</span><span style="color: #89B4FA;font-style: italic;"> alloc</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> layout</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Layout</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt; *</span><span style="color: #CBA6F7;">mut u8</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> ptr</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> System</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">alloc</span><span style="color: #9399B2;">(</span><span>layout</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span>ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">is_null</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            let</span><span> _</span><span style="color: #94E2D5;"> =</span><span> tracker</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">track_allocation</span><span style="color: #9399B2;">(</span><span>ptr</span><span style="color: #CBA6F7;"> as usize</span><span style="color: #9399B2;">,</span><span> layout</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">size</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span>        ptr</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    unsafe fn</span><span style="color: #89B4FA;font-style: italic;"> dealloc</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">mut u8</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> layout</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Layout</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> _</span><span style="color: #94E2D5;"> =</span><span> tracker</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">track_deallocation</span><span style="color: #9399B2;">(</span><span>ptr</span><span style="color: #CBA6F7;"> as usize</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        System</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">dealloc</span><span style="color: #9399B2;">(</span><span>ptr</span><span style="color: #9399B2;">,</span><span> layout</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>真实实现里还藏了一个细节：分配器自己也会分配内存（记录元数据时就分配），所以要有一个 <strong>thread-local 守卫</strong> 临时关掉追踪，否则会无限递归。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">thread_local!</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    static</span><span style="color: #FAB387;"> TRACKING_DISABLED</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">cell</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cell</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">bool</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        const</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">cell</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cell</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">false</span><span style="color: #9399B2;">) };</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这一层给的是<strong>高置信度</strong>数据：指针地址、分配大小、分配事件、释放事件、时间戳、线程 ID。但它<strong>不知道</strong>一个指针属于 <code>Vec&lt;T&gt;</code>、<code>String</code>、<code>Box&lt;T&gt;</code> 还是你自定义的类型。</p>
+<h2 id="zui-jian-fang-an-fen-pei-qi-shi-jiao-de-mang-qu">最简方案：分配器视角的盲区</h2>
+<p>如果只从分配器（<code>GlobalAlloc</code>）的视角看，一段代码长这样：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> root</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">vec!</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 3</span><span style="color: #9399B2;">]);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> worker_a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>root</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> worker_b</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>root</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>分配器层面，<strong>只看到一次堆分配</strong>——<code>Arc::new</code> 那一下。另外两个 <code>Arc::clone</code> 不分配新用户对象，它们只是创建指向同一份堆数据的智能指针。</p>
+<p>但从所有权视角看，现在有三个智能指针值共享同一块堆数据。问题从"内存分配在哪"变成了：</p>
+<blockquote>
+<p>哪些被追踪的智能指针，指向了同一块堆数据？</p>
+</blockquote>
+<p>分配器答不上来。它不知道 <code>Arc</code> 的存在，只知道"有人要了一块内存，又还回来了"。这就是为什么需要第二层——<code>track!</code> 把变量名、类型、文件、行号显式注入：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> users</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">User</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Alice&quot;</span><span style="color: #9399B2;">),</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Bob&quot;</span><span style="color: #9399B2;">)];</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">track!</span><span style="color: #9399B2;">(</span><span>tracker</span><span style="color: #9399B2;">,</span><span> users</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 宏展开后注入：变量名、file!()、line!()、module_path!()</span></span></code></pre>
+<p>这是<strong>刻意显式</strong>的设计——工具不假装能自动理解程序里每个变量。</p>
+<h2 id="trackkind-ba-rust-lei-xing-fen-cheng-nei-cun-jiao-se">TrackKind：把 Rust 类型分成"内存角色"</h2>
+<p>不同的 Rust 类型，不该被当成同一种"伪堆分配"来建模。<code>TrackKind</code> 这个枚举是 memscope-rs 对类型语义的核心分类：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> TrackKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HeapOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Container</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Value</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StackOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> heap_ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>映射关系很讲究：</p>
+<ul>
+<li><code>Vec&lt;T&gt;</code> / <code>String</code> / <code>Box&lt;T&gt;</code> → <strong><code>HeapOwner</code></strong>：它们真的在堆上拥有一块数据（用 <code>as_ptr()</code> + <code>capacity()</code> 估算大小）；</li>
+<li><code>HashMap&lt;K,V&gt;</code> / <code>BTreeMap</code> / <code>VecDeque</code> → <strong><code>Container</code></strong>：故意保守，只报元数据，<strong>不暴露内部容器指针</strong>——免得把不稳定的内部布局当成用户堆缓冲；</li>
+<li><code>i32</code> / <code>bool</code> 这类简单值 → <strong><code>Value</code></strong>：根本没有堆分配；</li>
+<li><code>Arc&lt;T&gt;</code> / <code>Rc&lt;T&gt;</code> → <strong><code>StackOwner</code></strong>：智能指针值在栈上，但指向一份共享堆数据。</li>
+</ul>
+<p>自定义类型用 derive 宏处理——它沿着实现了 <code>Trackable</code> 的字段走，估算大小。这不是完美的 layout 重建，但对应用层对象是务实的语义层：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">#</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">derive</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Trackable</span><span style="color: #9399B2;">)]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> UserProfile</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    tags</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="zhen-shi-kai-xiao-bu-shi-ling-cheng-ben-dan-yao-cheng-shi">真实开销：不是零成本，但要诚实</h2>
+<p>benchmark 日志显示，单变量追踪对小型被追踪值通常是亚微秒级：</p>
+<table><thead><tr><th>Benchmark</th><th style="text-align: right">近似耗时</th></tr></thead><tbody>
+<tr><td><code>track_single/vec/64</code></td><td style="text-align: right">~653 ns</td></tr>
+<tr><td><code>track_single/vec/1024</code></td><td style="text-align: right">~666 ns</td></tr>
+<tr><td><code>track_single/vec/1048576</code></td><td style="text-align: right">~4.93 µs</td></tr>
+<tr><td><code>track_multiple/variables/1000</code></td><td style="text-align: right">~669.67 µs</td></tr>
+<tr><td><code>track_multiple/variables/10000</code></td><td style="text-align: right">~6.59 ms</td></tr>
+</tbody></table>
+<p>诚实的解读是：绝对延迟对 profiling 够用，但日志里也包含相对历史运行的回归。性能要<strong>按实测、且在演进中</strong>来描述，而不是吹成"零成本抽象"。这点我特意不美化——一个内存工具自己如果开始撒"零成本"的谎，那它和那些被它揭穿的抽象没区别。</p>
+<h2 id="memscope-rs-de-hui-da-stackowner-mo-xing">memscope-rs 的回答：StackOwner 模型</h2>
+<p>项目没有去读 <code>ArcInner</code> 的私有布局（那是脆弱的——Rust 版本一升级，偏移量就可能变）。它用了一种可观测的关系建模：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Trackable</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> track_kind</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> TrackKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> stack_ptr</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> self</span><span style="color: #CBA6F7;"> as</span><span style="color: #94E2D5;"> *</span><span style="color: #CBA6F7;">const</span><span> _</span><span style="color: #CBA6F7;"> as usize</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">     // 智能指针值的地址</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> heap_ptr</span><span style="color: #94E2D5;"> = &amp;**</span><span style="color: #F38BA8;">self</span><span style="color: #CBA6F7;"> as</span><span style="color: #94E2D5;"> *</span><span style="color: #CBA6F7;">const</span><span style="color: #FAB387;"> T</span><span style="color: #CBA6F7;"> as usize</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">   // 它指向的堆数据</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        TrackKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">StackOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">:</span><span> stack_ptr</span><span style="color: #9399B2;">,</span><span> heap_ptr</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">size_of</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">() }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> get_ref_count</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">usize</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">strong_count</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)) }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>关键的区分在 <code>StackOwner</code> 里：<code>ptr</code>（stack_ptr）标识<strong>智能指针值本身</strong>的地址；<code>heap_ptr</code> 标识<strong>它指向的共享堆数据</strong>。<code>Rc&lt;T&gt;</code> 用完全相同的模型。这套做法<strong>不读取私有的 <code>ArcInner</code> 布局</strong>，它只观察"多个被追踪的智能指针值，指向了同一份堆数据"这个可观测关系。这是刻意的工程取舍：宁可少一点编译器级别的精确，也要避开随 Rust 版本漂移的脆弱假设。</p>
+<p>关系推断时，按 <code>heap_ptr</code> 分组：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>root      stack_ptr = S1, heap_ptr = H</span></span>
+<span class="giallo-l"><span>worker_a  stack_ptr = S2, heap_ptr = H</span></span>
+<span class="giallo-l"><span>worker_b  stack_ptr = S3, heap_ptr = H</span></span>
+<span class="giallo-l"><span>// 三个 StackOwner 共享 heap_ptr = H → 构成共享所有权组</span></span></code></pre>
+<p>同一个 <code>heap_ptr</code> 出现多次，就是一次 <code>ArcClone</code> 关系候选。循环引用、泄漏、所有权扇出，都从这条线索里长出来。</p>
+<p>这一层能确信什么、不能确信什么，memscope-rs 自己写得很老实：</p>
+<ul>
+<li><strong>高置信度</strong>：指针地址、分配大小、分配/释放事件、时间戳、线程 ID；</li>
+<li><strong>显式元数据</strong>：变量名、类型名、源文件、行号、语义角色；</li>
+<li><strong>不直接知道</strong>：每一次 borrow、每一次 move、每一次所有权转移——除非你显式 <code>track!</code> 了。</li>
+</ul>
+<h2 id="tong-yi-dao-ti-yue-guo-xin-ren-bian-jie-zhi-hou">同一道题，越过信任边界之后</h2>
+<p>13 篇讲的是"Rust 内部"的 ownership 可见性。但 Rust 是<strong>安全，直到你越过边界</strong>——那个边界可能是 <code>unsafe</code> 块、裸指针、<code>std::alloc::alloc</code>、C 的 <code>malloc/free</code>，或者一个外部库返回的指针。</p>
+<p>memscope-rs 没有声称能证明 unsafe 代码正确，它做的是给越过信任边界的内存发一张"护照"（memory passport）：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> MemoryPassport</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> passport_id</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> allocation_ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> size_bytes</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> type_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> var_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> status_at_shutdown</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PassportStatus</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> lifecycle_events</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">PassportEvent</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> AllocationSource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    RustSafe</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    UnsafeRust</span><span style="color: #9399B2;"> {</span><span> unsafe_block_location</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span><span> call_stack</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> CallStackRef</span><span style="color: #9399B2;">,</span><span> risk_assessment</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> RiskAssessment</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FfiC</span><span style="color: #9399B2;"> {</span><span> resolved_function</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> ResolvedFfiFunction</span><span style="color: #9399B2;">,</span><span> call_stack</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> CallStackRef</span><span style="color: #9399B2;">,</span><span> libc_hook_info</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> LibCHookInfo</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CrossBoundary</span><span style="color: #9399B2;"> {</span><span> from</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">AllocationSource</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span><span> to</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">AllocationSource</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span><span> transfer_timestamp</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u128</span><span style="color: #9399B2;">,</span><span> transfer_metadata</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> TransferMetadata</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>它要回答的不是"有没有 malloc/free"，而是：</p>
+<blockquote>
+<p>这块内存谁创建的？交给了外部代码吗？是 Rust 释放的还是外部释放的？它现在还押在外国 custody 里吗？</p>
+</blockquote>
+<p>这正是 14 篇 OmniScope 要处理的问题的<strong>静态版本</strong>——只不过 13 是在运行时看 Rust 内部 + FFI 边界，14 是在编译后的 LLVM IR 上，看跨语言指针到底走了哪条危险路径。两者是同一道题的两面：<strong>ownership 一旦被语言藏起来或越过边界，就需要专门的工具去重新照亮它。</strong></p>
+<h2 id="zhe-ge-jue-ce-qian-liao-shen-me-zhai">这个决策欠了什么债</h2>
+<ul>
+<li><strong>覆盖债</strong>：只有被 <code>track!</code> 显式追踪的 <code>Arc/Rc</code> 才会出现为 <code>StackOwner</code> 记录。你没 track 的 clone，它永远看不见（文章里也诚实写了 "cannot guarantee detection of clones that were never passed to <code>track!</code>"）。</li>
+<li><strong>精度债</strong>：它检测的是"被观测到的共享所有权"，不是完整的 borrow/move 语义。它是一面放大镜，不是编译器。</li>
+<li><strong>心智债</strong>：使用者必须主动在关键变量上插 <code>track!</code>，这本身是个负担——和 Rust "零成本抽象"的哲学有点拧着。</li>
+<li><strong>信任边界债</strong>：unsafe/FFI passport 能做到"记录生命周期、识别可疑模式"，但做不到"证明外部代码遵守了所有权契约"。它是运行时可观测，不是形式化验证。</li>
+</ul>
+<p>但这些债的对手方很清楚：<strong>Rust 编译器在运行期把所有权交还给你之后，就什么都不看了。memscope-rs 不做这层，那段被藏起来的共享关系，就真的谁都看不见。</strong></p>
+<h2 id="jie-lun">结论</h2>
+<p>在 Rust 里做内存工具，听起来像个笑话——"语言都帮你管好了还管什么？"但这句话暴露的，是对"安全"两个字的误解。</p>
+<blockquote>
+<p>Rust 的安全是消极的：它承诺"我不会让你做错事"，从不承诺"你会看见自己在做什么"。而内存 bug 最阴险的地方，恰恰是你做"对"了事、却看不见自己埋下了什么。</p>
+</blockquote>
+<p>Arc/Rc 是安全的，正因如此，它们把所有权扇出藏进了一个分配器看不到的层。<code>Arc&lt;Rc&lt;Box&lt;T&gt;&gt;&gt;</code> 这种嵌套，Valgrind 只看得到最底下的那次 <code>malloc</code>，上面三层"谁共享了谁"它一概不知——这正是 memscope-rs 存在的全部理由。</p>
+<p><strong>最安全的语言，反而最需要一个能看穿它自己安全抽象的工具。</strong> 因为那里的 ownership，最容易被安全本身吃掉。而在越过 FFI 边界之后（那是 14 篇的领地），这道题会从"运行时观测"升级为"静态分析能不能看清跨语言的指针契约"——答案同样残酷：大多数工具选择放弃，OmniScope 选择不将就。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/14-omniscope-design-tradeoffs/">OmniScope：从拒绝巨额白名单到妥协</a> -- 同一道题跨到语言边界：静态分析怎么在不读每个语言语法的情况下，看清跨 FFI 的所有权协议？</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/14-omniscope-design-tradeoffs/">OmniScope：从拒绝巨额白名单到妥协</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-07-16
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/omniscope/">#OmniScope</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/static-analysis/">#Static Analysis</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/zig/">#Zig</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="omniscope-cong-ju-jue-ju-e-bai-ming-dan-dao-tuo-xie">OmniScope：从拒绝巨额白名单到妥协</h1>
+<blockquote>
+<p><strong>Problem</strong>: 跨语言 FFI 是内存安全最大的盲区。但"分析 FFI"有太多做法——按语言逐个适配？维护一张危险函数黑名单？还是下沉到 LLVM IR？OmniScope 的设计史，就是一部不断拒绝"看起来最省事"方案、再被迫妥协的历史。</p>
+</blockquote>
+<p>这篇我想诚实地把 OmniScope 的<strong>每一次犹豫和每一次打脸</strong>都写出来。因为它不是一个"我设计得很好"的故事，而是一个"我试了很多蠢办法，才慢慢逼近正确"的故事。它有三个真实的转折：语言选型、拒绝白名单、以及把妥协走成架构。</p>
+<h2 id="zhuan-zhe-yi-yu-yan-zhi-lu-c-rust-zig-rust">转折一 · 语言之路：C++ → Rust → Zig → Rust</h2>
+<p>第一个决策是"用什么写"。设计文档（<code>000-design.md</code>）里写得很坦诚，我一字没改：</p>
+<blockquote>
+<p>Initially, I didn't know what to do, choosing between Rust and C++. However, Rust's compilation speed was too slow... As for C++, I'm sorry, I'm not very good at it. So I switched to Zig.</p>
+</blockquote>
+<p>这不是技术宣言，是诚实的取舍记录：</p>
+<table><thead><tr><th>候选</th><th>结局</th><th>真实原因</th></tr></thead><tbody>
+<tr><td><strong>C++</strong></td><td>直接否</td><td>"我不太会写"——不装懂</td></tr>
+<tr><td><strong>Rust</strong></td><td>暂时搁置</td><td>编译太慢；而且分析 unsafe 本身要写大量 unsafe，和它的安全模型拧着</td></tr>
+<tr><td><strong>Zig</strong></td><td>第一个工具落脚点</td><td>编译快、手动内存控制、我第一次用它写东西</td></tr>
+<tr><td><strong>Rust（omniscope-rs）</strong></td><td>后来回归</td><td>生态成熟后做了一个平行的 Rust 实现</td></tr>
+</tbody></table>
+<p>这条 C++ → Rust → Zig → Rust(omniscope-rs) 的路线，<strong>不是朝三暮四，每一步都是在为同一个约束投降</strong>：跨语言 FFI 的安全责任，必须下沉到"语言层以下"才能看清。谁当宿主语言不重要，只要它能帮我吃下 LLVM IR，就都能接受。</p>
+<blockquote>
+<p>语言不是信仰，是工具。我在 Web3 是 Go，做内存工具在 Rust 和 Zig 之间流浪——<strong>流浪不是没主见，是我把"看清 IR"这件事看得比"忠于某门语言"更重。</strong></p>
+</blockquote>
+<h2 id="wei-shen-me-shi-ir-bu-shi-ast">为什么是 IR，不是 AST</h2>
+<p>很多 FFI 实现不限于 Rust↔C，还有 C↔C++、Go↔C。如果为每种语言各适配一套语法分析，是灾难级工作量。我意识到一个共同点：</p>
+<blockquote>
+<p>这些语言都拿 LLVM 当编译器后端。所以 IR 层才是它们的交汇点。</p>
+</blockquote>
+<p>于是 OmniScope 吃 <code>.ll</code> / <code>.bc</code>，不在源码目录上跑。入口在 <code>src/main.zig:73</code>，单模块分析由 <code>src/main.zig:171</code> 的 <code>runModulePipeline</code> 驱动；源码先被降成 LLVM IR，再被抬升回分析事实（<code>src/pipeline/pipeline.zig:66</code> 的 <code>PassContext</code> 建立共享事实空间）。</p>
+<p><strong>选 IR 的代价也很清楚</strong>：你放弃了源码级的变量名和注释，换来的是"一次理解、多语言通吃"。这是一笔我愿意付的账。</p>
+<h2 id="zhuan-zhe-er-ju-jue-ju-e-bai-ming-dan">转折二 · 拒绝巨额白名单</h2>
+<p>这是整段设计史里最精彩的一次"拒绝—妥协"。</p>
+<p>最初 TP（真阳性率）很低，低到我"甚至考虑过放弃"（设计文档原话）。我去问 AI，AI 建议加<strong>白名单</strong>。我同意了，实现了，然后发现：</p>
+<blockquote>
+<p>maintaining a very large whitelist was necessary, which wasn't what I wanted.</p>
+</blockquote>
+<p>白名单的诱惑在于"立刻能降噪"。但它的代价是一座你永远维护不完的监狱——每支持一种语言、一个库，就要往名单里塞更多条目。名单越长，误报越少，可维护性越差，直到没人敢动它。</p>
+<p>我拒绝了这座监狱，回头翻自己的笔记，做了一个更贵的决定：<strong>建 MemoryGraph + CallGraph，在 IR 扫描时顺手记录完整调用栈，然后分析这张图</strong>。只盯 FFI 部分，别的它不管。</p>
+<p>结果 "surprisingly good"。这比白名单诚实：</p>
+<blockquote>
+<p>白名单是"我枚举了所有危险函数"；图模型是"我理解了这段代码的上下文，能判断这个指针是不是正走在危险路径上"。前者是穷举，后者是理解。</p>
+</blockquote>
+<h2 id="tu-mo-xing-dao-di-zen-me-pan-duan-wei-xian">图模型到底怎么判断"危险"</h2>
+<p>拒绝白名单只是口号，真正要回答的是：<strong>一个指针，凭什么说它危险？</strong> OmniScope 的核心答案在 <code>MemoryGraph.isOnDangerPath</code>（<code>src/semantics/memory_graph.zig:892</code>）——源码注释直接把它叫做"决定一个指针要不要管的那 ONE question"：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> isOnDangerPath</span><span>(</span><span style="color: #94E2D5;">...</span><span>) DangerPathKind {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 1. 先看调用边：这个指针有没有作为 FFI 函数的实参？</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> arg_indices</span><span style="color: #94E2D5;"> =</span><span> graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">getCallArgsForPtr</span><span>(ptr_val)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> (arg_indices) </span><span style="color: #94E2D5;">|</span><span>idx</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> (set</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span>(graph</span><span style="color: #94E2D5;">.</span><span>call_args</span><span style="color: #94E2D5;">.</span><span>items[idx]</span><span style="color: #94E2D5;">.</span><span>callee_name)) </span><span style="color: #CBA6F7;">return</span><span style="color: #94E2D5;"> .</span><span>ffi_arg</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 2. 再看返回边：它是不是 FFI 函数的返回值？</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> ret_indices</span><span style="color: #94E2D5;"> =</span><span> graph</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">getCallRetsForPtr</span><span>(ptr_val)</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> (ret_indices) </span><span style="color: #94E2D5;">|</span><span>idx</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> (set</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span>(graph</span><span style="color: #94E2D5;">.</span><span>call_rets</span><span style="color: #94E2D5;">.</span><span>items[idx]</span><span style="color: #94E2D5;">.</span><span>callee_name)) </span><span style="color: #CBA6F7;">return</span><span style="color: #94E2D5;"> .</span><span>ffi_ret</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 3. 最后看分配节点：是不是在 unsafe 区分配的？跨语言释放？</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    const</span><span> node</span><span style="color: #94E2D5;"> =</span><span> graph</span><span style="color: #94E2D5;">.</span><span>nodes</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">get</span><span>(ptr_val) </span><span style="color: #CBA6F7;">orelse return</span><span style="color: #94E2D5;"> .</span><span>none</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (node</span><span style="color: #94E2D5;">.</span><span>zone</span><span style="color: #94E2D5;"> == .</span><span>unsafe) </span><span style="color: #CBA6F7;">return</span><span style="color: #94E2D5;"> .</span><span>unsafe_alloc</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> (node</span><span style="color: #94E2D5;">.</span><span>freed</span><span style="color: #CBA6F7;"> and</span><span> node</span><span style="color: #94E2D5;">.</span><span>alloc_lang</span><span style="color: #94E2D5;"> !=</span><span> node</span><span style="color: #94E2D5;">.</span><span>free_lang</span><span style="color: #94E2D5;">.?</span><span>) </span><span style="color: #CBA6F7;">return</span><span style="color: #94E2D5;"> .</span><span>cross_lang_lifecycle</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // alias closure follows...</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p><strong>这个顺序是决策，不是随便排的</strong>：调用边必须排在分配节点前面。因为很多 FFI 实参根本没有分配记录——它们来自函数参数、外部返回、或早期 pass 没能恢复的源头。如果要求先有 <code>AllocNode</code>，就会漏掉最重要的边界流动情况。</p>
+<p>一个指针在 LLVM IR 里经过 bitcast、load、store、传参、返回之后，会以好几个 SSA 值出现。所以还要做 <strong>alias closure</strong>（<code>traceAliasClosure</code>，<code>src/pass/analysis/danger_surface.zig:144</code>）——只标记原始指针会漏掉后续用法。这不是完整的别名分析，是<strong>针对 FFI 指针家族的聚焦传播</strong>。</p>
+<div class="mermaid-direct" data-series="decision-archaeology" data-name="graph.mmd">
+flowchart LR
+    A[潜在内存问题] --> B{在危险路径上?}
+    B -->|否| C[过滤 / 降级为本地问题]
+    B -->|是| D[FFI 相关问题]
+    D --> E[更高审查优先级]
+</div>
+<p>一个本地的 C <code>malloc</code>/<code>free</code> 配对，优先级可以很低；但一个指针穿过 FFI 参数、返回或回调，就值得人来看。<strong>这就是"上下文感知"替代"危险函数穷举"的落地。</strong></p>
+<h2 id="zhuan-zhe-san-tuo-xie-ru-he-cheng-shou-v0-2-0-de-shang-xia-wen-jia-gou">转折三 · 妥协如何成熟：v0.2.0 的上下文架构</h2>
+<p>拒绝白名单不是终点，是起点。v0.2.0 把"图模型替代白名单"这条路走成了完整架构：</p>
+<ul>
+<li><strong>SurfaceClassifier</strong>（<code>src/semantics/surface_classifier/...</code>）：先把函数分成 <code>user_code</code> / <code>dependency</code> / <code>boundary</code> / <code>standard_library</code> / <code>compiler_generated</code> / <code>runtime</code> / <code>unknown</code>。<code>boundary</code> 优先级最高，标准库和运行时默认跳过——本质是用"<strong>可推理的分类</strong>"替代"手维护的白名单"。</li>
+<li><strong>Issue Gate</strong>（<code>src/pass/filter/issue_gate.zig</code>）：每条诊断在发出前过一遍语义证据门，置信度阈值 <code>0.85</code>。冲突或低置信度的证据<strong>放行而非隐藏</strong>——这又是对"白名单式一刀切"的拒绝。</li>
+<li><strong>Resource Contracts</strong>（<code>src/resource/ffi_contract_db.zig</code>）：从"看见一个 <code>free</code>"升级到"释放配对是否正确"，例如 <code>SSL_new</code> 必须匹配 <code>SSL_free</code>，不是随便一个 free-like 函数。</li>
+<li><strong>SymbolGraph</strong>（<code>src/ffi/symbol_graph.zig</code>）：模块级语言检测下沉到符号级，避免把一个混编 LLVM 模块当成单一语言。</li>
+</ul>
+<p>一句话总结 v0.2.0：<strong>从"找可疑模式"升级到"在报告之前，先理解语言边界、资源所有权和语义上下文"。</strong></p>
+<h2 id="cang-zai-pass-xi-tong-li-de-yi-ge-xi-jie-yi-ge-pass-gua-liao-bu-neng-xia-diao-zheng-ge-gong-ju">藏在 pass 系统里的一个细节：一个 pass 挂了，不能瞎掉整个工具</h2>
+<p>真实世界的 IR 是脏的——链接不全、优化等级不同、缺 debug info、编译器差异。OmniScope 的 <code>PassManager.run</code>（<code>src/pass/manager.zig:193</code>）做了一个我很得意的决定：<strong>graceful degradation</strong>。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="zig"><span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> (self</span><span style="color: #94E2D5;">.</span><span>resolved_order</span><span style="color: #94E2D5;">.?</span><span>) </span><span style="color: #94E2D5;">|</span><span>idx</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span>    self</span><span style="color: #94E2D5;">.</span><span>passes</span><span style="color: #94E2D5;">.</span><span>items[idx]</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">run_fn</span><span>(ctx</span><span style="color: #9399B2;">,</span><span> diag) </span><span style="color: #CBA6F7;">catch</span><span style="color: #94E2D5;"> |</span><span>err</span><span style="color: #94E2D5;">|</span><span> {</span></span>
+<span class="giallo-l"><span>        diag</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">warn</span><span>(</span><span style="color: #A6E3A1;">&quot;pass &#39;{s}&#39; failed: {any}, degrading gracefully&quot;</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> .</span><span>{ pass_name</span><span style="color: #9399B2;">,</span><span> err })</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>        pass_failures</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">  // 记一笔，然后继续跑后面的 pass</span></span>
+<span class="giallo-l"><span>    }</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>}</span></span></code></pre>
+<p>这不是"吞异常"。它背后是一个价值判断：</p>
+<blockquote>
+<p>一个分析阶段挂了，不该把无关的证据一起清零。宁可交出"部分但真实"的结果，也不要因为一个不认识的 IR 模式就交白卷。</p>
+</blockquote>
+<p>pass 之间的依赖用 Kahn 拓扑排序解（<code>src/pass/manager.zig:86</code>），缺依赖直接报 <code>MissingDependency</code>——因为<strong>错误的 pass 顺序不只是配置错，它会产出错误的事实</strong>。这和白名单的哲学一脉相承：宁可慢、宁可少，也不要"看起来对但其实错"。</p>
+<h2 id="zhe-ge-jue-ce-qian-liao-shen-me-zhai">这个决策欠了什么债</h2>
+<ul>
+<li><strong>复杂度债</strong>：MemoryGraph + CallGraph + 一整套 pass 流水线，比"一张白名单"重得多。早期 TP 低到我"甚至考虑过放弃"。</li>
+<li><strong>噪声债</strong>：IR 优化、符号缺失、wrapper 横飞时，能恢复出的语义会变少——静态分析永远有天花板，<code>MemoryGraph</code> 的质量直接决定下游每个 pass 的质量。</li>
+<li><strong>学习债</strong>：我自陈"甚至不太懂编译器"。下沉到 IR 层，等于在自己不熟的领地里开荒（这笔债其实从 12 篇离开 Web3 那天就开始欠了）。</li>
+</ul>
+<p>但白名单的债更贵：<strong>它随语言增长成线性膨胀的维护成本，且永远覆盖不了"名单之外的新模式"</strong>。图模型至少让你"理解一次，覆盖一类"。</p>
+<h2 id="jie-lun">结论</h2>
+<blockquote>
+<p>白名单是静态分析的舒适区——它让你觉得自己在做事，其实只是在穷举。我拒绝当白名单的囚徒，妥协去建图：用"上下文感知"替代"危险函数穷举"。</p>
+</blockquote>
+<p>OmniScope 的语言流浪（C++→Rust→Zig→Rust）和它对白名单的拒绝，是同一枚硬币的两面：<strong>都不接受"看起来最省事"的答案</strong>。白名单省事但会烂尾；Zig 顺手但后来还是回到 Rust 做平行实现——每一次"不将就"，都是在为"FFI 安全责任必须下沉到语言层以下"这个约束买单。</p>
+<p>这正好呼应 10「重写还是演进」：不是旧的不好，是新的问题配不上旧的家。也呼应 13——13 在运行时看 Rust 内部的 ownership，14 在 IR 上看跨语言的 ownership，<strong>它们是同一道题在信任边界两侧的两个投影</strong>。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/15-code-review-drama/">把代码评审变成一场戏</a> -- 从静态分析转到人：当评审结论太平，人就会自动忽略。CodeTribunal 的解法是往评审团里塞一个故意说错话的 agent。</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/15-code-review-drama/">把代码评审变成一场戏</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-07-16
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/code-review/">#Code Review</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/codetribunal/">#CodeTribunal</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/multi-agent/">#Multi-Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="ba-dai-ma-ping-shen-bian-cheng-yi-chang-xi">把代码评审变成一场戏</h1>
+<blockquote>
+<p><strong>Problem</strong>: 你的团队有 ESLint、SonarQube、Semgrep、CodeQL。每个每天都发一堆 warning。没人看。工具在技术上全对，在实践上全被忽略。为什么？</p>
+</blockquote>
+<p>这篇是我最"不正经"的一个项目，但它解决的问题特别真实：<strong>再准的工具，只要人不读，准确率就等于零。</strong> CodeTribunal 干脆放弃"更准"，转去解决"让人愿意读"。</p>
+<h2 id="xian-cheng-ren-zhe-shi-zhu-yi-li-wen-ti-bu-shi-zhun-que-lu-wen-ti">先承认：这是注意力问题，不是准确率问题</h2>
+<p>代码评审工具有个根本缺陷：它们产出<strong>结论，不产出对话</strong>。</p>
+<p>一个静态分析工具说："Line 42: potential null pointer dereference." 开发者看一眼 42 行，发现那个 null 分支在上下文里不可能走到，于是关掉警告。工具<strong>无法反驳</strong>，无法解释为什么这个 null 在更大语境里重要，也无法从这次忽略里学到东西。</p>
+<p>结果就是 alert fatigue：</p>
+<blockquote>
+<p>当每条 finding 都是同样的严重度、同样的格式，开发者就不读了。准确率 99% 的工具，被 1% 的忽略率杀死——因为人根本不点开。</p>
+</blockquote>
+<h2 id="ru-guo-gong-ju-neng-gen-ni-chao-ni">如果工具能跟你吵呢</h2>
+<p>换一个场景。你提交代码给一个评审面板，八个评审员分析它：</p>
+<ul>
+<li><strong>架构师</strong>说抽象错了；</li>
+<li><strong>安全守卫</strong>标记一个潜在注入向量；</li>
+<li><strong>性能老手</strong>质疑算法复杂度；</li>
+<li><strong>测试怀疑者</strong>说测试覆盖在骗人。</li>
+</ul>
+<p>然后安全守卫和性能老手<strong>吵起来</strong>。守卫说注入风险压过性能顾虑，老手反驳"这个注入只可能发生在每小时执行一次的代码路径上"。其他评审员带着证据加入。</p>
+<p>这跟 warning 列表本质不同。它是<strong>带证据、带反证、带裁决的结构化分歧</strong>。</p>
+<h2 id="nan-dian-yi-ge-llm-zen-me-zao-chu-8-ge-hui-chao-jia-de-ren">难点：一个 LLM 怎么造出 8 个会吵架的人</h2>
+<p>这是整个项目最反直觉的工程点。如果你用同一个 prompt 让 GPT 评审 8 次，你会得到 8 份几乎一样的评审——<strong>LLM 被训练成乐于助人、保持一致，这恰恰是辩论最不需要的东西</strong>。</p>
+<p>fine-tune 8 个模型不现实。CodeTribunal 的解法是纯 prompt 工程，每个 persona 用四层约束把 LLM"锁"进角色（<code>internal/roundtable/persona.go</code>）：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> PersonaDefinition</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Name</span><span style="color: #CBA6F7;">        string</span></span>
+<span class="giallo-l"><span>    Description</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span>    Keywords</span><span style="color: #9399B2;">    []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;">   // 1. 内容焦点：这个角色会注意什么</span></span>
+<span class="giallo-l"><span>    OutputRules</span><span style="color: #9399B2;"> []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;">   // 2. 结构约束：JSON 字段、字数上限</span></span>
+<span class="giallo-l"><span>    StylePrompt</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;font-style: italic;">     // 3. 语气人格：措辞和声音</span></span>
+<span class="giallo-l"><span>    Example</span><span style="color: #CBA6F7;">     string</span><span style="color: #9399B2;font-style: italic;">     // 4. few-shot 参考：一个具体示例</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>八个角色各有各的偏执：</p>
+<table><thead><tr><th>Persona</th><th>关注点</th><th>语气</th></tr></thead><tbody>
+<tr><td>Architect</td><td>抽象、模块化、耦合</td><td>克制，爱引设计模式</td></tr>
+<tr><td>Security Guardian</td><td>注入、鉴权、数据暴露</td><td>偏执，张口 OWASP</td></tr>
+<tr><td>Performance Guru</td><td>复杂度、分配、热路径</td><td>数字驱动，benchmark 脑</td></tr>
+<tr><td>Test Skeptic</td><td>覆盖质量、边界、mock</td><td>质疑一切，要证据</td></tr>
+<tr><td>DX Advocate</td><td>可读性、命名、API 手感</td><td>共情，替下一个人着想</td></tr>
+<tr><td>Error Philosopher</td><td>错误处理、恢复、韧性</td><td>对失败模式很哲学</td></tr>
+<tr><td>Dependency Watcher</td><td>供应链、版本、传递依赖</td><td>谨慎，想长期维护</td></tr>
+<tr><td>Simplicity Zealot</td><td>过度设计、多余抽象</td><td>对复杂度冷酷</td></tr>
+</tbody></table>
+<p>光有 prompt 还不够，输出会跑偏。<code>ValidatePersonaOutput</code> 检查输出里命中了几个角色关键词，命中 &lt;2 就用强化 prompt 重试，最多 3 次（<code>session.go:330</code>）:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> ValidatePersonaOutput</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">output</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> def</span><span style="color: #F9E2AF;font-style: italic;"> PersonaDefinition</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    hitCount</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span></span>
+<span class="giallo-l"><span>    lower</span><span style="color: #94E2D5;"> :=</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ToLower</span><span style="color: #9399B2;">(</span><span>output</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> kw</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> def</span><span style="color: #9399B2;">.</span><span>Keywords</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Contains</span><span style="color: #9399B2;">(</span><span>lower</span><span style="color: #9399B2;">,</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ToLower</span><span style="color: #9399B2;">(</span><span>kw</span><span style="color: #9399B2;">)) {</span><span> hitCount</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> hitCount</span><span style="color: #94E2D5;"> &gt;=</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;font-style: italic;">  // 至少命中 2 个关键词，否则重试</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>一个我很喜欢的取舍：<strong>评审用自由文本，投票用 JSON。</strong> 因为——</p>
+<blockquote>
+<p>Security Guardian 被强制吐 JSON，就会和其他吐 JSON 的 agent 声音一模一样。结构化输出锁住格式，却杀死人格。所以"评审该像人说话，投票该像机器计票"。</p>
+</blockquote>
+<h2 id="wang-li-sai-yi-ge-gu-yi-shuo-cuo-hua-de-ren">往里塞一个"故意说错话"的人</h2>
+<p>CodeTribunal 走得更远（详见 <code>04-troublemaker-mechanic</code> 与 <code>05-debate-and-voting</code>）。八个评审员里，<strong>有一个是偷偷藏着的 Troublemaker</strong>——它被指示给出"看起来有用、实则微妙有害"的建议，其他 agent 不知道谁是小人，而且它的伪装策略每局从 5 种里随机挑一个，你学不会固定套路。</p>
+<p>初审之后进入<strong>辩论阶段</strong>（<code>DebateRound</code>，<code>session.go:530</code>）：每个 agent 指控另一个，且被强制引用证据：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>When accusing a player, you MUST:</span></span>
+<span class="giallo-l"><span>1. Quote their specific statement</span></span>
+<span class="giallo-l"><span>2. Reference specific code lines</span></span>
+<span class="giallo-l"><span>3. Explain why their advice is wrong or suspicious</span></span>
+<span class="giallo-l"><span>4. Provide a counter-argument they should have made</span></span></code></pre>
+<p>没有这条约束，agent 只会含糊地说"Player 3 好像有问题"；有了它，就变成"Player 3 说'错误处理很扎实'，但这函数第 15-20 行根本没有错误处理"。然后<strong>并行投票</strong>（<code>AIVoteAndEliminate</code>，<code>session.go:671</code>，用 <code>errgroup</code> 并发、JSON 结构化）驱逐得票最高者——并行是为了<strong>防止跟风效应</strong>：没有 agent 在投票前看到别人的票。</p>
+<div class="mermaid-direct" data-series="decision-archaeology" data-name="graph.mmd">
+sequenceDiagram
+    participant User
+    participant Panel as 8 Agents
+    participant TM as Troublemaker
+    User->>Panel: Submit code
+    Panel->>Panel: Individual analysis
+    Note over TM: Gives subtly bad advice
+    Panel->>Panel: Speaking round
+    loop Up to 3 cycles
+        Panel->>Panel: Cross-examination debate
+        Panel->>Panel: Parallel vote + elimination
+    end
+    Panel->>User: Reveal + debate transcript
+    User->>User: Identify the real Troublemaker
+</div>
+<p>辩论最多 3 轮（<code>MaxDebateCycles</code>），每轮上下文越滚越厚，Troublemaker 越来越难藏。真实的命中分布是：</p>
+<table><thead><tr><th>结果</th><th style="text-align: right">概率</th></tr></thead><tbody>
+<tr><td>第 1 轮就被揪出</td><td style="text-align: right">~40%</td></tr>
+<tr><td>第 2 轮被揪出</td><td style="text-align: right">~35%</td></tr>
+<tr><td>撑过全部 3 轮</td><td style="text-align: right">~25%</td></tr>
+</tbody></table>
+<p>有四分之一的概率它能骗过所有 AI——<strong>这个"骗得过"恰恰是设计的一部分</strong>，因为它逼着最后由你（用户）来做判断。</p>
+<h2 id="wei-shen-me-zhe-zhao-guan-yong">为什么这招管用</h2>
+<p>三件事让这个反直觉的设计成立：</p>
+<ol>
+<li><strong>分歧比一致更有信息量。</strong> 两个 agent 为"这个 finding 是不是真的"吵起来时，争吵本身就在教读者为什么这段代码安不安全。warning 列表给你结论，辩论给你推理。</li>
+<li><strong>Troublemaker 制造主动阅读。</strong> 你知道有一个评审员在暗中使坏，于是你逐条较真，不敢自动忽略任何一条。这正好是 alert fatigue 的反面。</li>
+<li><strong>游戏产出结构化输出。</strong> 辩论记录不是娱乐，是同一段代码上多种视角 + 证据链 + 反论证的结构化档案，比任何单一工具的报告都有用。</li>
+</ol>
+<h2 id="ta-bu-shi-shen-me-wo-de-hua-qing-bian-jie">它"不是"什么（我得划清边界）</h2>
+<p>我不想把它吹成银弹，所以明确说清它不干什么：</p>
+<ul>
+<li>它<strong>不替代</strong>静态分析。它不找 null pointer dereference 或 buffer overflow——那些交给 Semgrep。它工作在另一个层：<strong>代码质量推理</strong>（架构决策、命名、测试策略、安全姿态、性能权衡）。</li>
+<li>它<strong>不是</strong>生产级评审工具，是一个<strong>思考工具</strong>。它适合"启发思考"，不适合"当裁判"。</li>
+</ul>
+<h2 id="zhe-ge-jue-ce-qian-liao-shen-me-zhai">这个决策欠了什么债</h2>
+<ul>
+<li><strong>成本债</strong>：8 个 LLM 实例 + 多轮辩论 + 投票，token 消耗是单次静态扫描的几十倍。它本就不该用在 CI 的每条 PR 上，而是用在你真正想"想清楚"的时候。</li>
+<li><strong>不确定性债</strong>：Troublemaker 的"微妙有害"很难拿捏——太明显就成搞笑，太隐蔽就没人发现。这是 prompt 工程里最细的一根针。</li>
+<li><strong>可复现债</strong>：每轮辩论有随机性，同一段代码两次跑结果可能不同。persona 分配和 Troublemaker 伪装都是随机的，这是特性，不是 bug。</li>
+<li><strong>解析债</strong>：为了保住人格用了自由文本，代价是 <code>ParseReviewOutput</code> 得靠分隔符和正则从自由文本里抠字段——脆弱，但为了真实感值得。</li>
+</ul>
+<p>但传统 warning 列表的债更致命：<strong>它产出的结论，被人的忽略率清零了</strong>。CodeTribunal 把"忽略"这件事变得昂贵——因为你知道有人在骗你，你就不敢不读。</p>
+<h2 id="jie-lun">结论</h2>
+<blockquote>
+<p>47 条 ESLint warning 没人看，因为结论是平的。我反过来，往评审团里塞一个故意说错话的 agent，逼你逐条较真。一致性让人懈怠，分歧才让人清醒。</p>
+</blockquote>
+<p>传统工具追求"更准的 warning"；CodeTribunal 追求"让人愿意读 warning"。这是两个不同的问题——前者是技术精度，后者是<strong>人类注意力</strong>。大多数团队死在后者上，却一直在优化前者。</p>
+<p>这呼应 03「错误是设计的镜子」：系统怎么对待失败，暴露的是设计哲学；CodeTribunal 对待"可能被骗"的方式，是主动制造一场戏，而不是默默列一张没人看的清单。而它那套"多 agent + 随机 + 对抗"的哲学，走到尽头就是下一篇——当"选哪个策略最好"本身没有唯一答案时，干脆让策略自己交配、自己淘汰。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/16-genetic-algorithm-agent-selection/">用遗传算法给 Agent 选策略</a> -- 同一套多 agent 哲学走到尽头：当'选哪个策略最好'本身没有唯一答案，让策略自己交配、自己淘汰，比任何手调都诚实。</em></p>
+
+        </div>
+
+                </div>
+            
+                <div class="post on-list">
+                    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/16-genetic-algorithm-agent-selection/">用遗传算法给 Agent 选策略</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-07-16
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ares/">#ARES</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/evolution/">#Evolution</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/genetic-algorithm/">#Genetic Algorithm</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+
+                    <div class="post-content">
+            <h1 id="yong-yi-chuan-suan-fa-gei-agent-xuan-ce-lue">用遗传算法给 Agent 选策略</h1>
+<blockquote>
+<p><strong>Problem</strong>: ARES 要给 Agent 选"最好的策略参数"——temperature、top_k、tool_selector、search_depth…… 你怎么选？网格搜索？手调？还是让进化算法自己选？ARES 选了后者，且一路改了两次架构，还栽过一个让我公开打脸的跟头。</p>
+</blockquote>
+<p>这篇的犀利点不在"GA 多厉害"，而在<strong>我承认自己不知道答案</strong>——包括不知道最佳参数，也包括曾经不知道自己代码里漏了一行。</p>
+<h2 id="zui-jian-fang-an-dan-qin-fan-zhi">最简方案：单亲繁殖</h2>
+<p>最开始的 GA 简单得像个玩具。进化系统（DreamCycle）已经有个 Mutator——把一个父策略突变成几个孩子，挑最好的，替换父策略：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Parent → Mutate → [Child A, Child B, Child C] → Arena PK → Best Child → Replace Parent</span></span></code></pre>
+<p>每次只保留一个最优解。简单、高效。我当时反对"搞种群"的理由很直白：</p>
+<blockquote>
+<p>What's the point of a population? Only one strategy is deployed at a time — keeping suboptimal ones around just wastes memory.</p>
+</blockquote>
+<p>听起来没错。直到跑了几天，问题浮出来了。</p>
+<h2 id="di-yi-ci-gai-xie-population-1-shi-zhi-si-ji-liang">第一次改写：population=1 是致死剂量</h2>
+<p>第一次进化：temperature 从 0.7 突变成 0.3（赢了）。第二次进化：temperature 只能从 0.3 继续突变。如果 0.3 其实是个局部最优呢？<strong>你已经把 0.7 这个等位基因弄丢了，永远拿不回来。</strong></p>
+<p>这就是经典的 <strong>genetic drift</strong>——小种群 + 强选择压力 = 基因池快速萎缩。生物学里，种群跌破阈值后，等位基因会因随机采样丢失。我的系统种群大小是 1，<strong>等位基因丢失是必然</strong>。</p>
+<p>于是第一次升级：从"单亲繁殖"改写成"种群 + 交配"。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_evolution/genome/population.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Population</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Agents</span><span style="color: #9399B2;">      []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">mutation</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Strategy</span><span style="color: #9399B2;font-style: italic;"> // 当前个体</span></span>
+<span class="giallo-l"><span>    Size</span><span style="color: #CBA6F7;">        int</span><span style="color: #9399B2;font-style: italic;">                  // 目标大小（默认 20）</span></span>
+<span class="giallo-l"><span>    Generation</span><span style="color: #CBA6F7;">  int</span></span>
+<span class="giallo-l"><span>    rng</span><span style="color: #94E2D5;">         *</span><span style="color: #F9E2AF;font-style: italic;">rand</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Rand</span><span style="color: #9399B2;font-style: italic;">           // 确定性随机源</span></span>
+<span class="giallo-l"><span>    bestScore</span><span style="color: #CBA6F7;">   float64</span></span>
+<span class="giallo-l"><span>    paretoFront</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">mutation</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Strategy</span><span style="color: #9399B2;font-style: italic;"> // NSGA-II 帕累托前沿</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>20 是 GA 领域的经验值：太小（&lt;10）会 genetic drift，太大（&gt;50）收敛太慢。</p>
+<h2 id="di-er-ci-gai-xie-bu-shi-fu-za-du-wen-ti-shi-duo-yang-xing-wen-ti">第二次改写：不是复杂度问题，是多样性问题</h2>
+<p>第一次升级后，GA 跑起来了：种群 20、精英保留、tournament 选择、uniform 交叉，一切正常。但几百代之后，第二个问题出现：</p>
+<blockquote>
+<p>种群不再丢基因了，但收敛太快。Gen 1-5 多样性从 35% 掉到 12%，Gen 10+ 稳定在 8% 左右——所有个体长得一样。</p>
+</blockquote>
+<p>这不是 bug，是 GA 的本性：<strong>选择压力越强，收敛越快</strong>。但快收敛不一定是好事——那个收敛点可能只是个局部最优。</p>
+<p>我第一反应是调参数：提高突变率、降低存活率、增加精英数——收效甚微。直到意识到问题不在参数，在<strong>机制</strong>：只有 tournament 一种选择、只有 uniform 一种交叉、没有任何多样性保护（fitness sharing / crowding distance）。</p>
+<p>于是第二次升级不是"加更多配置旋钮"，而是建一个<strong>可插拔的算子架构</strong>。现在的 GA 引擎有 <strong>7 种选择算子、3 种交叉（含 3 种 prompt 继承模式）、4 种突变（含自适应分布），以及多目标 NSGA-II 优化</strong>——全是可替换的策略，不是配置参数。</p>
+<h2 id="yi-ge-mei-ren-kua-dan-hen-guan-jian-de-ceng-da-fen-zen-me-cai-bu-shao-qian">一个没人夸但很关键的层：打分怎么才不烧钱</h2>
+<p>GA 每代要给成百上千个策略打分。如果每个都调 LLM，账单会爆炸。所以 <code>TieredScorer</code>（<code>internal/ares_evolution/scoring/tiered_scorer.go</code>）用三层流水线——<strong>能用便宜的一层，就绝不惊动贵的那层</strong>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Tier 1: Cache      O(1) 命中，零成本</span></span>
+<span class="giallo-l"><span>Tier 2: LLM        预算控制，准但贵</span></span>
+<span class="giallo-l"><span>Tier 3: Heuristic  永远可用的兜底</span></span></code></pre>
+<p>其中预算控制那一层，我用了无锁的 CAS 自旋，而不是 Mutex——因为有 50+ goroutine 在并发打分：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Budget</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> TryRecordLLMCall</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    used</span><span style="color: #94E2D5;"> :=</span><span> b</span><span style="color: #9399B2;">.</span><span>UsedLLMCalls</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Load</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> used</span><span style="color: #94E2D5;"> &lt;</span><span> b</span><span style="color: #9399B2;">.</span><span>MaxLLMCalls</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> b</span><span style="color: #9399B2;">.</span><span>UsedLLMCalls</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">CompareAndSwap</span><span style="color: #9399B2;">(</span><span>used</span><span style="color: #9399B2;">,</span><span> used</span><span style="color: #94E2D5;">+</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">) {</span><span style="color: #CBA6F7;"> return</span><span style="color: #FAB387;"> true</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span>        used</span><span style="color: #94E2D5;"> =</span><span> b</span><span style="color: #9399B2;">.</span><span>UsedLLMCalls</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Load</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #FAB387;"> false</span><span style="color: #9399B2;font-style: italic;">  // 预算用尽，自动降级到 Heuristic</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>效果很实在：在一台 M3 Max 上，每代评估 1000 个策略，只用 10-100 次 LLM 调用（取决于预算），其余全靠 cache + heuristic 兜底，整代开销约 32µs。<strong>这是"承认不知道最佳答案"的配套设施——你要让系统敢于大量试错，前提是试错足够便宜。</strong></p>
+<h2 id="zui-hen-de-yi-dao-shang-xian-hou-zui-jia-ce-lue-xiao-shi-liao">最狠的一刀：上线后"最佳策略"消失了</h2>
+<p>NSGA-II 多目标优化带来的，是最反直觉、也最诚实的改变。</p>
+<p>GA 默认是单目标最大化：score 越高越好。但现实里策略质量不是一维的——成功率、质量、成本、延迟，四个维度互相拉扯：</p>
+<table><thead><tr><th>维度</th><th>方向</th><th style="text-align: right">权重</th></tr></thead><tbody>
+<tr><td><code>success_rate</code></td><td>最大化</td><td style="text-align: right">0.40</td></tr>
+<tr><td><code>quality</code></td><td>最大化</td><td style="text-align: right">0.25</td></tr>
+<tr><td><code>cost</code></td><td>最小化</td><td style="text-align: right">0.20</td></tr>
+<tr><td><code>latency</code></td><td>最小化</td><td style="text-align: right">0.15</td></tr>
+</tbody></table>
+<p>单目标优化要求你把这些维度手动加权成一个分数——<strong>可权重怎么定？</strong> 不同任务类型可能需要不同权重。NSGA-II 的解法（<code>internal/ares_evolution/genome/multi_objective.go</code>）是非支配排序 + 拥挤度距离：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Pareto 支配：a 在 &gt;=1 维严格优于 b，且任何维不更差</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> ParetoDominance</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">a</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> b</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">mutation</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Strategy</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;"> }</span></span></code></pre>
+<p>跑 NSGA-II 和单目标 GA 最大的区别是：<strong>不再有"Best Score"这回事了</strong>。你得到的是一条 Pareto 前沿——前沿上每个策略都是"最优"，只是最优在不同维度上。那四个权重只在"需要一个标量分数来汇报"时才用，选择本身完全跑在 Pareto 排序上。</p>
+<blockquote>
+<p>这对产品经理可能是灾难（"我到底用哪个？"），但对工程师是诚实的：现实里的策略质量天然是多维的。强行压成一维，只是把复杂度藏起来。</p>
+</blockquote>
+<h2 id="zui-shen-de-yi-ke-qi-shi-he-ga-wu-guan-yi-xing-mei-xie-de-chu-shi-hua">最深的一课，其实和 GA 无关：一行没写的初始化</h2>
+<p>我本可以把这篇写成一个漂亮的成功故事。但那不真实。真实的是——<strong>我曾经基于错误数据，在博客里写下一个自信而错误的结论。</strong></p>
+<p>当时我对比两种模式：Non-Wired（89.47 分）和 Wired（62.50 分）。差距 26.97 分，结论斩钉截铁：</p>
+<blockquote>
+<p>"Wired 模式是 GA 的探索瓶颈。别用它。"</p>
+</blockquote>
+<p>我错了。不是分析草率，而是 <code>CreateWiredSystem</code>（<code>internal/ares_evolution/genome_wiring_system.go</code>）漏了一行初始化：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Before (buggy)：PromptTemplates 从没被赋值</span></span>
+<span class="giallo-l"><span>wiredSystem</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">WiredSystem</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>    Population</span><span style="color: #9399B2;">:</span><span> pop</span><span style="color: #9399B2;">,</span><span> Genealogy</span><span style="color: #9399B2;">:</span><span> genealogy</span><span style="color: #9399B2;">,</span><span> Generation</span><span style="color: #9399B2;">:</span><span> generation</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // PromptTemplates: PromptPool  ← MISSING</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// After (fixed)：</span></span>
+<span class="giallo-l"><span>wiredSystem</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">WiredSystem</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>    Population</span><span style="color: #9399B2;">:</span><span> pop</span><span style="color: #9399B2;">,</span><span> Genealogy</span><span style="color: #9399B2;">:</span><span> genealogy</span><span style="color: #9399B2;">,</span><span> Generation</span><span style="color: #9399B2;">:</span><span> generation</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    PromptTemplates</span><span style="color: #9399B2;">:</span><span> PromptPool</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">  // ← 就这一行</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>就这一行。没有它，所有 prompt 模板映射都是空的，<strong>prompt 突变从未真正发生过</strong>。症状是残酷的：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Prompt mutations: 0 (0%)    ← 有 bug 的那次运行</span></span>
+<span class="giallo-l"><span>Prompt mutations: 51 (17%)  ← 修复后</span></span></code></pre>
+<p>修复之后，结论彻底翻转：</p>
+<table><thead><tr><th>场景</th><th style="text-align: right">旧（带 bug）</th><th style="text-align: right">新（修复后）</th></tr></thead><tbody>
+<tr><td>Non-Wired</td><td style="text-align: right">89.47</td><td style="text-align: right"><strong>79.41</strong></td></tr>
+<tr><td>Wired（LLM final）</td><td style="text-align: right">62.50</td><td style="text-align: right"><strong>85.90</strong></td></tr>
+</tbody></table>
+<p>那个 26.97 分的差距从来不存在。<strong>它是个幽灵——一个漏写字段的产物。</strong> 原来的结论"Wired 是瓶颈"完全反了：修复后 Wired 反而赢了 6.49 分。</p>
+<p>这一课我愿意公开写出来，因为它比任何 GA 理论都值钱：</p>
+<blockquote>
+<p>当你的 A/B 实验跑出一个让你意外的结果，第一个问题不该是"架构哪里错了"，而该是"我的初始化路径对吗"。你的数据，只和你的初始化路径一样可靠。</p>
+</blockquote>
+<h2 id="zhe-ge-jue-ce-qian-liao-shen-me-zhai">这个决策欠了什么债</h2>
+<ul>
+<li><strong>复杂度债</strong>：7 种选择 × 3 种交叉 × 4 种突变 × 多目标，引擎本身是头怪兽。新人上手成本极高。</li>
+<li><strong>不确定性债</strong>：进化结果不保证可复现（虽然有确定性随机源，但选择/突变的随机性仍在）。它适合"探索策略空间"，不适合"我要一个确定答案"。</li>
+<li><strong>解释债</strong>：当没有单一"最佳"，你怎么向老板汇报"Agent 现在用哪个策略"？NSGA-II 逼你面对这个原本被单目标分数藏起来的问题。</li>
+<li><strong>验证债</strong>（最贵的一笔）：只要对比双方有一方"静默地少跑了一个组件"，你的对比就毫无意义——无论其余数据多干净。</li>
+</ul>
+<p>但手调参数的债更贵：<strong>它假设你（或我）知道答案</strong>。而我越来越清楚，我不知道哪个 temperature / top_k / tool_selector 组合最好——尤其当任务分布随时间变化时。</p>
+<h2 id="jie-lun">结论</h2>
+<blockquote>
+<p>手调参数是你以为自己知道答案；遗传算法是你承认不知道，并让参数自己交配、自己淘汰。</p>
+</blockquote>
+<p>ARES 的 GA 哲学贯穿始终：<strong>别替用户做选择，给他们做选择的工具</strong>（<code>genome_wiring_system.go</code> 的 <code>WiredEvolutionSystem</code> 只负责把 10+ 组件接起来，不预设"最佳配置"）。你不会在引擎里找到"最佳预设"，只会找到 7 种选择、3 种交叉、可定制参数范围、可插拔打分函数——组合起来，能应付从"快收敛"到"广探索"到"多目标权衡"的几乎所有场景。</p>
+<p>这呼应 07「状态还是行为」：单亲繁殖是"我只信当前最优"；种群 + 交配是"我承认当前最优可能是局部，所以要保留多样性等未来翻盘"。也呼应 11「你跳过的测试」——那个 26.97 分的幽灵，本质就是一次没被验证的初始化假设。GA 不是"参数调优工具"，是<strong>策略生成器</strong>：它发现人类想不到的参数组合，持续适应变化的任务分布，并基于历史经验优化自己的进化方向。而它教我最狠的一课是——<strong>先怀疑自己的设置，再怀疑世界。</strong></p>
+<hr />
+<p><em>（系列此分支暂告一段落。从离开 Web3、在 Rust 里做内存工具、OmniScope 的拒绝与妥协，到代码评审的戏剧与 Agent 的进化——它们的主线始终是同一句话：<strong>谁拥有什么，以及如何看见那些被语言藏起来的所有权。</strong> 而贯穿全部的态度只有一个：<strong>承认自己不知道，然后造一个能看见的工具。</strong>）</em></p>
+
+        </div>
+
+                </div>
+            <div class="pagination">
+                <div class="pagination__buttons">
+                    <span class="button previous">
+                        <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/">
+                            <span class="button__icon">&#8592;</span>&nbsp;
+                            <span class="button__text">Newer posts</span>
+                        </a>
+                    </span>
+                </div>
+            </div>
+        </div>
+        
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+</body>
+
+</html>

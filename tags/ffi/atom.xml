@@ -5,8 +5,133 @@
     <link rel="self" type="application/atom+xml" href="https://Timwood0x10.github.io/myblog/tags/ffi/atom.xml"/>
     <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog"/>
     <generator uri="https://www.getzola.org/">Zola</generator>
-    <updated>2026-06-30T00:00:00+00:00</updated>
+    <updated>2026-07-16T00:00:00+00:00</updated>
     <id>https://Timwood0x10.github.io/myblog/tags/ffi/atom.xml</id>
+    <entry xml:lang="en">
+        <title>OmniScope：从拒绝巨额白名单到妥协</title>
+        <published>2026-07-16T00:00:00+00:00</published>
+        <updated>2026-07-16T00:00:00+00:00</updated>
+        
+        <author>
+          <name>
+            
+              Unknown
+            
+          </name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/14-omniscope-design-tradeoffs/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/decision-archaeology/14-omniscope-design-tradeoffs/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/decision-archaeology/14-omniscope-design-tradeoffs/">&lt;h1 id=&quot;omniscope-cong-ju-jue-ju-e-bai-ming-dan-dao-tuo-xie&quot;&gt;OmniScope：从拒绝巨额白名单到妥协&lt;&#x2F;h1&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Problem&lt;&#x2F;strong&gt;: 跨语言 FFI 是内存安全最大的盲区。但&quot;分析 FFI&quot;有太多做法——按语言逐个适配？维护一张危险函数黑名单？还是下沉到 LLVM IR？OmniScope 的设计史，就是一部不断拒绝&quot;看起来最省事&quot;方案、再被迫妥协的历史。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;这篇我想诚实地把 OmniScope 的&lt;strong&gt;每一次犹豫和每一次打脸&lt;&#x2F;strong&gt;都写出来。因为它不是一个&quot;我设计得很好&quot;的故事，而是一个&quot;我试了很多蠢办法，才慢慢逼近正确&quot;的故事。它有三个真实的转折：语言选型、拒绝白名单、以及把妥协走成架构。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zhuan-zhe-yi-yu-yan-zhi-lu-c-rust-zig-rust&quot;&gt;转折一 · 语言之路：C++ → Rust → Zig → Rust&lt;&#x2F;h2&gt;
+&lt;p&gt;第一个决策是&quot;用什么写&quot;。设计文档（&lt;code&gt;000-design.md&lt;&#x2F;code&gt;）里写得很坦诚，我一字没改：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Initially, I didn&#x27;t know what to do, choosing between Rust and C++. However, Rust&#x27;s compilation speed was too slow... As for C++, I&#x27;m sorry, I&#x27;m not very good at it. So I switched to Zig.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;这不是技术宣言，是诚实的取舍记录：&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;候选&lt;&#x2F;th&gt;&lt;th&gt;结局&lt;&#x2F;th&gt;&lt;th&gt;真实原因&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;C++&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;直接否&lt;&#x2F;td&gt;&lt;td&gt;&quot;我不太会写&quot;——不装懂&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;Rust&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;暂时搁置&lt;&#x2F;td&gt;&lt;td&gt;编译太慢；而且分析 unsafe 本身要写大量 unsafe，和它的安全模型拧着&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;Zig&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;第一个工具落脚点&lt;&#x2F;td&gt;&lt;td&gt;编译快、手动内存控制、我第一次用它写东西&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;Rust（omniscope-rs）&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;td&gt;后来回归&lt;&#x2F;td&gt;&lt;td&gt;生态成熟后做了一个平行的 Rust 实现&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;这条 C++ → Rust → Zig → Rust(omniscope-rs) 的路线，&lt;strong&gt;不是朝三暮四，每一步都是在为同一个约束投降&lt;&#x2F;strong&gt;：跨语言 FFI 的安全责任，必须下沉到&quot;语言层以下&quot;才能看清。谁当宿主语言不重要，只要它能帮我吃下 LLVM IR，就都能接受。&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;语言不是信仰，是工具。我在 Web3 是 Go，做内存工具在 Rust 和 Zig 之间流浪——&lt;strong&gt;流浪不是没主见，是我把&quot;看清 IR&quot;这件事看得比&quot;忠于某门语言&quot;更重。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h2 id=&quot;wei-shen-me-shi-ir-bu-shi-ast&quot;&gt;为什么是 IR，不是 AST&lt;&#x2F;h2&gt;
+&lt;p&gt;很多 FFI 实现不限于 Rust↔C，还有 C↔C++、Go↔C。如果为每种语言各适配一套语法分析，是灾难级工作量。我意识到一个共同点：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;这些语言都拿 LLVM 当编译器后端。所以 IR 层才是它们的交汇点。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;于是 OmniScope 吃 &lt;code&gt;.ll&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;.bc&lt;&#x2F;code&gt;，不在源码目录上跑。入口在 &lt;code&gt;src&#x2F;main.zig:73&lt;&#x2F;code&gt;，单模块分析由 &lt;code&gt;src&#x2F;main.zig:171&lt;&#x2F;code&gt; 的 &lt;code&gt;runModulePipeline&lt;&#x2F;code&gt; 驱动；源码先被降成 LLVM IR，再被抬升回分析事实（&lt;code&gt;src&#x2F;pipeline&#x2F;pipeline.zig:66&lt;&#x2F;code&gt; 的 &lt;code&gt;PassContext&lt;&#x2F;code&gt; 建立共享事实空间）。&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;strong&gt;选 IR 的代价也很清楚&lt;&#x2F;strong&gt;：你放弃了源码级的变量名和注释，换来的是&quot;一次理解、多语言通吃&quot;。这是一笔我愿意付的账。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zhuan-zhe-er-ju-jue-ju-e-bai-ming-dan&quot;&gt;转折二 · 拒绝巨额白名单&lt;&#x2F;h2&gt;
+&lt;p&gt;这是整段设计史里最精彩的一次&quot;拒绝—妥协&quot;。&lt;&#x2F;p&gt;
+&lt;p&gt;最初 TP（真阳性率）很低，低到我&quot;甚至考虑过放弃&quot;（设计文档原话）。我去问 AI，AI 建议加&lt;strong&gt;白名单&lt;&#x2F;strong&gt;。我同意了，实现了，然后发现：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;maintaining a very large whitelist was necessary, which wasn&#x27;t what I wanted.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;白名单的诱惑在于&quot;立刻能降噪&quot;。但它的代价是一座你永远维护不完的监狱——每支持一种语言、一个库，就要往名单里塞更多条目。名单越长，误报越少，可维护性越差，直到没人敢动它。&lt;&#x2F;p&gt;
+&lt;p&gt;我拒绝了这座监狱，回头翻自己的笔记，做了一个更贵的决定：&lt;strong&gt;建 MemoryGraph + CallGraph，在 IR 扫描时顺手记录完整调用栈，然后分析这张图&lt;&#x2F;strong&gt;。只盯 FFI 部分，别的它不管。&lt;&#x2F;p&gt;
+&lt;p&gt;结果 &quot;surprisingly good&quot;。这比白名单诚实：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;白名单是&quot;我枚举了所有危险函数&quot;；图模型是&quot;我理解了这段代码的上下文，能判断这个指针是不是正走在危险路径上&quot;。前者是穷举，后者是理解。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h2 id=&quot;tu-mo-xing-dao-di-zen-me-pan-duan-wei-xian&quot;&gt;图模型到底怎么判断&quot;危险&quot;&lt;&#x2F;h2&gt;
+&lt;p&gt;拒绝白名单只是口号，真正要回答的是：&lt;strong&gt;一个指针，凭什么说它危险？&lt;&#x2F;strong&gt; OmniScope 的核心答案在 &lt;code&gt;MemoryGraph.isOnDangerPath&lt;&#x2F;code&gt;（&lt;code&gt;src&#x2F;semantics&#x2F;memory_graph.zig:892&lt;&#x2F;code&gt;）——源码注释直接把它叫做&quot;决定一个指针要不要管的那 ONE question&quot;：&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;zig&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;pub fn&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; isOnDangerPath&lt;&#x2F;span&gt;&lt;span&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;...&lt;&#x2F;span&gt;&lt;span&gt;) DangerPathKind {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;    &#x2F;&#x2F; 1. 先看调用边：这个指针有没有作为 FFI 函数的实参？&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    const&lt;&#x2F;span&gt;&lt;span&gt; arg_indices&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span&gt; graph&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;getCallArgsForPtr&lt;&#x2F;span&gt;&lt;span&gt;(ptr_val)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    for&lt;&#x2F;span&gt;&lt;span&gt; (arg_indices) &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;|&lt;&#x2F;span&gt;&lt;span&gt;idx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;|&lt;&#x2F;span&gt;&lt;span&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;        if&lt;&#x2F;span&gt;&lt;span&gt; (set&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;contains&lt;&#x2F;span&gt;&lt;span&gt;(graph&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;call_args&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;items[idx]&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;callee_name)) &lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;return&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; .&lt;&#x2F;span&gt;&lt;span&gt;ffi_arg&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;    &#x2F;&#x2F; 2. 再看返回边：它是不是 FFI 函数的返回值？&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    const&lt;&#x2F;span&gt;&lt;span&gt; ret_indices&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span&gt; graph&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;getCallRetsForPtr&lt;&#x2F;span&gt;&lt;span&gt;(ptr_val)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    for&lt;&#x2F;span&gt;&lt;span&gt; (ret_indices) &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;|&lt;&#x2F;span&gt;&lt;span&gt;idx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;|&lt;&#x2F;span&gt;&lt;span&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;        if&lt;&#x2F;span&gt;&lt;span&gt; (set&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;contains&lt;&#x2F;span&gt;&lt;span&gt;(graph&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;call_rets&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;items[idx]&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;callee_name)) &lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;return&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; .&lt;&#x2F;span&gt;&lt;span&gt;ffi_ret&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;    &#x2F;&#x2F; 3. 最后看分配节点：是不是在 unsafe 区分配的？跨语言释放？&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    const&lt;&#x2F;span&gt;&lt;span&gt; node&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span&gt; graph&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;nodes&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;get&lt;&#x2F;span&gt;&lt;span&gt;(ptr_val) &lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;orelse return&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; .&lt;&#x2F;span&gt;&lt;span&gt;none&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    if&lt;&#x2F;span&gt;&lt;span&gt; (node&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;zone&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; == .&lt;&#x2F;span&gt;&lt;span&gt;unsafe) &lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;return&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; .&lt;&#x2F;span&gt;&lt;span&gt;unsafe_alloc&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    if&lt;&#x2F;span&gt;&lt;span&gt; (node&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;freed&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; and&lt;&#x2F;span&gt;&lt;span&gt; node&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;alloc_lang&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; !=&lt;&#x2F;span&gt;&lt;span&gt; node&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;free_lang&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.?&lt;&#x2F;span&gt;&lt;span&gt;) &lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;return&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; .&lt;&#x2F;span&gt;&lt;span&gt;cross_lang_lifecycle&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;    &#x2F;&#x2F; alias closure follows...&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;&lt;strong&gt;这个顺序是决策，不是随便排的&lt;&#x2F;strong&gt;：调用边必须排在分配节点前面。因为很多 FFI 实参根本没有分配记录——它们来自函数参数、外部返回、或早期 pass 没能恢复的源头。如果要求先有 &lt;code&gt;AllocNode&lt;&#x2F;code&gt;，就会漏掉最重要的边界流动情况。&lt;&#x2F;p&gt;
+&lt;p&gt;一个指针在 LLVM IR 里经过 bitcast、load、store、传参、返回之后，会以好几个 SSA 值出现。所以还要做 &lt;strong&gt;alias closure&lt;&#x2F;strong&gt;（&lt;code&gt;traceAliasClosure&lt;&#x2F;code&gt;，&lt;code&gt;src&#x2F;pass&#x2F;analysis&#x2F;danger_surface.zig:144&lt;&#x2F;code&gt;）——只标记原始指针会漏掉后续用法。这不是完整的别名分析，是&lt;strong&gt;针对 FFI 指针家族的聚焦传播&lt;&#x2F;strong&gt;。&lt;&#x2F;p&gt;
+&lt;div class=&quot;mermaid-direct&quot; data-series=&quot;decision-archaeology&quot; data-name=&quot;graph.mmd&quot;&gt;
+flowchart LR
+    A[潜在内存问题] --&gt; B{在危险路径上?}
+    B --&gt;|否| C[过滤 &#x2F; 降级为本地问题]
+    B --&gt;|是| D[FFI 相关问题]
+    D --&gt; E[更高审查优先级]
+&lt;&#x2F;div&gt;
+&lt;p&gt;一个本地的 C &lt;code&gt;malloc&lt;&#x2F;code&gt;&#x2F;&lt;code&gt;free&lt;&#x2F;code&gt; 配对，优先级可以很低；但一个指针穿过 FFI 参数、返回或回调，就值得人来看。&lt;strong&gt;这就是&quot;上下文感知&quot;替代&quot;危险函数穷举&quot;的落地。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zhuan-zhe-san-tuo-xie-ru-he-cheng-shou-v0-2-0-de-shang-xia-wen-jia-gou&quot;&gt;转折三 · 妥协如何成熟：v0.2.0 的上下文架构&lt;&#x2F;h2&gt;
+&lt;p&gt;拒绝白名单不是终点，是起点。v0.2.0 把&quot;图模型替代白名单&quot;这条路走成了完整架构：&lt;&#x2F;p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;SurfaceClassifier&lt;&#x2F;strong&gt;（&lt;code&gt;src&#x2F;semantics&#x2F;surface_classifier&#x2F;...&lt;&#x2F;code&gt;）：先把函数分成 &lt;code&gt;user_code&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;dependency&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;boundary&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;standard_library&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;compiler_generated&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;runtime&lt;&#x2F;code&gt; &#x2F; &lt;code&gt;unknown&lt;&#x2F;code&gt;。&lt;code&gt;boundary&lt;&#x2F;code&gt; 优先级最高，标准库和运行时默认跳过——本质是用&quot;&lt;strong&gt;可推理的分类&lt;&#x2F;strong&gt;&quot;替代&quot;手维护的白名单&quot;。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;Issue Gate&lt;&#x2F;strong&gt;（&lt;code&gt;src&#x2F;pass&#x2F;filter&#x2F;issue_gate.zig&lt;&#x2F;code&gt;）：每条诊断在发出前过一遍语义证据门，置信度阈值 &lt;code&gt;0.85&lt;&#x2F;code&gt;。冲突或低置信度的证据&lt;strong&gt;放行而非隐藏&lt;&#x2F;strong&gt;——这又是对&quot;白名单式一刀切&quot;的拒绝。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;Resource Contracts&lt;&#x2F;strong&gt;（&lt;code&gt;src&#x2F;resource&#x2F;ffi_contract_db.zig&lt;&#x2F;code&gt;）：从&quot;看见一个 &lt;code&gt;free&lt;&#x2F;code&gt;&quot;升级到&quot;释放配对是否正确&quot;，例如 &lt;code&gt;SSL_new&lt;&#x2F;code&gt; 必须匹配 &lt;code&gt;SSL_free&lt;&#x2F;code&gt;，不是随便一个 free-like 函数。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;SymbolGraph&lt;&#x2F;strong&gt;（&lt;code&gt;src&#x2F;ffi&#x2F;symbol_graph.zig&lt;&#x2F;code&gt;）：模块级语言检测下沉到符号级，避免把一个混编 LLVM 模块当成单一语言。&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;一句话总结 v0.2.0：&lt;strong&gt;从&quot;找可疑模式&quot;升级到&quot;在报告之前，先理解语言边界、资源所有权和语义上下文&quot;。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;cang-zai-pass-xi-tong-li-de-yi-ge-xi-jie-yi-ge-pass-gua-liao-bu-neng-xia-diao-zheng-ge-gong-ju&quot;&gt;藏在 pass 系统里的一个细节：一个 pass 挂了，不能瞎掉整个工具&lt;&#x2F;h2&gt;
+&lt;p&gt;真实世界的 IR 是脏的——链接不全、优化等级不同、缺 debug info、编译器差异。OmniScope 的 &lt;code&gt;PassManager.run&lt;&#x2F;code&gt;（&lt;code&gt;src&#x2F;pass&#x2F;manager.zig:193&lt;&#x2F;code&gt;）做了一个我很得意的决定：&lt;strong&gt;graceful degradation&lt;&#x2F;strong&gt;。&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;zig&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;for&lt;&#x2F;span&gt;&lt;span&gt; (self&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;resolved_order&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.?&lt;&#x2F;span&gt;&lt;span&gt;) &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;|&lt;&#x2F;span&gt;&lt;span&gt;idx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;|&lt;&#x2F;span&gt;&lt;span&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    self&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;passes&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;items[idx]&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;run_fn&lt;&#x2F;span&gt;&lt;span&gt;(ctx&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; diag) &lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;catch&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; |&lt;&#x2F;span&gt;&lt;span&gt;err&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;|&lt;&#x2F;span&gt;&lt;span&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        diag&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;warn&lt;&#x2F;span&gt;&lt;span&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;pass &amp;#39;{s}&amp;#39; failed: {any}, degrading gracefully&amp;quot;&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; .&lt;&#x2F;span&gt;&lt;span&gt;{ pass_name&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; err })&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        pass_failures&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; +=&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 1&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;  &#x2F;&#x2F; 记一笔，然后继续跑后面的 pass&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    }&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;;&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;这不是&quot;吞异常&quot;。它背后是一个价值判断：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;一个分析阶段挂了，不该把无关的证据一起清零。宁可交出&quot;部分但真实&quot;的结果，也不要因为一个不认识的 IR 模式就交白卷。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;pass 之间的依赖用 Kahn 拓扑排序解（&lt;code&gt;src&#x2F;pass&#x2F;manager.zig:86&lt;&#x2F;code&gt;），缺依赖直接报 &lt;code&gt;MissingDependency&lt;&#x2F;code&gt;——因为&lt;strong&gt;错误的 pass 顺序不只是配置错，它会产出错误的事实&lt;&#x2F;strong&gt;。这和白名单的哲学一脉相承：宁可慢、宁可少，也不要&quot;看起来对但其实错&quot;。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zhe-ge-jue-ce-qian-liao-shen-me-zhai&quot;&gt;这个决策欠了什么债&lt;&#x2F;h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;复杂度债&lt;&#x2F;strong&gt;：MemoryGraph + CallGraph + 一整套 pass 流水线，比&quot;一张白名单&quot;重得多。早期 TP 低到我&quot;甚至考虑过放弃&quot;。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;噪声债&lt;&#x2F;strong&gt;：IR 优化、符号缺失、wrapper 横飞时，能恢复出的语义会变少——静态分析永远有天花板，&lt;code&gt;MemoryGraph&lt;&#x2F;code&gt; 的质量直接决定下游每个 pass 的质量。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;学习债&lt;&#x2F;strong&gt;：我自陈&quot;甚至不太懂编译器&quot;。下沉到 IR 层，等于在自己不熟的领地里开荒（这笔债其实从 12 篇离开 Web3 那天就开始欠了）。&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;但白名单的债更贵：&lt;strong&gt;它随语言增长成线性膨胀的维护成本，且永远覆盖不了&quot;名单之外的新模式&quot;&lt;&#x2F;strong&gt;。图模型至少让你&quot;理解一次，覆盖一类&quot;。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;jie-lun&quot;&gt;结论&lt;&#x2F;h2&gt;
+&lt;blockquote&gt;
+&lt;p&gt;白名单是静态分析的舒适区——它让你觉得自己在做事，其实只是在穷举。我拒绝当白名单的囚徒，妥协去建图：用&quot;上下文感知&quot;替代&quot;危险函数穷举&quot;。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;OmniScope 的语言流浪（C++→Rust→Zig→Rust）和它对白名单的拒绝，是同一枚硬币的两面：&lt;strong&gt;都不接受&quot;看起来最省事&quot;的答案&lt;&#x2F;strong&gt;。白名单省事但会烂尾；Zig 顺手但后来还是回到 Rust 做平行实现——每一次&quot;不将就&quot;，都是在为&quot;FFI 安全责任必须下沉到语言层以下&quot;这个约束买单。&lt;&#x2F;p&gt;
+&lt;p&gt;这正好呼应 10「重写还是演进」：不是旧的不好，是新的问题配不上旧的家。也呼应 13——13 在运行时看 Rust 内部的 ownership，14 在 IR 上看跨语言的 ownership，&lt;strong&gt;它们是同一道题在信任边界两侧的两个投影&lt;&#x2F;strong&gt;。&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;p&gt;&lt;em&gt;Next: &lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;decision-archaeology&#x2F;15-code-review-drama&#x2F;&quot;&gt;把代码评审变成一场戏&lt;&#x2F;a&gt; -- 从静态分析转到人：当评审结论太平，人就会自动忽略。CodeTribunal 的解法是往评审团里塞一个故意说错话的 agent。&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;
+</content>
+        
+    </entry>
     <entry xml:lang="en">
         <title>OmniScope Architecture Deep Dive (Part 6): Reflection — The Architectural Trade-offs You Never Saw</title>
         <published>2026-06-30T00:00:00+00:00</published>
@@ -3027,7 +3152,9 @@ flowchart LR
 &lt;p&gt;&lt;strong&gt;两个项目应该互相利用。&lt;&#x2F;strong&gt; OmniScope 的静态分析结果可以指导 memscope-rs 的运行时追踪——只对静态分析标记为高风险的 FFI 边界启用运行时追踪，大幅减少运行时开销。反过来，memscope-rs 发现的真实 bug 可以反馈给 OmniScope，作为规则优化的依据。具体实现上，OmniScope 的 FFI Auditor 可以在分析完成后输出一份 &lt;code&gt;high_risk_ffi.json&lt;&#x2F;code&gt;，包含每个高风险调用点的文件路径、函数名、违规规则编号和风险等级。memscope-rs 启动时读取这份清单，在 &lt;code&gt;MemoryPassportTracker&lt;&#x2F;code&gt; 中只为清单上的 FFI 边界启用 Passport 追踪，其余边界只做轻量级的 alloc&#x2F;free 计数。这样运行时开销从&quot;追踪所有跨边界的内存&quot;降到&quot;只追踪静态分析怀疑有问题的那几个点&quot;，在生产环境的性能开销可以忽略不计，同时保留了对关键边界的完整可观测性。&lt;&#x2F;p&gt;
 &lt;p&gt;这不是事后诸葛亮——这些想法在设计阶段都讨论过，但被&quot;先让它工作&quot;的优先级压下去了。这是工程中常见的权衡：完美设计和可交付产品之间的距离，往往就是这些被推迟的重构和技术债务。&lt;&#x2F;p&gt;
 &lt;hr &#x2F;&gt;
-&lt;p&gt;&lt;em&gt;系列完结。五篇文章，五个项目的决策回溯。抽象、并发、错误处理、工具设计、安全边界——每个决策背后都有一个信任模型在起作用。&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;
+&lt;p&gt;&lt;em&gt;抽象、并发、错误处理、工具设计、安全边界——每个决策背后都有一个信任模型在起作用。这个系列还在继续生长，后面的文章会回到同一条线上。&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;p&gt;&lt;em&gt;Next: &lt;a href=&quot;https:&#x2F;&#x2F;Timwood0x10.github.io&#x2F;myblog&#x2F;log&#x2F;decision-archaeology&#x2F;06-the-cost-of-observability&#x2F;&quot;&gt;可观测性的代价&lt;&#x2F;a&gt; -- 记录一切的诱惑背后，是事件存储无限增长、全量 dump 把人淹死。记到什么程度才不算过度？&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;
 </content>
         
     </entry>

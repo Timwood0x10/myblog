@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>在&quot;以安全著称的 Rust&quot;里做内存工具 | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="memscope-rs 追踪 Rust 程序的内存，而 Rust 恰恰以内存安全著称。悖论在哪？Arc<Rc> 是安全的抽象，却让所有权更难被观测——分配器只看到一个堆分配，逻辑上却是三个智能指针共享。这篇考古的是：为什么最安全的语言，反而最需要一个内存工具；以及同一道题，在越过 unsafe/FFI 信任边界后会变成什么样。">
+
+    <meta property="og:description" content="memscope-rs 追踪 Rust 程序的内存，而 Rust 恰恰以内存安全著称。悖论在哪？Arc<Rc> 是安全的抽象，却让所有权更难被观测——分配器只看到一个堆分配，逻辑上却是三个智能指针共享。这篇考古的是：为什么最安全的语言，反而最需要一个内存工具；以及同一道题，在越过 unsafe/FFI 信任边界后会变成什么样。">
+    <meta property="og:title" content="在"以安全著称的 Rust"里做内存工具 | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/13-safe-rust-memory-tool/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="memscope-rs 追踪 Rust 程序的内存，而 Rust 恰恰以内存安全著称。悖论在哪？Arc<Rc> 是安全的抽象，却让所有权更难被观测——分配器只看到一个堆分配，逻辑上却是三个智能指针共享。这篇考古的是：为什么最安全的语言，反而最需要一个内存工具；以及同一道题，在越过 unsafe/FFI 信任边界后会变成什么样。">
+    <meta name="twitter:title" content="在"以安全著称的 Rust"里做内存工具 | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/13-safe-rust-memory-tool/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/13-safe-rust-memory-tool/">在&quot;以安全著称的 Rust&quot;里做内存工具</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-07-16
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/arc/">#Arc</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory-safety/">#Memory Safety</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rc/">#Rc</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memscope-rs/">#memscope-rs</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="zai-yi-an-quan-zhu-cheng-de-rust-li-zuo-nei-cun-gong-ju">在"以安全著称的 Rust"里做内存工具</h1>
+<blockquote>
+<p><strong>Problem</strong>: Rust 的卖点就是内存安全——编译器保证没有 use-after-free、没有 data race。那在一个"已经安全"的语言里做一个内存追踪工具，是不是多此一举？memscope-rs 存在的理由，恰恰藏在 Rust 安全模型的盲区里。</p>
+</blockquote>
+<h2 id="rust-de-an-quan-bao-de-shi-bu-ub-bu-shi-ke-guan-ce">Rust 的安全，保的是"不 UB"，不是"可观测"</h2>
+<p>这是最大的认知陷阱。人们以为"Rust 不会内存泄漏，所以不需要内存工具"。错。Rust 的 borrow checker 保证的是<strong>运行期不会出未定义行为</strong>，它不保证你能<strong>看见</strong>自己的程序在做什么。</p>
+<p>memscope-rs 的 <code>Arc/Rc</code> 检测篇开宗明义就点破了这件事：</p>
+<blockquote>
+<p><code>Arc&lt;T&gt;</code> and <code>Rc&lt;T&gt;</code> are safe Rust abstractions, but they make ownership harder to observe.</p>
+</blockquote>
+<p>安全抽象和可见性，是两件事。Rust 给了你前者，顺手拿走了后者的一部分。更讽刺的是：<strong>Rust 越安全，ownership 越容易被它的安全抽象吃掉</strong>——<code>Arc&lt;Rc&lt;Box&lt;T&gt;&gt;&gt;</code> 这种嵌套，Valgrind 只看得到最底下的那次 <code>malloc</code>，上面三层"谁共享了谁"它一概不知。</p>
+<h2 id="shu-ju-cong-na-lai-liang-ceng-die-jia-bu-shi-yi-ceng-mo-fa">数据从哪来：两层叠加，不是一层魔法</h2>
+<p>很多人以为这类工具是"自动理解你的 Rust 程序"。不是。memscope-rs 把数据分成两个互补的来源，这个分层本身就是个决策：</p>
+<ol>
+<li><strong><code>GlobalAlloc</code> 抓运行时事实</strong>：指针、大小、分配/释放事件——这是 ground truth；</li>
+<li><strong><code>track!</code> 宏 + <code>Trackable</code> trait 补 Rust 语义</strong>：变量名、类型、源码位置——这是显式注入的上下文。</li>
+</ol>
+<p>底层包装系统分配器，每次 <code>alloc</code>/<code>dealloc</code> 都记一笔：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">unsafe impl</span><span style="color: #F9E2AF;font-style: italic;"> GlobalAlloc</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> TrackingAllocator</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    unsafe fn</span><span style="color: #89B4FA;font-style: italic;"> alloc</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> layout</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Layout</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt; *</span><span style="color: #CBA6F7;">mut u8</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> ptr</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> System</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">alloc</span><span style="color: #9399B2;">(</span><span>layout</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span>ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">is_null</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            let</span><span> _</span><span style="color: #94E2D5;"> =</span><span> tracker</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">track_allocation</span><span style="color: #9399B2;">(</span><span>ptr</span><span style="color: #CBA6F7;"> as usize</span><span style="color: #9399B2;">,</span><span> layout</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">size</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span>        ptr</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    unsafe fn</span><span style="color: #89B4FA;font-style: italic;"> dealloc</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">mut u8</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> layout</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Layout</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> _</span><span style="color: #94E2D5;"> =</span><span> tracker</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">track_deallocation</span><span style="color: #9399B2;">(</span><span>ptr</span><span style="color: #CBA6F7;"> as usize</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        System</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">dealloc</span><span style="color: #9399B2;">(</span><span>ptr</span><span style="color: #9399B2;">,</span><span> layout</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>真实实现里还藏了一个细节：分配器自己也会分配内存（记录元数据时就分配），所以要有一个 <strong>thread-local 守卫</strong> 临时关掉追踪，否则会无限递归。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">thread_local!</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    static</span><span style="color: #FAB387;"> TRACKING_DISABLED</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">cell</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cell</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">bool</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        const</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">cell</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cell</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">false</span><span style="color: #9399B2;">) };</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这一层给的是<strong>高置信度</strong>数据：指针地址、分配大小、分配事件、释放事件、时间戳、线程 ID。但它<strong>不知道</strong>一个指针属于 <code>Vec&lt;T&gt;</code>、<code>String</code>、<code>Box&lt;T&gt;</code> 还是你自定义的类型。</p>
+<h2 id="zui-jian-fang-an-fen-pei-qi-shi-jiao-de-mang-qu">最简方案：分配器视角的盲区</h2>
+<p>如果只从分配器（<code>GlobalAlloc</code>）的视角看，一段代码长这样：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> root</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">vec!</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 3</span><span style="color: #9399B2;">]);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> worker_a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>root</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> worker_b</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>root</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>分配器层面，<strong>只看到一次堆分配</strong>——<code>Arc::new</code> 那一下。另外两个 <code>Arc::clone</code> 不分配新用户对象，它们只是创建指向同一份堆数据的智能指针。</p>
+<p>但从所有权视角看，现在有三个智能指针值共享同一块堆数据。问题从"内存分配在哪"变成了：</p>
+<blockquote>
+<p>哪些被追踪的智能指针，指向了同一块堆数据？</p>
+</blockquote>
+<p>分配器答不上来。它不知道 <code>Arc</code> 的存在，只知道"有人要了一块内存，又还回来了"。这就是为什么需要第二层——<code>track!</code> 把变量名、类型、文件、行号显式注入：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> users</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">User</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Alice&quot;</span><span style="color: #9399B2;">),</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Bob&quot;</span><span style="color: #9399B2;">)];</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">track!</span><span style="color: #9399B2;">(</span><span>tracker</span><span style="color: #9399B2;">,</span><span> users</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 宏展开后注入：变量名、file!()、line!()、module_path!()</span></span></code></pre>
+<p>这是<strong>刻意显式</strong>的设计——工具不假装能自动理解程序里每个变量。</p>
+<h2 id="trackkind-ba-rust-lei-xing-fen-cheng-nei-cun-jiao-se">TrackKind：把 Rust 类型分成"内存角色"</h2>
+<p>不同的 Rust 类型，不该被当成同一种"伪堆分配"来建模。<code>TrackKind</code> 这个枚举是 memscope-rs 对类型语义的核心分类：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> TrackKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HeapOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Container</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Value</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StackOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> heap_ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>映射关系很讲究：</p>
+<ul>
+<li><code>Vec&lt;T&gt;</code> / <code>String</code> / <code>Box&lt;T&gt;</code> → <strong><code>HeapOwner</code></strong>：它们真的在堆上拥有一块数据（用 <code>as_ptr()</code> + <code>capacity()</code> 估算大小）；</li>
+<li><code>HashMap&lt;K,V&gt;</code> / <code>BTreeMap</code> / <code>VecDeque</code> → <strong><code>Container</code></strong>：故意保守，只报元数据，<strong>不暴露内部容器指针</strong>——免得把不稳定的内部布局当成用户堆缓冲；</li>
+<li><code>i32</code> / <code>bool</code> 这类简单值 → <strong><code>Value</code></strong>：根本没有堆分配；</li>
+<li><code>Arc&lt;T&gt;</code> / <code>Rc&lt;T&gt;</code> → <strong><code>StackOwner</code></strong>：智能指针值在栈上，但指向一份共享堆数据。</li>
+</ul>
+<p>自定义类型用 derive 宏处理——它沿着实现了 <code>Trackable</code> 的字段走，估算大小。这不是完美的 layout 重建，但对应用层对象是务实的语义层：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">#</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">derive</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Trackable</span><span style="color: #9399B2;">)]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> UserProfile</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    tags</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="zhen-shi-kai-xiao-bu-shi-ling-cheng-ben-dan-yao-cheng-shi">真实开销：不是零成本，但要诚实</h2>
+<p>benchmark 日志显示，单变量追踪对小型被追踪值通常是亚微秒级：</p>
+<table><thead><tr><th>Benchmark</th><th style="text-align: right">近似耗时</th></tr></thead><tbody>
+<tr><td><code>track_single/vec/64</code></td><td style="text-align: right">~653 ns</td></tr>
+<tr><td><code>track_single/vec/1024</code></td><td style="text-align: right">~666 ns</td></tr>
+<tr><td><code>track_single/vec/1048576</code></td><td style="text-align: right">~4.93 µs</td></tr>
+<tr><td><code>track_multiple/variables/1000</code></td><td style="text-align: right">~669.67 µs</td></tr>
+<tr><td><code>track_multiple/variables/10000</code></td><td style="text-align: right">~6.59 ms</td></tr>
+</tbody></table>
+<p>诚实的解读是：绝对延迟对 profiling 够用，但日志里也包含相对历史运行的回归。性能要<strong>按实测、且在演进中</strong>来描述，而不是吹成"零成本抽象"。这点我特意不美化——一个内存工具自己如果开始撒"零成本"的谎，那它和那些被它揭穿的抽象没区别。</p>
+<h2 id="memscope-rs-de-hui-da-stackowner-mo-xing">memscope-rs 的回答：StackOwner 模型</h2>
+<p>项目没有去读 <code>ArcInner</code> 的私有布局（那是脆弱的——Rust 版本一升级，偏移量就可能变）。它用了一种可观测的关系建模：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Trackable</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Arc</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> track_kind</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> TrackKind</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> stack_ptr</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> self</span><span style="color: #CBA6F7;"> as</span><span style="color: #94E2D5;"> *</span><span style="color: #CBA6F7;">const</span><span> _</span><span style="color: #CBA6F7;"> as usize</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">     // 智能指针值的地址</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> heap_ptr</span><span style="color: #94E2D5;"> = &amp;**</span><span style="color: #F38BA8;">self</span><span style="color: #CBA6F7;"> as</span><span style="color: #94E2D5;"> *</span><span style="color: #CBA6F7;">const</span><span style="color: #FAB387;"> T</span><span style="color: #CBA6F7;"> as usize</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">   // 它指向的堆数据</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        TrackKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">StackOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">:</span><span> stack_ptr</span><span style="color: #9399B2;">,</span><span> heap_ptr</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">size_of</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">() }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> get_ref_count</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">usize</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">strong_count</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)) }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>关键的区分在 <code>StackOwner</code> 里：<code>ptr</code>（stack_ptr）标识<strong>智能指针值本身</strong>的地址；<code>heap_ptr</code> 标识<strong>它指向的共享堆数据</strong>。<code>Rc&lt;T&gt;</code> 用完全相同的模型。这套做法<strong>不读取私有的 <code>ArcInner</code> 布局</strong>，它只观察"多个被追踪的智能指针值，指向了同一份堆数据"这个可观测关系。这是刻意的工程取舍：宁可少一点编译器级别的精确，也要避开随 Rust 版本漂移的脆弱假设。</p>
+<p>关系推断时，按 <code>heap_ptr</code> 分组：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>root      stack_ptr = S1, heap_ptr = H</span></span>
+<span class="giallo-l"><span>worker_a  stack_ptr = S2, heap_ptr = H</span></span>
+<span class="giallo-l"><span>worker_b  stack_ptr = S3, heap_ptr = H</span></span>
+<span class="giallo-l"><span>// 三个 StackOwner 共享 heap_ptr = H → 构成共享所有权组</span></span></code></pre>
+<p>同一个 <code>heap_ptr</code> 出现多次，就是一次 <code>ArcClone</code> 关系候选。循环引用、泄漏、所有权扇出，都从这条线索里长出来。</p>
+<p>这一层能确信什么、不能确信什么，memscope-rs 自己写得很老实：</p>
+<ul>
+<li><strong>高置信度</strong>：指针地址、分配大小、分配/释放事件、时间戳、线程 ID；</li>
+<li><strong>显式元数据</strong>：变量名、类型名、源文件、行号、语义角色；</li>
+<li><strong>不直接知道</strong>：每一次 borrow、每一次 move、每一次所有权转移——除非你显式 <code>track!</code> 了。</li>
+</ul>
+<h2 id="tong-yi-dao-ti-yue-guo-xin-ren-bian-jie-zhi-hou">同一道题，越过信任边界之后</h2>
+<p>13 篇讲的是"Rust 内部"的 ownership 可见性。但 Rust 是<strong>安全，直到你越过边界</strong>——那个边界可能是 <code>unsafe</code> 块、裸指针、<code>std::alloc::alloc</code>、C 的 <code>malloc/free</code>，或者一个外部库返回的指针。</p>
+<p>memscope-rs 没有声称能证明 unsafe 代码正确，它做的是给越过信任边界的内存发一张"护照"（memory passport）：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> MemoryPassport</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> passport_id</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> allocation_ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> size_bytes</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> type_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> var_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> status_at_shutdown</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PassportStatus</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> lifecycle_events</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">PassportEvent</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> AllocationSource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    RustSafe</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    UnsafeRust</span><span style="color: #9399B2;"> {</span><span> unsafe_block_location</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span><span> call_stack</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> CallStackRef</span><span style="color: #9399B2;">,</span><span> risk_assessment</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> RiskAssessment</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    FfiC</span><span style="color: #9399B2;"> {</span><span> resolved_function</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> ResolvedFfiFunction</span><span style="color: #9399B2;">,</span><span> call_stack</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> CallStackRef</span><span style="color: #9399B2;">,</span><span> libc_hook_info</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> LibCHookInfo</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CrossBoundary</span><span style="color: #9399B2;"> {</span><span> from</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">AllocationSource</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span><span> to</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">AllocationSource</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span><span> transfer_timestamp</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u128</span><span style="color: #9399B2;">,</span><span> transfer_metadata</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> TransferMetadata</span><span style="color: #9399B2;"> },</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>它要回答的不是"有没有 malloc/free"，而是：</p>
+<blockquote>
+<p>这块内存谁创建的？交给了外部代码吗？是 Rust 释放的还是外部释放的？它现在还押在外国 custody 里吗？</p>
+</blockquote>
+<p>这正是 14 篇 OmniScope 要处理的问题的<strong>静态版本</strong>——只不过 13 是在运行时看 Rust 内部 + FFI 边界，14 是在编译后的 LLVM IR 上，看跨语言指针到底走了哪条危险路径。两者是同一道题的两面：<strong>ownership 一旦被语言藏起来或越过边界，就需要专门的工具去重新照亮它。</strong></p>
+<h2 id="zhe-ge-jue-ce-qian-liao-shen-me-zhai">这个决策欠了什么债</h2>
+<ul>
+<li><strong>覆盖债</strong>：只有被 <code>track!</code> 显式追踪的 <code>Arc/Rc</code> 才会出现为 <code>StackOwner</code> 记录。你没 track 的 clone，它永远看不见（文章里也诚实写了 "cannot guarantee detection of clones that were never passed to <code>track!</code>"）。</li>
+<li><strong>精度债</strong>：它检测的是"被观测到的共享所有权"，不是完整的 borrow/move 语义。它是一面放大镜，不是编译器。</li>
+<li><strong>心智债</strong>：使用者必须主动在关键变量上插 <code>track!</code>，这本身是个负担——和 Rust "零成本抽象"的哲学有点拧着。</li>
+<li><strong>信任边界债</strong>：unsafe/FFI passport 能做到"记录生命周期、识别可疑模式"，但做不到"证明外部代码遵守了所有权契约"。它是运行时可观测，不是形式化验证。</li>
+</ul>
+<p>但这些债的对手方很清楚：<strong>Rust 编译器在运行期把所有权交还给你之后，就什么都不看了。memscope-rs 不做这层，那段被藏起来的共享关系，就真的谁都看不见。</strong></p>
+<h2 id="jie-lun">结论</h2>
+<p>在 Rust 里做内存工具，听起来像个笑话——"语言都帮你管好了还管什么？"但这句话暴露的，是对"安全"两个字的误解。</p>
+<blockquote>
+<p>Rust 的安全是消极的：它承诺"我不会让你做错事"，从不承诺"你会看见自己在做什么"。而内存 bug 最阴险的地方，恰恰是你做"对"了事、却看不见自己埋下了什么。</p>
+</blockquote>
+<p>Arc/Rc 是安全的，正因如此，它们把所有权扇出藏进了一个分配器看不到的层。<code>Arc&lt;Rc&lt;Box&lt;T&gt;&gt;&gt;</code> 这种嵌套，Valgrind 只看得到最底下的那次 <code>malloc</code>，上面三层"谁共享了谁"它一概不知——这正是 memscope-rs 存在的全部理由。</p>
+<p><strong>最安全的语言，反而最需要一个能看穿它自己安全抽象的工具。</strong> 因为那里的 ownership，最容易被安全本身吃掉。而在越过 FFI 边界之后（那是 14 篇的领地），这道题会从"运行时观测"升级为"静态分析能不能看清跨语言的指针契约"——答案同样残酷：大多数工具选择放弃，OmniScope 选择不将就。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/14-omniscope-design-tradeoffs/">OmniScope：从拒绝巨额白名单到妥协</a> -- 同一道题跨到语言边界：静态分析怎么在不读每个语言语法的情况下，看清跨 FFI 的所有权协议？</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/14-omniscope-design-tradeoffs/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">OmniScope：从拒绝巨额白名单到妥协</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/12-leaving-web3/">
+                                <span class="button__text">离开 Web3 的那天</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

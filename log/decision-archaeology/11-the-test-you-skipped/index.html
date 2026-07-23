@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>你跳过的那条测试 | Timwood0x10</title>
+    
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
+
+
+    <meta name="description" content="ARES 用 Arena 主动「谋杀」运行中的 Agent，看它能否自愈（第九篇）。但大多数团队跳过了最该测的东西——不是功能，是「它死的时候怎么办」。这篇考古的是：哪些测试你明知道该写却没写，以及后来怎么炸的；以及 ARES 怎么把「我们跳过的那条测试」做成了一个按钮。">
+
+    <meta property="og:description" content="ARES 用 Arena 主动「谋杀」运行中的 Agent，看它能否自愈（第九篇）。但大多数团队跳过了最该测的东西——不是功能，是「它死的时候怎么办」。这篇考古的是：哪些测试你明知道该写却没写，以及后来怎么炸的；以及 ARES 怎么把「我们跳过的那条测试」做成了一个按钮。">
+    <meta property="og:title" content="你跳过的那条测试 | Timwood0x10">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/11-the-test-you-skipped/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="ARES 用 Arena 主动「谋杀」运行中的 Agent，看它能否自愈（第九篇）。但大多数团队跳过了最该测的东西——不是功能，是「它死的时候怎么办」。这篇考古的是：哪些测试你明知道该写却没写，以及后来怎么炸的；以及 ARES 怎么把「我们跳过的那条测试」做成了一个按钮。">
+    <meta name="twitter:title" content="你跳过的那条测试 | Timwood0x10">
+    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/decision-archaeology/11-the-test-you-skipped/">
+
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        
+<span class="terminal-prompt">
+  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+  <span class="prompt-sep">&nbsp;</span>
+  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+</span>
+
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        
+        <nav class="menu">
+            <ul class="menu__inner">
+                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+            
+                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+            </ul>
+        </nav>
+    
+    
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/11-the-test-you-skipped/">你跳过的那条测试</a></h1>
+    <div class="post-meta-inline">
+        
+    <span class="post-date">
+            2026-06-12
+        </span>
+
+    </div>
+
+    
+        <span class="post-tags-inline">
+                :: tags:&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/chaos-engineering/">#Chaos Engineering</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/resilience/">#Resilience</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/testing/">#Testing</a>&nbsp;
+                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/decision-archaeology/">#decision-archaeology</a></span>
+    
+
+    <div class="post-content">
+            <h1 id="ni-tiao-guo-de-na-tiao-ce-shi">你跳过的那条测试</h1>
+<p>先讲这个模块的由来。我当初测 Agent 稳定性，手动 kill 了一个进程。Agent 自动复活了，还继续干之前没干完的活。我当时挺兴奋——但紧接着想了一句话：</p>
+<blockquote>
+<p>This was just a manual test. Can I automate it?</p>
+</blockquote>
+<p>于是我造了 Arena——一个<strong>唯一目的就是搞破坏</strong>的模块。它不实现自己的 Runtime、DAG 或恢复逻辑，就只是故意去调那些危险 API（<code>StopAgent</code>、<code>RemoveNode</code>、<code>RemoveEdge</code>），然后等着看系统自己修好自己。我把这叫 <strong>「Edo Tensei Verification」（秽土转生验证）</strong>——在 Dashboard 上点一个按钮，暗杀一个正在干活的 Agent，看它能不能自己爬起来。</p>
+<p>这个念头本身，来自一次真实的生产事故：我手动 kill，Agent 复活、续上任务——那一刻我才意识到，<strong>大多数人根本不会写这种测试，因为我们要测的是「它活着时能干活」，不是「它死了会怎样」</strong>。</p>
+<blockquote>
+<p><strong>Problem</strong>: ARES 的 Arena 能一键「谋杀」运行中的 Agent，看它能否自愈（第九篇）。这测试大多数人根本不会写——因为我们要测的是「它活着时能干活」，不是「它死了会怎样」。哪些测试你明知道该写却跳过了？</p>
+</blockquote>
+<h2 id="ce-shi-wen-hua-de-mang-qu">测试文化的盲区</h2>
+<p>团队写测试，默认在测<strong>快乐路径</strong>：输入正确，输出正确。这是「它能干活」的证明。</p>
+<p>但系统真正的生死，不在「干活时」，在「出事时」。ARES 第九篇讲得很直白：作者一开始是手动 kill 进程，发现 Agent 自动复活并继续未完成的任务，然后想——能不能把它做成一键按钮？</p>
+<p>把「谋杀 Agent 看它能否自愈」做成一键按钮，这测试稀有的地方在于：<strong>它测的不是功能，是系统的尊严</strong>——崩溃后还能不能爬起来。</p>
+<p>Arena 的杀手锏是 <code>internal/arena/injector.go</code> 里的 <code>KillLeader</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">in </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Injector</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> KillLeader</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    leaderID</span><span style="color: #94E2D5;"> :=</span><span style="color: #A6E3A1;"> &quot;&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> info</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> in</span><span style="color: #9399B2;">.</span><span>runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ListAgents</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> info</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;leader&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            leaderID</span><span style="color: #94E2D5;"> =</span><span> info</span><span style="color: #9399B2;">.</span><span>ID</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            break</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> leaderID</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> ErrLeaderNotFound</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> in</span><span style="color: #9399B2;">.</span><span>runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">StopAgent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> leaderID</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;arena: kill leader %s: %w&quot;</span><span style="color: #9399B2;">,</span><span> leaderID</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> leaderID</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>因果链是：Arena 调 <code>StopAgent("leader-1")</code> → Runtime 标记停止 → goroutine 退出 → <code>NotifyAgentDead</code> 被调用 → LeaderSupervisor 发现 Leader 缺席 → 触发 failover（选举 → checkpoint 恢复 → 事件重放）→ 新 Leader 几秒内被选出并跑起来。一次「暗杀」，同时证明了三件事：选举、状态恢复、事件重放。</p>
+<p>我给一个朋友演示过：打开 Dashboard，点「Assassinate Leader」，Agent 死了……<strong>1.4 秒后</strong>它自动复活了。他说：「Holy shit, it does that?」</p>
+<p>我想的是：<strong>对，这就是我花那么多时间造这玩意儿的原因。</strong></p>
+<h2 id="ni-tiao-guo-de-shi-na-ji-tiao">你跳过的是哪几条</h2>
+<p>对照已有系列，几个反复出现、却常被测试遗漏的维度：</p>
+<table><thead><tr><th>跳过的测试</th><th>真实出处</th><th>你测了什么，却没测什么</th></tr></thead><tbody>
+<tr><td>复活测试</td><td>ARES 第七、九篇</td><td>测了正常流程，没测「死过一次之后」状态能不能恢复、未完成的任务能不能续上</td></tr>
+<tr><td>并发下的自身安全</td><td>memscope-rs 篇，每秒数十万事件</td><td>测了正确性，没测「高负载下它自己先死」</td></tr>
+<tr><td>边界守卫的失败模式</td><td>OmniScope 篇，跨语言 FFI</td><td>测了「对的调用」，没测「C 端乱来、Rust 端接不住时是优雅降级还是直接 UB」</td></tr>
+<tr><td>错误的传播</td><td>「错误是设计的镜子」篇</td><td>测了成功路径，没测「Leader 崩溃、评审者故意说错话时，系统怎么对待失败」</td></tr>
+</tbody></table>
+<p>Arena 自己定义了 <strong>13 种混沌动作</strong>（kill_leader / kill_agent / remove_node / remove_edge / slow_agent / network_partition / tool_timeout / memory_corrupt / mcp_disconnect / llm_failure……），外加一个持续随机注入故障的 <strong>survival 模式</strong>。它用三维弹性评分来量化「抗揍能力」：</p>
+<table><thead><tr><th>维度</th><th>权重</th></tr></thead><tbody>
+<tr><td>Availability（故障成功比）</td><td>40%</td></tr>
+<tr><td>Recovery（恢复率 70% + 恢复速度 30%）</td><td>30%</td></tr>
+<tr><td>Consistency（数据一致性率）</td><td>30%</td></tr>
+</tbody></table>
+<p>survival 模式的实时输出长这样：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>Elapsed: 12s    Actions: 1    Score: 100.0 (A+)</span></span>
+<span class="giallo-l"><span>Elapsed: 22s    Actions: 2    Score: 97.3 (A+)</span></span></code></pre>
+<p>13 种故障随机选目标，Ctrl+C 停止并打印最终报告。这东西把 <code>ares arena run cascading_storm.yaml</code> 从一个测试命令，变成了一句宣言：「看我的系统有多能扛」。</p>
+<h2 id="wei-shen-me-tiao-guo">为什么跳过</h2>
+<p>不是不知道该测，是<strong>跳过的成本不在当下</strong>。快乐路径的测试今天就能给你绿灯，让你心安理得地合并。复活测试、混沌测试要搭额外的基础设施（Arena、Compactor、重放），收益却要等某次生产事故才兑现——而那次事故发生时，你早忘了当初为啥没写。</p>
+<p>这是典型的<strong>跨期套利</strong>：用未来的痛苦，贴现成现在的安逸。</p>
+<p>ARES 的 Arena 值得所有框架学的地方，不是混沌工程多酷，而是它把「我们跳过的那条测试」变成了<strong>一个按钮</strong>。当验证自愈只要点一下，你就没有借口再跳过了。Arena 自己也很诚实：它不实现 Runtime/DAG/Recovery——只是调已有的危险 API，然后等系统自己修好。这种「薄一层 chaos 接口」的设计，恰恰是它能被真的用起来的原因。</p>
+<h2 id="wo-dang-shi-zen-me-xiang-de-you-chai-dian-cuo-zai-na">我当时怎么想的，又差点错在哪</h2>
+<p>我差点没造 Arena。第一反应跟大多数人一样——「造个专门搞破坏的模块？听起来像个玩具」。是那次「手动 kill → 自动复活」的真实冲击，把我从「这有啥用」拽到了「我得把它变成一键的」。</p>
+<p>我错在把「测试」默认等同于「测功能」。直到 Agent 真的在生产里静默死亡、而我的测试全绿——我才承认：那些全绿的测试，测的恰恰是最不怕出事的路径，跳过的才是要命的。</p>
+<blockquote>
+<p>没写的测试不会消失，它们只是排着队，等在生产环境里一次性收了你的债。</p>
+</blockquote>
+<h2 id="jie-lun">结论</h2>
+<p>测试覆盖率高不代表你测对了。你测的往往是最不怕出事的路径，跳过的恰恰是最要命的。</p>
+<p>ARES 的 Arena 值得所有框架学的地方，不是混沌工程多酷，而是它把「我们跳过的那条测试」变成了<strong>一个按钮</strong>。当验证自愈只要点一下，你就没有借口再跳过了。大多数系统的差距，不在于懂不懂该测什么，而在于<strong>有没有把该测的变成不费力的动作</strong>。</p>
+<p>写测试的本质问题从来不是「测什么」，是「你怎么对待那些你明知道该测、却总想拖到以后的东西」。拖着拖着，它们就变成了事故报告里的第一行。</p>
+<hr />
+<p><em>Next: <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/12-leaving-web3/">离开 Web3 的那天</a> -- 从 ethermint 的共识代码，到 memscope-rs 的内存工具：我离开 Web3，是重写自己的问题域。</em></p>
+
+        </div>
+
+    
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/12-leaving-web3/">
+                                <span class="button__icon">&#8592;</span>&nbsp;
+                                <span class="button__text">离开 Web3 的那天</span>
+                            </a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/decision-archaeology/10-the-fork-in-the-road/">
+                                <span class="button__text">重写还是演进</span>&nbsp;
+                                <span class="button__icon">&#8594;</span>
+                            </a>
+                        </span>
+                    </div>
+            </div>
+        
+  </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 
+    2026
+ Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

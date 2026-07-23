@@ -7,7 +7,127 @@
       <generator>Zola</generator>
       <language>en</language>
       <atom:link href="https://Timwood0x10.github.io/myblog/tags/genetic-algorithm/rss.xml" rel="self" type="application/rss+xml"/>
-      <lastBuildDate>Sun, 28 Jun 2026 00:00:00 +0000</lastBuildDate>
+      <lastBuildDate>Thu, 16 Jul 2026 00:00:00 +0000</lastBuildDate>
+      <item>
+          <title>用遗传算法给 Agent 选策略</title>
+          <pubDate>Thu, 16 Jul 2026 00:00:00 +0000</pubDate>
+          <author>Unknown</author>
+          <link>https://Timwood0x10.github.io/myblog/log/decision-archaeology/16-genetic-algorithm-agent-selection/</link>
+          <guid>https://Timwood0x10.github.io/myblog/log/decision-archaeology/16-genetic-algorithm-agent-selection/</guid>
+          <description xml:base="https://Timwood0x10.github.io/myblog/log/decision-archaeology/16-genetic-algorithm-agent-selection/">&lt;h1 id=&quot;yong-yi-chuan-suan-fa-gei-agent-xuan-ce-lue&quot;&gt;用遗传算法给 Agent 选策略&lt;&#x2F;h1&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;Problem&lt;&#x2F;strong&gt;: ARES 要给 Agent 选&quot;最好的策略参数&quot;——temperature、top_k、tool_selector、search_depth…… 你怎么选？网格搜索？手调？还是让进化算法自己选？ARES 选了后者，且一路改了两次架构，还栽过一个让我公开打脸的跟头。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;这篇的犀利点不在&quot;GA 多厉害&quot;，而在&lt;strong&gt;我承认自己不知道答案&lt;&#x2F;strong&gt;——包括不知道最佳参数，也包括曾经不知道自己代码里漏了一行。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zui-jian-fang-an-dan-qin-fan-zhi&quot;&gt;最简方案：单亲繁殖&lt;&#x2F;h2&gt;
+&lt;p&gt;最开始的 GA 简单得像个玩具。进化系统（DreamCycle）已经有个 Mutator——把一个父策略突变成几个孩子，挑最好的，替换父策略：&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Parent → Mutate → [Child A, Child B, Child C] → Arena PK → Best Child → Replace Parent&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;每次只保留一个最优解。简单、高效。我当时反对&quot;搞种群&quot;的理由很直白：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;What&#x27;s the point of a population? Only one strategy is deployed at a time — keeping suboptimal ones around just wastes memory.&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;听起来没错。直到跑了几天，问题浮出来了。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;di-yi-ci-gai-xie-population-1-shi-zhi-si-ji-liang&quot;&gt;第一次改写：population=1 是致死剂量&lt;&#x2F;h2&gt;
+&lt;p&gt;第一次进化：temperature 从 0.7 突变成 0.3（赢了）。第二次进化：temperature 只能从 0.3 继续突变。如果 0.3 其实是个局部最优呢？&lt;strong&gt;你已经把 0.7 这个等位基因弄丢了，永远拿不回来。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;p&gt;这就是经典的 &lt;strong&gt;genetic drift&lt;&#x2F;strong&gt;——小种群 + 强选择压力 = 基因池快速萎缩。生物学里，种群跌破阈值后，等位基因会因随机采样丢失。我的系统种群大小是 1，&lt;strong&gt;等位基因丢失是必然&lt;&#x2F;strong&gt;。&lt;&#x2F;p&gt;
+&lt;p&gt;于是第一次升级：从&quot;单亲繁殖&quot;改写成&quot;种群 + 交配&quot;。&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; internal&#x2F;ares_evolution&#x2F;genome&#x2F;population.go&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;type&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Population&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; struct&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Agents&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;      []&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;mutation&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Strategy&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt; &#x2F;&#x2F; 当前个体&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Size&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;        int&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;                  &#x2F;&#x2F; 目标大小（默认 20）&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Generation&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;  int&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    rng&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;         *&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;rand&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Rand&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;           &#x2F;&#x2F; 确定性随机源&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    bestScore&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;   float64&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    paretoFront&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; []&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;mutation&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Strategy&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt; &#x2F;&#x2F; NSGA-II 帕累托前沿&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;20 是 GA 领域的经验值：太小（&amp;lt;10）会 genetic drift，太大（&amp;gt;50）收敛太慢。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;di-er-ci-gai-xie-bu-shi-fu-za-du-wen-ti-shi-duo-yang-xing-wen-ti&quot;&gt;第二次改写：不是复杂度问题，是多样性问题&lt;&#x2F;h2&gt;
+&lt;p&gt;第一次升级后，GA 跑起来了：种群 20、精英保留、tournament 选择、uniform 交叉，一切正常。但几百代之后，第二个问题出现：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;种群不再丢基因了，但收敛太快。Gen 1-5 多样性从 35% 掉到 12%，Gen 10+ 稳定在 8% 左右——所有个体长得一样。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;这不是 bug，是 GA 的本性：&lt;strong&gt;选择压力越强，收敛越快&lt;&#x2F;strong&gt;。但快收敛不一定是好事——那个收敛点可能只是个局部最优。&lt;&#x2F;p&gt;
+&lt;p&gt;我第一反应是调参数：提高突变率、降低存活率、增加精英数——收效甚微。直到意识到问题不在参数，在&lt;strong&gt;机制&lt;&#x2F;strong&gt;：只有 tournament 一种选择、只有 uniform 一种交叉、没有任何多样性保护（fitness sharing &#x2F; crowding distance）。&lt;&#x2F;p&gt;
+&lt;p&gt;于是第二次升级不是&quot;加更多配置旋钮&quot;，而是建一个&lt;strong&gt;可插拔的算子架构&lt;&#x2F;strong&gt;。现在的 GA 引擎有 &lt;strong&gt;7 种选择算子、3 种交叉（含 3 种 prompt 继承模式）、4 种突变（含自适应分布），以及多目标 NSGA-II 优化&lt;&#x2F;strong&gt;——全是可替换的策略，不是配置参数。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;yi-ge-mei-ren-kua-dan-hen-guan-jian-de-ceng-da-fen-zen-me-cai-bu-shao-qian&quot;&gt;一个没人夸但很关键的层：打分怎么才不烧钱&lt;&#x2F;h2&gt;
+&lt;p&gt;GA 每代要给成百上千个策略打分。如果每个都调 LLM，账单会爆炸。所以 &lt;code&gt;TieredScorer&lt;&#x2F;code&gt;（&lt;code&gt;internal&#x2F;ares_evolution&#x2F;scoring&#x2F;tiered_scorer.go&lt;&#x2F;code&gt;）用三层流水线——&lt;strong&gt;能用便宜的一层，就绝不惊动贵的那层&lt;&#x2F;strong&gt;：&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Tier 1: Cache      O(1) 命中，零成本&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Tier 2: LLM        预算控制，准但贵&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Tier 3: Heuristic  永远可用的兜底&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;其中预算控制那一层，我用了无锁的 CAS 自旋，而不是 Mutex——因为有 50+ goroutine 在并发打分：&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; (&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;b &lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;*&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Budget&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; TryRecordLLMCall&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;()&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; bool&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    used&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; :=&lt;&#x2F;span&gt;&lt;span&gt; b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;UsedLLMCalls&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;Load&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    for&lt;&#x2F;span&gt;&lt;span&gt; used&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; &amp;lt;&lt;&#x2F;span&gt;&lt;span&gt; b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;MaxLLMCalls&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;        if&lt;&#x2F;span&gt;&lt;span&gt; b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;UsedLLMCalls&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;CompareAndSwap&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span&gt;used&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; used&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;+&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;1&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;) {&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; return&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; true&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        used&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;&#x2F;span&gt;&lt;span&gt; b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span&gt;UsedLLMCalls&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;Load&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;()&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;    }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;    return&lt;&#x2F;span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; false&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;  &#x2F;&#x2F; 预算用尽，自动降级到 Heuristic&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;效果很实在：在一台 M3 Max 上，每代评估 1000 个策略，只用 10-100 次 LLM 调用（取决于预算），其余全靠 cache + heuristic 兜底，整代开销约 32µs。&lt;strong&gt;这是&quot;承认不知道最佳答案&quot;的配套设施——你要让系统敢于大量试错，前提是试错足够便宜。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;zui-hen-de-yi-dao-shang-xian-hou-zui-jia-ce-lue-xiao-shi-liao&quot;&gt;最狠的一刀：上线后&quot;最佳策略&quot;消失了&lt;&#x2F;h2&gt;
+&lt;p&gt;NSGA-II 多目标优化带来的，是最反直觉、也最诚实的改变。&lt;&#x2F;p&gt;
+&lt;p&gt;GA 默认是单目标最大化：score 越高越好。但现实里策略质量不是一维的——成功率、质量、成本、延迟，四个维度互相拉扯：&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;维度&lt;&#x2F;th&gt;&lt;th&gt;方向&lt;&#x2F;th&gt;&lt;th style=&quot;text-align: right&quot;&gt;权重&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;success_rate&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;最大化&lt;&#x2F;td&gt;&lt;td style=&quot;text-align: right&quot;&gt;0.40&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;quality&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;最大化&lt;&#x2F;td&gt;&lt;td style=&quot;text-align: right&quot;&gt;0.25&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;cost&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;最小化&lt;&#x2F;td&gt;&lt;td style=&quot;text-align: right&quot;&gt;0.20&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;code&gt;latency&lt;&#x2F;code&gt;&lt;&#x2F;td&gt;&lt;td&gt;最小化&lt;&#x2F;td&gt;&lt;td style=&quot;text-align: right&quot;&gt;0.15&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;单目标优化要求你把这些维度手动加权成一个分数——&lt;strong&gt;可权重怎么定？&lt;&#x2F;strong&gt; 不同任务类型可能需要不同权重。NSGA-II 的解法（&lt;code&gt;internal&#x2F;ares_evolution&#x2F;genome&#x2F;multi_objective.go&lt;&#x2F;code&gt;）是非支配排序 + 拥挤度距离：&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; Pareto 支配：a 在 &amp;gt;=1 维严格优于 b，且任何维不更差&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;func&lt;&#x2F;span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; ParetoDominance&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt;a&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #EBA0AC;font-style: italic;&quot;&gt; b&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; *&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;mutation&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Strategy&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;&#x2F;span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt; bool&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; ...&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; }&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;跑 NSGA-II 和单目标 GA 最大的区别是：&lt;strong&gt;不再有&quot;Best Score&quot;这回事了&lt;&#x2F;strong&gt;。你得到的是一条 Pareto 前沿——前沿上每个策略都是&quot;最优&quot;，只是最优在不同维度上。那四个权重只在&quot;需要一个标量分数来汇报&quot;时才用，选择本身完全跑在 Pareto 排序上。&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;这对产品经理可能是灾难（&quot;我到底用哪个？&quot;），但对工程师是诚实的：现实里的策略质量天然是多维的。强行压成一维，只是把复杂度藏起来。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h2 id=&quot;zui-shen-de-yi-ke-qi-shi-he-ga-wu-guan-yi-xing-mei-xie-de-chu-shi-hua&quot;&gt;最深的一课，其实和 GA 无关：一行没写的初始化&lt;&#x2F;h2&gt;
+&lt;p&gt;我本可以把这篇写成一个漂亮的成功故事。但那不真实。真实的是——&lt;strong&gt;我曾经基于错误数据，在博客里写下一个自信而错误的结论。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;p&gt;当时我对比两种模式：Non-Wired（89.47 分）和 Wired（62.50 分）。差距 26.97 分，结论斩钉截铁：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&quot;Wired 模式是 GA 的探索瓶颈。别用它。&quot;&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;我错了。不是分析草率，而是 &lt;code&gt;CreateWiredSystem&lt;&#x2F;code&gt;（&lt;code&gt;internal&#x2F;ares_evolution&#x2F;genome_wiring_system.go&lt;&#x2F;code&gt;）漏了一行初始化：&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;go&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; Before (buggy)：PromptTemplates 从没被赋值&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;wiredSystem&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; := &amp;amp;&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;WiredSystem&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;{&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Population&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span&gt; pop&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; Genealogy&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span&gt; genealogy&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; Generation&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span&gt; generation&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;    &#x2F;&#x2F; PromptTemplates: PromptPool  ← MISSING&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;&#x2F;&#x2F; After (fixed)：&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;wiredSystem&lt;&#x2F;span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; := &amp;amp;&lt;&#x2F;span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;WiredSystem&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;{&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    Population&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span&gt; pop&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; Genealogy&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span&gt; genealogy&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span&gt; Generation&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span&gt; generation&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    PromptTemplates&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;:&lt;&#x2F;span&gt;&lt;span&gt; PromptPool&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;&#x2F;span&gt;&lt;span style=&quot;color: #9399B2;font-style: italic;&quot;&gt;  &#x2F;&#x2F; ← 就这一行&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;就这一行。没有它，所有 prompt 模板映射都是空的，&lt;strong&gt;prompt 突变从未真正发生过&lt;&#x2F;strong&gt;。症状是残酷的：&lt;&#x2F;p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot;&gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Prompt mutations: 0 (0%)    ← 有 bug 的那次运行&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;Prompt mutations: 51 (17%)  ← 修复后&lt;&#x2F;span&gt;&lt;&#x2F;span&gt;&lt;&#x2F;code&gt;&lt;&#x2F;pre&gt;
+&lt;p&gt;修复之后，结论彻底翻转：&lt;&#x2F;p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;场景&lt;&#x2F;th&gt;&lt;th style=&quot;text-align: right&quot;&gt;旧（带 bug）&lt;&#x2F;th&gt;&lt;th style=&quot;text-align: right&quot;&gt;新（修复后）&lt;&#x2F;th&gt;&lt;&#x2F;tr&gt;&lt;&#x2F;thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;Non-Wired&lt;&#x2F;td&gt;&lt;td style=&quot;text-align: right&quot;&gt;89.47&lt;&#x2F;td&gt;&lt;td style=&quot;text-align: right&quot;&gt;&lt;strong&gt;79.41&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;tr&gt;&lt;td&gt;Wired（LLM final）&lt;&#x2F;td&gt;&lt;td style=&quot;text-align: right&quot;&gt;62.50&lt;&#x2F;td&gt;&lt;td style=&quot;text-align: right&quot;&gt;&lt;strong&gt;85.90&lt;&#x2F;strong&gt;&lt;&#x2F;td&gt;&lt;&#x2F;tr&gt;
+&lt;&#x2F;tbody&gt;&lt;&#x2F;table&gt;
+&lt;p&gt;那个 26.97 分的差距从来不存在。&lt;strong&gt;它是个幽灵——一个漏写字段的产物。&lt;&#x2F;strong&gt; 原来的结论&quot;Wired 是瓶颈&quot;完全反了：修复后 Wired 反而赢了 6.49 分。&lt;&#x2F;p&gt;
+&lt;p&gt;这一课我愿意公开写出来，因为它比任何 GA 理论都值钱：&lt;&#x2F;p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;当你的 A&#x2F;B 实验跑出一个让你意外的结果，第一个问题不该是&quot;架构哪里错了&quot;，而该是&quot;我的初始化路径对吗&quot;。你的数据，只和你的初始化路径一样可靠。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;h2 id=&quot;zhe-ge-jue-ce-qian-liao-shen-me-zhai&quot;&gt;这个决策欠了什么债&lt;&#x2F;h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;复杂度债&lt;&#x2F;strong&gt;：7 种选择 × 3 种交叉 × 4 种突变 × 多目标，引擎本身是头怪兽。新人上手成本极高。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;不确定性债&lt;&#x2F;strong&gt;：进化结果不保证可复现（虽然有确定性随机源，但选择&#x2F;突变的随机性仍在）。它适合&quot;探索策略空间&quot;，不适合&quot;我要一个确定答案&quot;。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;解释债&lt;&#x2F;strong&gt;：当没有单一&quot;最佳&quot;，你怎么向老板汇报&quot;Agent 现在用哪个策略&quot;？NSGA-II 逼你面对这个原本被单目标分数藏起来的问题。&lt;&#x2F;li&gt;
+&lt;li&gt;&lt;strong&gt;验证债&lt;&#x2F;strong&gt;（最贵的一笔）：只要对比双方有一方&quot;静默地少跑了一个组件&quot;，你的对比就毫无意义——无论其余数据多干净。&lt;&#x2F;li&gt;
+&lt;&#x2F;ul&gt;
+&lt;p&gt;但手调参数的债更贵：&lt;strong&gt;它假设你（或我）知道答案&lt;&#x2F;strong&gt;。而我越来越清楚，我不知道哪个 temperature &#x2F; top_k &#x2F; tool_selector 组合最好——尤其当任务分布随时间变化时。&lt;&#x2F;p&gt;
+&lt;h2 id=&quot;jie-lun&quot;&gt;结论&lt;&#x2F;h2&gt;
+&lt;blockquote&gt;
+&lt;p&gt;手调参数是你以为自己知道答案；遗传算法是你承认不知道，并让参数自己交配、自己淘汰。&lt;&#x2F;p&gt;
+&lt;&#x2F;blockquote&gt;
+&lt;p&gt;ARES 的 GA 哲学贯穿始终：&lt;strong&gt;别替用户做选择，给他们做选择的工具&lt;&#x2F;strong&gt;（&lt;code&gt;genome_wiring_system.go&lt;&#x2F;code&gt; 的 &lt;code&gt;WiredEvolutionSystem&lt;&#x2F;code&gt; 只负责把 10+ 组件接起来，不预设&quot;最佳配置&quot;）。你不会在引擎里找到&quot;最佳预设&quot;，只会找到 7 种选择、3 种交叉、可定制参数范围、可插拔打分函数——组合起来，能应付从&quot;快收敛&quot;到&quot;广探索&quot;到&quot;多目标权衡&quot;的几乎所有场景。&lt;&#x2F;p&gt;
+&lt;p&gt;这呼应 07「状态还是行为」：单亲繁殖是&quot;我只信当前最优&quot;；种群 + 交配是&quot;我承认当前最优可能是局部，所以要保留多样性等未来翻盘&quot;。也呼应 11「你跳过的测试」——那个 26.97 分的幽灵，本质就是一次没被验证的初始化假设。GA 不是&quot;参数调优工具&quot;，是&lt;strong&gt;策略生成器&lt;&#x2F;strong&gt;：它发现人类想不到的参数组合，持续适应变化的任务分布，并基于历史经验优化自己的进化方向。而它教我最狠的一课是——&lt;strong&gt;先怀疑自己的设置，再怀疑世界。&lt;&#x2F;strong&gt;&lt;&#x2F;p&gt;
+&lt;hr &#x2F;&gt;
+&lt;p&gt;&lt;em&gt;（系列此分支暂告一段落。从离开 Web3、在 Rust 里做内存工具、OmniScope 的拒绝与妥协，到代码评审的戏剧与 Agent 的进化——它们的主线始终是同一句话：&lt;strong&gt;谁拥有什么，以及如何看见那些被语言藏起来的所有权。&lt;&#x2F;strong&gt; 而贯穿全部的态度只有一个：&lt;strong&gt;承认自己不知道，然后造一个能看见的工具。&lt;&#x2F;strong&gt;）&lt;&#x2F;em&gt;&lt;&#x2F;p&gt;
+</description>
+      </item>
       <item>
           <title>GA Evolution System — When Strategies Learn to Mate</title>
           <pubDate>Sun, 28 Jun 2026 00:00:00 +0000</pubDate>
