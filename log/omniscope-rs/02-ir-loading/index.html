@@ -2,9 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>OmniScope Architecture Deep Dive (Part 2): IR Loading — 8 Ways to Wrestle with LLVM IR | Timwood0x10</title>
-    
-    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <title>OmniScope Architecture Deep Dive (Part 2): IR Loading — 8 Ways to Wrestle with LLVM IR | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
     <meta name="robots" content="noodp"/>
 
@@ -19,22 +17,15 @@
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
-    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
-
-
-    <meta name="description" content="How IR loading consumed 98% of analysis time in early OmniScope-rs, and why .bc and .ll files behave so differently at the LLVM layer.">
-
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="How IR loading consumed 98% of analysis time in early OmniScope-rs, and why .bc and .ll files behave so differently at the LLVM layer.">
     <meta property="og:description" content="How IR loading consumed 98% of analysis time in early OmniScope-rs, and why .bc and .ll files behave so differently at the LLVM layer.">
-    <meta property="og:title" content="OmniScope Architecture Deep Dive (Part 2): IR Loading — 8 Ways to Wrestle with LLVM IR | Timwood0x10">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/02-ir-loading/">
 
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:description" content="How IR loading consumed 98% of analysis time in early OmniScope-rs, and why .bc and .ll files behave so differently at the LLVM layer.">
-    <meta name="twitter:title" content="OmniScope Architecture Deep Dive (Part 2): IR Loading — 8 Ways to Wrestle with LLVM IR | Timwood0x10">
-    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
     <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/omniscope-rs/02-ir-loading/">
-
                 <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
                 <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
 
@@ -48,32 +39,27 @@
                 <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
                     <div class="logo">
                       
-                        
-<span class="terminal-prompt">
-  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
-  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
-  <span class="prompt-sep">&nbsp;</span>
-  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
-</span>
-
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
                       
                     </div>
                 </a>
             </div>
         </div>
 
-        
         <nav class="menu">
-            <ul class="menu__inner">
-                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
-            
-                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
-            
-                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
-            </ul>
-        </nav>
-    
-    
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
         
     </header>
     
@@ -82,27 +68,17 @@
         
 <div class="article-layout">
   <article class="post">
-    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/02-ir-loading/">OmniScope Architecture Deep Dive (Part 2): IR Loading — 8 Ways to Wrestle with LLVM IR</a></h1>
     <div class="post-meta-inline">
-        
-    <span class="post-date">
-            2026-06-22
-        </span>
-
+        <span class="post-date">2026-06-22</span>
     </div>
-
-    
-        <span class="post-tags-inline">
-                :: tags:&nbsp;
-                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
-                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
-                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/performance/">#Performance</a>&nbsp;
-                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
-    
-
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ffi/">#FFI</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llvm/">#LLVM</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/performance/">#Performance</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
     <div class="post-content">
-            <h1 id="omniscope-architecture-deep-dive-part-2-ir-loading-8-ways-to-wrestle-with-llvm-ir">OmniScope Architecture Deep Dive (Part 2): IR Loading — 8 Ways to Wrestle with LLVM IR</h1>
+        <h1 id="omniscope-architecture-deep-dive-part-2-ir-loading-8-ways-to-wrestle-with-llvm-ir">OmniScope Architecture Deep Dive (Part 2): IR Loading — 8 Ways to Wrestle with LLVM IR</h1>
 <blockquote>
 <p>If I had to find one word to describe the LLVM IR loading experience, it would be "Schrödinger's IR file."</p>
 <p>A <code>.ll</code> file, before you read it, is simultaneously likely to load successfully and also likely to have you chasing a core dump at 3 AM.</p>
@@ -113,7 +89,7 @@
 <p>I launched an analysis on a 20MB <code>.bc</code> file and waited three minutes without seeing results. <code>top</code> showed CPU at 100%, but the analyzer's progress bar was stuck on "Loading IR..."</p>
 <p>Wait — <strong>IR loading</strong> can take this long?</p>
 <p>I wrote a simple benchmark:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>.bc file (bitcode):      30s total analysis time → loading took ~29.4s  (98%)</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>.bc file (bitcode):      30s total analysis time → loading took ~29.4s  (98%)</span></span>
 <span class="giallo-l"><span>.ll file (text IR):      30s total analysis time → loading took  ~0.1s  (0.3%)</span></span></code></pre>
 <p><strong>98% of the time was spent on IR loading alone.</strong></p>
 <p>Even more absurd — <code>.ll</code> and <code>.bc</code> contain exactly the same information, just serialized in different formats. One is 300x faster, the other is slow enough to make you question your life choices.</p>
@@ -131,13 +107,13 @@
 <h2 id="llvm-ir-format-evolution-from-typed-to-opaque">LLVM IR Format Evolution: From Typed to Opaque</h2>
 <p>LLVM IR has a trap I repeatedly fell into during development — how pointer types are represented.</p>
 <p>Before LLVM 15, IR used <strong>typed pointers</strong>. Every pointer annotated the type it points to. For example:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="llvm"><span class="giallo-l"><span style="color: #CBA6F7;">define void</span><span style="color: #89B4FA;font-style: italic;"> @foo</span><span>(</span><span style="color: #CBA6F7;">i32*</span><span> %ptr) {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="llvm"><span class="giallo-l"><span style="color: #CBA6F7;">define void</span><span style="color: #89B4FA;font-style: italic;"> @foo</span><span>(</span><span style="color: #CBA6F7;">i32*</span><span> %ptr) {</span></span>
 <span class="giallo-l"><span>  %val = </span><span style="color: #CBA6F7;">load i32</span><span>, </span><span style="color: #CBA6F7;">i32*</span><span> %ptr</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">  ret void</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
 <p><code>i32*</code> explicitly tells the compiler: this pointer points to a 32-bit integer.</p>
 <p>But starting with <strong>LLVM 15</strong>, LLVM mandates <strong>opaque pointers</strong>. Pointers no longer carry type information:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="llvm"><span class="giallo-l"><span style="color: #CBA6F7;">define void</span><span style="color: #89B4FA;font-style: italic;"> @foo</span><span>(ptr %ptr) {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="llvm"><span class="giallo-l"><span style="color: #CBA6F7;">define void</span><span style="color: #89B4FA;font-style: italic;"> @foo</span><span>(ptr %ptr) {</span></span>
 <span class="giallo-l"><span>  %val = </span><span style="color: #CBA6F7;">load i32</span><span>, ptr %ptr</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">  ret void</span></span>
 <span class="giallo-l"><span>}</span></span></code></pre>
@@ -149,7 +125,7 @@
 </ol>
 <h2 id="ir-model-rs-core-ir-data-structures">ir_model.rs: Core IR Data Structures</h2>
 <p>Below the IR loading layer lies the data model defined in <code>crates/omniscope-ir/src/ir_model.rs</code>. All of OmniScope's core IR data structures reside here:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// File: crates/omniscope-ir/src/ir_model.rs</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// File: crates/omniscope-ir/src/ir_model.rs</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> IRModuleModel</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> module_name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> target_triple</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
@@ -161,7 +137,7 @@
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p>This is the final output format for all loading paths, and the input for subsequent analysis (dataflow, ownership inference).</p>
 <p><strong>Function definition</strong> <code>IRFunction</code>:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> IRFunction</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> IRFunction</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> return_type</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> params</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
@@ -173,12 +149,12 @@
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> gc</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p><strong>Basic block</strong> <code>IRBasicBlock</code>:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> IRBasicBlock</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> IRBasicBlock</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> label</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> instructions</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">IRInstructionModel</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p><strong>Instruction</strong> <code>IRInstructionModel</code>:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> IRInstructionModel</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> IRInstructionModel</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> opcode</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> result</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> operands</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
@@ -193,7 +169,7 @@
 <li><code>instruction_type</code> is <code>Option&lt;String&gt;</code> — not all instructions have types (e.g., <code>store</code>)</li>
 </ul>
 <p>Supports both JSON and MessagePack serialization:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> load_from_json</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">path</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Path</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">IRModuleModel</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> load_from_json</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">path</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Path</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">IRModuleModel</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> file</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> File</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">open</span><span style="color: #9399B2;">(</span><span>path</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> reader</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> BufReader</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">);</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> model</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> IRModuleModel</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> serde_json</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from_reader</span><span style="color: #9399B2;">(</span><span>reader</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
@@ -204,45 +180,45 @@
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> data</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">fs</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">read</span><span style="color: #9399B2;">(</span><span>path</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> model</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> IRModuleModel</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> rmp_serde</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from_slice</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>data</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(</span><span>model</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>classDiagram</span></span>
-<span class="giallo-l"><span>    class IRModuleModel {</span></span>
-<span class="giallo-l"><span>        +String module_name</span></span>
-<span class="giallo-l"><span>        +Option~String~ target_triple</span></span>
-<span class="giallo-l"><span>        +Option~String~ source_filename</span></span>
-<span class="giallo-l"><span>        +Option~String~ data_layout</span></span>
-<span class="giallo-l"><span>        +Vec~IRFunction~ functions</span></span>
-<span class="giallo-l"><span>        +Vec~IRDeclaration~ declarations</span></span>
-<span class="giallo-l"><span>        +Vec~IRGlobalVariable~ global_variables</span></span>
-<span class="giallo-l"><span>    }</span></span>
-<span class="giallo-l"><span>    class IRFunction {</span></span>
-<span class="giallo-l"><span>        +String name</span></span>
-<span class="giallo-l"><span>        +Option~String~ return_type</span></span>
-<span class="giallo-l"><span>        +Vec~String~ params</span></span>
-<span class="giallo-l"><span>        +Vec~IRBasicBlock~ basic_blocks</span></span>
-<span class="giallo-l"><span>        +Vec~String~ attributes</span></span>
-<span class="giallo-l"><span>    }</span></span>
-<span class="giallo-l"><span>    class IRBasicBlock {</span></span>
-<span class="giallo-l"><span>        +Option~String~ label</span></span>
-<span class="giallo-l"><span>        +Vec~IRInstructionModel~ instructions</span></span>
-<span class="giallo-l"><span>    }</span></span>
-<span class="giallo-l"><span>    class IRInstructionModel {</span></span>
-<span class="giallo-l"><span>        +String opcode</span></span>
-<span class="giallo-l"><span>        +Option~String~ result</span></span>
-<span class="giallo-l"><span>        +Vec~String~ operands</span></span>
-<span class="giallo-l"><span>        +Option~String~ instruction_type</span></span>
-<span class="giallo-l"><span>        +HashMap~String, String~ metadata</span></span>
-<span class="giallo-l"><span>        +Option~DebugInfo~ debug_info</span></span>
-<span class="giallo-l"><span>    }</span></span>
-<span class="giallo-l"><span>    class IRGlobalVariable { +String name +String initializer +u64 alignment }</span></span>
-<span class="giallo-l"><span>    class IRDeclaration { +String name +String return_type +Vec~String~ param_types }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">classDiagram</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span style="color: #F9E2AF;font-style: italic;"> IRModuleModel</span><span style="color: #CBA6F7;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +String</span><span> module_name</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Option</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">String</span><span style="color: #89DCEB;">~</span><span> target_triple</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Option</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">String</span><span style="color: #89DCEB;">~</span><span> source_filename</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Option</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">String</span><span style="color: #89DCEB;">~</span><span> data_layout</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Vec</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">IRFunction</span><span style="color: #89DCEB;">~</span><span> functions</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Vec</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">IRDeclaration</span><span style="color: #89DCEB;">~</span><span> declarations</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Vec</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">IRGlobalVariable</span><span style="color: #89DCEB;">~</span><span> global_variables</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span style="color: #F9E2AF;font-style: italic;"> IRFunction</span><span style="color: #CBA6F7;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +String</span><span> name</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Option</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">String</span><span style="color: #89DCEB;">~</span><span> return_type</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Vec</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">String</span><span style="color: #89DCEB;">~</span><span> params</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Vec</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">IRBasicBlock</span><span style="color: #89DCEB;">~</span><span> basic_blocks</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Vec</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">String</span><span style="color: #89DCEB;">~</span><span> attributes</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span style="color: #F9E2AF;font-style: italic;"> IRBasicBlock</span><span style="color: #CBA6F7;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Option</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">String</span><span style="color: #89DCEB;">~</span><span> label</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Vec</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">IRInstructionModel</span><span style="color: #89DCEB;">~</span><span> instructions</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span style="color: #F9E2AF;font-style: italic;"> IRInstructionModel</span><span style="color: #CBA6F7;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +String</span><span> opcode</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Option</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">String</span><span style="color: #89DCEB;">~</span><span> result</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Vec</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">String</span><span style="color: #89DCEB;">~</span><span> operands</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Option</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">String</span><span style="color: #89DCEB;">~</span><span> instruction_type</span></span>
+<span class="giallo-l"><span>        +HashMap~String,</span><span style="color: #CBA6F7;"> String</span><span style="color: #89DCEB;">~</span><span> metadata</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +Option</span><span style="color: #89DCEB;">~</span><span style="color: #CBA6F7;">DebugInfo</span><span style="color: #89DCEB;">~</span><span> debug_info</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span style="color: #F9E2AF;font-style: italic;"> IRGlobalVariable</span><span style="color: #CBA6F7;"> {</span><span> +String name +String initializer +u64 alignment </span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span style="color: #F9E2AF;font-style: italic;"> IRDeclaration</span><span style="color: #CBA6F7;"> {</span><span> +String name +String return_type +Vec~String~ param_types </span><span style="color: #CBA6F7;">}</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span>    IRModuleModel *-- IRFunction</span></span>
-<span class="giallo-l"><span>    IRModuleModel *-- IRDeclaration</span></span>
-<span class="giallo-l"><span>    IRModuleModel *-- IRGlobalVariable</span></span>
-<span class="giallo-l"><span>    IRFunction *-- IRBasicBlock</span></span>
-<span class="giallo-l"><span>    IRBasicBlock *-- IRInstructionModel</span></span></code></pre><h2 id="llvm-sys-adapter-rs-calling-llvm-c-api-from-rust">llvm_sys_adapter.rs: Calling LLVM C API from Rust</h2>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    IRModuleModel</span><span style="color: #CBA6F7;"> *--</span><span style="color: #F9E2AF;font-style: italic;"> IRFunction</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    IRModuleModel</span><span style="color: #CBA6F7;"> *--</span><span style="color: #F9E2AF;font-style: italic;"> IRDeclaration</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    IRModuleModel</span><span style="color: #CBA6F7;"> *--</span><span style="color: #F9E2AF;font-style: italic;"> IRGlobalVariable</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    IRFunction</span><span style="color: #CBA6F7;"> *--</span><span style="color: #F9E2AF;font-style: italic;"> IRBasicBlock</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    IRBasicBlock</span><span style="color: #CBA6F7;"> *--</span><span style="color: #F9E2AF;font-style: italic;"> IRInstructionModel</span></span></code></pre><h2 id="llvm-sys-adapter-rs-calling-llvm-c-api-from-rust">llvm_sys_adapter.rs: Calling LLVM C API from Rust</h2>
 <p>When the most complete type information is needed, the text parser isn't enough. You can use the <code>llvm-sys</code> path — through <code>crates/omniscope-ir/src/llvm_sys_adapter.rs</code>, directly calling the LLVM C API:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// RAII wrapper for LLVM C API context management.</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// RAII wrapper for LLVM C API context management.</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// crates/omniscope-ir/src/llvm_sys_adapter.rs</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> ContextGuard</span><span style="color: #9399B2;"> {</span><span> _private</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> () }</span></span>
 <span class="giallo-l"></span>
@@ -256,7 +232,7 @@
 <span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span><span style="color: #CBA6F7;"> unsafe</span><span style="color: #9399B2;"> {</span><span style="color: #89B4FA;font-style: italic;"> LLVMShutdown</span><span style="color: #9399B2;">(); } }</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p><code>ContextGuard</code> ensures the LLVM context is properly initialized and destroyed within Rust's lifetime. <code>ModuleGuard</code> automatically frees the LLVM Module on Drop:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> ModuleGuard</span><span style="color: #9399B2;"> {</span><span> module</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> LLVMModuleRef</span><span style="color: #9399B2;"> }</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> ModuleGuard</span><span style="color: #9399B2;"> {</span><span> module</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> LLVMModuleRef</span><span style="color: #9399B2;"> }</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> ModuleGuard</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub fn</span><span style="color: #89B4FA;font-style: italic;"> parse_ir</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">path</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F38BA8;">Self</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
@@ -300,7 +276,7 @@
 </blockquote>
 <p>The solution isn't finding a single "best loading method" — it's providing <strong>a complete set of loading strategies that back each other up.</strong></p>
 <p>I ultimately designed <strong>8 LoadStrategies</strong> (defined in <code>crates/omniscope-ir/src/loader_v2.rs</code>, lines 60-95):</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">#</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">derive</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Debug</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Clone</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Copy</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> PartialEq</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Eq</span><span style="color: #9399B2;">)]</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">#</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">derive</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Debug</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Clone</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Copy</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> PartialEq</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Eq</span><span style="color: #9399B2;">)]</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> LoadStrategy</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DirectCppFfi</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">    // ir_extractor + --slice=ffi, most precise FFI IR</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    DirectCpp</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">       // ir_extractor, full IR without depending on opt</span></span>
@@ -311,7 +287,7 @@
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Auto</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">            // Auto-detect best strategy</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    AutoFast</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;">        // Default strategy, .ll priority</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="auto-autofast-automatic-degradation-chain">Auto / AutoFast: Automatic Degradation Chain</h2>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// crates/omniscope-ir/src/loader_v2.rs</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// crates/omniscope-ir/src/loader_v2.rs</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Probe backends in priority order and fall back gracefully.</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> load_auto</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">path</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Path</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">IRModule</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> LoadStrategy</span><span style="color: #9399B2;">)</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Priority: DirectCppFfi &gt; DirectCpp &gt; llvm-sys &gt; cpp pass &gt; text parser</span></span>
@@ -327,33 +303,33 @@
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">((</span><span>module</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> TextParser</span><span style="color: #9399B2;">))</span><span style="color: #9399B2;font-style: italic;"> // TextParser as ultimate fallback</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p><strong>AutoFast</strong> is the default strategy: <code>.ll</code> files use TextParser first (instantaneous), <code>.bc</code> follows the normal Auto degradation chain. For large <code>.ll</code> files (&gt;10MB), it directly takes the TextParser fast path, avoiding the overhead of probing external tools first.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Input file] --&gt; B{Is .ll?}</span></span>
-<span class="giallo-l"><span>    B --&gt;|Yes| C[TextParser]</span></span>
-<span class="giallo-l"><span>    C --&gt; D{Success?}</span></span>
-<span class="giallo-l"><span>    D --&gt;|Yes| E[Return IRModule]</span></span>
-<span class="giallo-l"><span>    D --&gt;|No| F[Auto degradation chain]</span></span>
-<span class="giallo-l"><span>    B --&gt;|No .bc/other| F</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Input file</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">Is .ll?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Yes</span><span style="color: #CBA6F7;">|</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">TextParser</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">Success?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Yes</span><span style="color: #CBA6F7;">|</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Return IRModule</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">No</span><span style="color: #CBA6F7;">|</span><span> F</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Auto degradation chain</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">No .bc/other</span><span style="color: #CBA6F7;">|</span><span> F</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph AutoChain[&quot;Auto Degradation Chain&quot;]</span></span>
-<span class="giallo-l"><span>        I[DirectCppFfi] --&gt; J{Success?}</span></span>
-<span class="giallo-l"><span>        J --&gt;|Yes| K[Return]</span></span>
-<span class="giallo-l"><span>        J --&gt;|No| L[DirectCpp]</span></span>
-<span class="giallo-l"><span>        L --&gt; M{Success?}</span></span>
-<span class="giallo-l"><span>        M --&gt;|Yes| N[Return]</span></span>
-<span class="giallo-l"><span>        M --&gt;|No| O[LlvmSys]</span></span>
-<span class="giallo-l"><span>        O --&gt; P{Success?}</span></span>
-<span class="giallo-l"><span>        P --&gt;|Yes| Q[Return]</span></span>
-<span class="giallo-l"><span>        P --&gt;|No| R[CppPass]</span></span>
-<span class="giallo-l"><span>        R --&gt; S{Success?}</span></span>
-<span class="giallo-l"><span>        S --&gt;|Yes| T[Return]</span></span>
-<span class="giallo-l"><span>        S --&gt;|No| U[TextParser fallback]</span></span>
-<span class="giallo-l"><span>    end</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> AutoChain</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Auto Degradation Chain&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        I</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">DirectCppFfi</span><span style="color: #CBA6F7;">] --&gt;</span><span> J</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">Success?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>        J </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Yes</span><span style="color: #CBA6F7;">|</span><span> K</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Return</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        J </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">No</span><span style="color: #CBA6F7;">|</span><span> L</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">DirectCpp</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L </span><span style="color: #CBA6F7;">--&gt;</span><span> M</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">Success?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>        M </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Yes</span><span style="color: #CBA6F7;">|</span><span> N</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Return</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        M </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">No</span><span style="color: #CBA6F7;">|</span><span> O</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">LlvmSys</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        O </span><span style="color: #CBA6F7;">--&gt;</span><span> P</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">Success?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>        P </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Yes</span><span style="color: #CBA6F7;">|</span><span> Q</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Return</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        P </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">No</span><span style="color: #CBA6F7;">|</span><span> R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">CppPass</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        R </span><span style="color: #CBA6F7;">--&gt;</span><span> S</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">Success?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>        S </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Yes</span><span style="color: #CBA6F7;">|</span><span> T</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Return</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        S </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">No</span><span style="color: #CBA6F7;">|</span><span> U</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">TextParser fallback</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span>    F --&gt; I</span></span>
-<span class="giallo-l"><span>    U --&gt; V[Always return or error]</span></span></code></pre><h2 id="main-entry-point-load-ir">Main Entry Point: load_ir()</h2>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;</span><span> I</span></span>
+<span class="giallo-l"><span>    U </span><span style="color: #CBA6F7;">--&gt;</span><span> V</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Always return or error</span><span style="color: #CBA6F7;">]</span></span></code></pre><h2 id="main-entry-point-load-ir">Main Entry Point: load_ir()</h2>
 <p>All strategies are exposed to upper layers through a unified entry point:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// crates/omniscope-ir/src/loader_v2.rs</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// crates/omniscope-ir/src/loader_v2.rs</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Primary entry point for CLI and pipeline.</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> load_ir</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">path</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Path</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> strategy</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> LoadStrategy</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">LoadedIr</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #94E2D5;"> !</span><span>path</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">exists</span><span style="color: #9399B2;">() {</span></span>
@@ -376,9 +352,9 @@
 <p>The <code>LoadedIr</code> struct not only returns the load result, but also includes <code>actual_strategy</code> (the strategy actually used — because Auto performs degradation) and <code>load_ms</code> (loading time in milliseconds).</p>
 <h2 id="llvm-version-search-from-12-to-22">LLVM Version Search: From 12 to 22</h2>
 <p>The project's early <code>BUILD_ENV.md</code> said "Please install LLVM 12 (<code>llvm@12</code>)." Now in <code>crates/omniscope-ir/Cargo.toml</code>:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span>llvm-sys</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;221&quot;</span><span style="color: #9399B2;font-style: italic;">  # LLVM 22</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="toml"><span class="giallo-l"><span>llvm-sys</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;221&quot;</span><span style="color: #9399B2;font-style: italic;">  # LLVM 22</span></span></code></pre>
 <p>Five years, 10 major versions — each with mutually incompatible LLVM APIs. <code>find_opt()</code> probes from LLVM 22 down to LLVM 17:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// crates/omniscope-ir/src/loader_v2.rs</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// crates/omniscope-ir/src/loader_v2.rs</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Return common Homebrew LLVM bin directories (newest version first).</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> homebrew_llvm_bin_dirs</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">PathBuf</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">    [</span></span>
@@ -390,22 +366,22 @@
 <span class="giallo-l"><span style="color: #A6E3A1;">        &quot;/opt/homebrew/opt/llvm@17/bin&quot;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #A6E3A1;">        &quot;/opt/homebrew/opt/llvm/bin&quot;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">    ]</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">iter</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">PathBuf</span><span style="color: #94E2D5;">::</span><span>from</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">collect</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="mermaid"><span class="giallo-l"><span>flowchart TD</span></span>
-<span class="giallo-l"><span>    A[Find opt binary] --&gt; B{LLVM_OPT env var?}</span></span>
-<span class="giallo-l"><span>    B --&gt;|Set| C[Use directly]</span></span>
-<span class="giallo-l"><span>    B --&gt;|Unset| D{llvm@22?}</span></span>
-<span class="giallo-l"><span>    D --&gt;|Found| E[Use llvm@22]</span></span>
-<span class="giallo-l"><span>    D --&gt;|Not found| F{llvm@21?}</span></span>
-<span class="giallo-l"><span>    F --&gt;|Found| G[Use llvm@21]</span></span>
-<span class="giallo-l"><span>    F --&gt;|Not found| H{llvm@20..17?}</span></span>
-<span class="giallo-l"><span>    H --&gt;|Found| I[Use corresponding version]</span></span>
-<span class="giallo-l"><span>    H --&gt;|Not found| J{llvm-config?}</span></span>
-<span class="giallo-l"><span>    J --&gt;|Found| K[Use llvm-config path]</span></span>
-<span class="giallo-l"><span>    J --&gt;|Not found| L{which opt?}</span></span>
-<span class="giallo-l"><span>    L --&gt;|Found| M[Use opt from PATH]</span></span>
-<span class="giallo-l"><span>    L --&gt;|Not found| N[Return None]</span></span></code></pre><h2 id="instruction-parser-rs-instruction-level-parsing">instruction_parser.rs: Instruction-Level Parsing</h2>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Find opt binary</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">LLVM_OPT env var?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Set</span><span style="color: #CBA6F7;">|</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Use directly</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Unset</span><span style="color: #CBA6F7;">|</span><span> D</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">llvm</span><span>@</span><span style="color: #A6E3A1;">22?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Found</span><span style="color: #CBA6F7;">|</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Use llvm</span><span>@</span><span style="color: #A6E3A1;">22</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Not found</span><span style="color: #CBA6F7;">|</span><span> F</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">llvm</span><span>@</span><span style="color: #A6E3A1;">21?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Found</span><span style="color: #CBA6F7;">|</span><span> G</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Use llvm</span><span>@</span><span style="color: #A6E3A1;">21</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Not found</span><span style="color: #CBA6F7;">|</span><span> H</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">llvm</span><span>@</span><span style="color: #A6E3A1;">20..17?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    H </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Found</span><span style="color: #CBA6F7;">|</span><span> I</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Use corresponding version</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    H </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Not found</span><span style="color: #CBA6F7;">|</span><span> J</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">llvm</span><span>-</span><span style="color: #A6E3A1;">config?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    J </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Found</span><span style="color: #CBA6F7;">|</span><span> K</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Use llvm</span><span>-</span><span style="color: #A6E3A1;">config path</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    J </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Not found</span><span style="color: #CBA6F7;">|</span><span> L</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">which opt?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    L </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Found</span><span style="color: #CBA6F7;">|</span><span> M</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Use opt from PATH</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    L </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Not found</span><span style="color: #CBA6F7;">|</span><span> N</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Return None</span><span style="color: #CBA6F7;">]</span></span></code></pre><h2 id="instruction-parser-rs-instruction-level-parsing">instruction_parser.rs: Instruction-Level Parsing</h2>
 <p>After TextParser loading, instructions also require additional parsing for dataflow analysis. <code>crates/omniscope-ir/src/instruction_parser.rs</code> provides best-effort instruction classification:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Best-effort instruction classification for LLVM IR.</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Best-effort instruction classification for LLVM IR.</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> classify_instruction</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">opcode</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> operands</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">])</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span> opcode</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #A6E3A1;">        &quot;call&quot;</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> InstructionKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Call</span><span style="color: #9399B2;">,</span></span>
@@ -423,7 +399,7 @@
 <span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p>It also includes callee extraction and atomic operation detection:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> extract_callee</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">operands</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">])</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> extract_callee</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">operands</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">])</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span>    operands</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">first</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">map</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>s</span><span style="color: #94E2D5;">|</span><span> s</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">trim_start_matches</span><span style="color: #9399B2;">(&#39;</span><span style="color: #A6E3A1;">@</span><span style="color: #9399B2;">&#39;))</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span>
 <span class="giallo-l"></span>
@@ -433,7 +409,7 @@
 <p>This parser classifies about 15 instruction categories, covering the core instructions needed for dataflow analysis and ownership inference. It is <strong>best-effort</strong> — unrecognized instruction formats are tagged as <code>Other</code> and do not cause the entire load to fail.</p>
 <h2 id="ir-cache-system">IR Cache System</h2>
 <p>Each C++ pass or ir_extractor invocation involves process startup, LLVM initialization, and JSON serialization — potentially 5-10 seconds. <code>crates/omniscope-ir/src/ir_cache.rs</code> provides file-fingerprint caching:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// crates/omniscope-ir/src/ir_cache.rs</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// crates/omniscope-ir/src/ir_cache.rs</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Compute cache key based on file identity (size + mtime + xxh3).</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> cache_key</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">path</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">Path</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> meta</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">fs</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">metadata</span><span style="color: #9399B2;">(</span><span>path</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">ok</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
@@ -448,7 +424,7 @@
 <p>Cache storage path: <code>{cache_dir}/ir/{fingerprint}.json</code>. When files are modified, mtime changes and the cache is automatically invalidated. If the loading strategy is upgraded (e.g., from text parser to DirectCpp), the cache is also automatically invalidated.</p>
 <h2 id="moduleindex-pre-computed-function-metadata">ModuleIndex: Pre-Computed Function Metadata</h2>
 <p>After loading IR, all passes need to frequently query function information. Traversing the IR structure each time is too slow, so <code>crates/omniscope-pass/src/module_index.rs</code> provides a pre-computed index:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Pre-computed index over function metadata for fast pass access.</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Pre-computed index over function metadata for fast pass access.</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> ModuleIndex</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> functions</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">CachedFunctionMeta</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span>
@@ -473,18 +449,18 @@
 <p>ModuleIndex construction is a one-time cost, shared by all subsequent passes. Language detection (Language enum) is done through function name pattern matching, while FFI boundary classification combines boundary definitions from <code>omniscope.toml</code>.</p>
 <h2 id="source-location-mapping-irlocation-resolution">Source Location Mapping: IRLocation Resolution</h2>
 <p>Analysis results must map back to source locations to produce meaningful reports. <code>crates/omniscope-ir/src/location.rs</code> defines:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> SourceLocation</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> SourceLocation</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> file</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> line</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> column</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u32</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    pub</span><span> function</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p>This struct is populated by parsing LLVM IR's debug metadata through logic in <code>crates/omniscope-ir/src/parser.rs</code>:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="llvm"><span class="giallo-l"><span style="color: #CBA6F7;">define void</span><span style="color: #89B4FA;font-style: italic;"> @foo</span><span>() !dbg !</span><span style="color: #FAB387;">5</span><span> { </span><span style="color: #CBA6F7;">ret void</span><span> }</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="llvm"><span class="giallo-l"><span style="color: #CBA6F7;">define void</span><span style="color: #89B4FA;font-style: italic;"> @foo</span><span>() !dbg !</span><span style="color: #FAB387;">5</span><span> { </span><span style="color: #CBA6F7;">ret void</span><span> }</span></span>
 <span class="giallo-l"><span>!5 = !</span><span style="color: #CBA6F7;">DILocation</span><span>(line:</span><span style="color: #FAB387;"> 12</span><span>, column:</span><span style="color: #FAB387;"> 5</span><span>, scope: !6)</span></span>
 <span class="giallo-l"><span>!6 = !</span><span style="color: #CBA6F7;">DIFile</span><span>(filename:</span><span style="color: #A6E3A1;"> &quot;main</span><span style="color: #F5C2E7;">.</span><span style="color: #A6E3A1;">cpp&quot;</span><span>, directory:</span><span style="color: #A6E3A1;"> &quot;/home/user/project&quot;</span><span>)</span></span></code></pre>
 <p>The parsing logic in parser.rs:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Parse DILocation metadata from LLVM IR debug info.</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Parse DILocation metadata from LLVM IR debug info.</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> parse_dilocation</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">line</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Option</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">SourceLocation</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> line_val</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> extract_named_value</span><span style="color: #9399B2;">(</span><span>line</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;line&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?.</span><span style="color: #89B4FA;font-style: italic;">parse</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">ok</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> col_val</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> extract_named_value</span><span style="color: #9399B2;">(</span><span>line</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;column&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?.</span><span style="color: #89B4FA;font-style: italic;">parse</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">ok</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
@@ -493,7 +469,7 @@
 <p>Every call instruction with debug info maps back to source file line and column numbers. This means analysis results show you <code>main.cpp:42</code> instead of <code>@some_obscure_ir_name</code>.</p>
 <h2 id="memory-pool-rs-low-level-memory-allocation-infrastructure">memory_pool.rs: Low-Level Memory Allocation Infrastructure</h2>
 <p>IR loading involves a large number of small object allocations and deallocations. <code>crates/omniscope-core/src/memory_pool.rs</code> provides an arena allocator:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Arena-based bump allocator for high-throughput IR loading.</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// Arena-based bump allocator for high-throughput IR loading.</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> bumpalo</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Bump</span><span style="color: #9399B2;">;</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">cell</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">UnsafeCell</span><span style="color: #9399B2;">;</span></span>
 <span class="giallo-l"></span>
@@ -523,7 +499,7 @@
 <p>In IR loading scenarios, the text parser produces thousands of small objects (<code>IRFunction</code>, <code>IRBasicBlock</code>, <code>IRInstructionModel</code>) that are directly allocated via the arena, avoiding memory fragmentation.</p>
 <h2 id="platform-filters-toml-edge-case-handling">platform_filters.toml: Edge Case Handling</h2>
 <p>After IR loading completes, the analysis system needs to distinguish between "safe library calls" and "suspicious user code." The project root's <code>platform_filters.toml</code> defines platform-specific safe API lists:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>macos</span><span style="color: #9399B2;">]</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[</span><span>macos</span><span style="color: #9399B2;">]</span></span>
 <span class="giallo-l"><span>safe_functions</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span></span>
 <span class="giallo-l"><span style="color: #A6E3A1;">    &quot;malloc&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;free&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;calloc&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;realloc&quot;</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #A6E3A1;">    &quot;mmap&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;munmap&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;shm_open&quot;</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;shm_unlink&quot;</span><span style="color: #9399B2;">,</span></span>
@@ -602,9 +578,7 @@
 <p><em>Previous: <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/02-ir-loading/./01-why-omniscope.md">Why OmniScope — Call Graphs, State Machines, Semantic Trees</a></em>
 <em>Next: <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/02-ir-loading/./03-noise-reduction.md">Noise Reduction — An Epic Optimization from 5,098 to ~45</a></em></p>
 
-        </div>
-
-    
+    </div>
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -612,23 +586,16 @@
                 </div>
                 <div class="pagination__buttons">
                         <span class="button previous">
-                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/03-noise-reduction/">
-                                <span class="button__icon">&#8592;</span>&nbsp;
-                                <span class="button__text">OmniScope Architecture Deep Dive (Part 3): Noise Reduction — An Epic Optimization from 5,098 to ~45</span>
-                            </a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/03-noise-reduction/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">OmniScope Architecture Deep Dive (Part 3): Noise Reduction — An Epic Optimization from 5,098 to ~45</span></a>
                         </span>
                     
                     
                         <span class="button next">
-                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/01-why-omniscope/">
-                                <span class="button__text">Why OmniScope — Cross-language FFI Safety Analysis: Call Graphs, State Machines, Semantic Trees, This Combo Took Two Years</span>&nbsp;
-                                <span class="button__icon">&#8594;</span>
-                            </a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/omniscope-rs/01-why-omniscope/"><span class="button__text">Why OmniScope — Cross-language FFI Safety Analysis: Call Graphs, State Machines, Semantic Trees, This Combo Took Two Years</span>&nbsp;<span class="button__icon">&#8594;</span></a>
                         </span>
                     </div>
             </div>
-        
-  </article>
+        </article>
   <aside class="toc-sidebar" id="toc">
     <div class="toc-sticky">
       <div class="toc-label">Contents</div>
@@ -643,9 +610,7 @@
     <footer class="footer">
         <div class="footer__inner">
                 <div class="copyright">
-                        <span>&copy; 
-    2026
- Tim Wood</span>
+                        <span>&copy; 2026 Tim Wood</span>
                     <span class="copyright-theme">
                         <span class="copyright-theme-sep">:: </span>
                         terminal-zen

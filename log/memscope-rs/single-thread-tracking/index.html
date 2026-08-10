@@ -2,9 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>Single-Thread Tracking: From GlobalAlloc to Rust-Level Memory Semantics | Timwood0x10</title>
-    
-    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <title>Single-Thread Tracking: From GlobalAlloc to Rust-Level Memory Semantics | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
     <meta name="robots" content="noodp"/>
 
@@ -19,22 +17,15 @@
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
-    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css">
-
-
-    <meta name="description" content="How memscope-rs combines GlobalAlloc runtime tracking with Rust-level semantic metadata for single-thread memory analysis.">
-
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="How memscope-rs combines GlobalAlloc runtime tracking with Rust-level semantic metadata for single-thread memory analysis.">
     <meta property="og:description" content="How memscope-rs combines GlobalAlloc runtime tracking with Rust-level semantic metadata for single-thread memory analysis.">
-    <meta property="og:title" content="Single-Thread Tracking: From GlobalAlloc to Rust-Level Memory Semantics | Timwood0x10">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/memscope-rs/single-thread-tracking/">
 
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:description" content="How memscope-rs combines GlobalAlloc runtime tracking with Rust-level semantic metadata for single-thread memory analysis.">
-    <meta name="twitter:title" content="Single-Thread Tracking: From GlobalAlloc to Rust-Level Memory Semantics | Timwood0x10">
-    <meta property="twitter:domain" content="Timwood0x10.github.io&#x2F;myblog">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
     <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/memscope-rs/single-thread-tracking/">
-
                 <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
                 <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
 
@@ -48,32 +39,27 @@
                 <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
                     <div class="logo">
                       
-                        
-<span class="terminal-prompt">
-  <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
-  <span class="prompt-colon">:</span><span class="prompt-path">~</span>
-  <span class="prompt-sep">&nbsp;</span>
-  <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
-</span>
-
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
                       
                     </div>
                 </a>
             </div>
         </div>
 
-        
         <nav class="menu">
-            <ul class="menu__inner">
-                <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
-            
-                <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
-            
-                <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
-            </ul>
-        </nav>
-    
-    
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
         
     </header>
     
@@ -82,26 +68,16 @@
         
 <div class="article-layout">
   <article class="post">
-    
     <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/single-thread-tracking/">Single-Thread Tracking: From GlobalAlloc to Rust-Level Memory Semantics</a></h1>
     <div class="post-meta-inline">
-        
-    <span class="post-date">
-            2026-05-20
-        </span>
-
+        <span class="post-date">2026-05-20</span>
     </div>
-
-    
-        <span class="post-tags-inline">
-                :: tags:&nbsp;
-                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory/">#Memory</a>&nbsp;
-                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
-                <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memscope-rs/">#memscope-rs</a></span>
-    
-
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory/">#Memory</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memscope-rs/">#memscope-rs</a></span>
     <div class="post-content">
-            <h1 id="single-thread-tracking-from-globalalloc-to-rust-level-memory-semantics">Single-Thread Tracking: From <code>GlobalAlloc</code> to Rust-Level Memory Semantics</h1>
+        <h1 id="single-thread-tracking-from-globalalloc-to-rust-level-memory-semantics">Single-Thread Tracking: From <code>GlobalAlloc</code> to Rust-Level Memory Semantics</h1>
 <p>Rust gives us strong memory safety guarantees, but memory safety does not automatically mean memory behavior is transparent.</p>
 <p>In real Rust applications, developers still need answers to questions like:</p>
 <ul>
@@ -123,27 +99,25 @@
 <li><code>GlobalAlloc</code> captures runtime allocation facts.</li>
 <li><code>track!</code> and <code>Trackable</code> add Rust-level context.</li>
 </ol>
-<div class="mermaid-direct" data-series="memscope-rs" data-name="graph.mmd">
-flowchart TD
-    A[User Code] --> B[GlobalAlloc Hook]
-    A --> C[track! Macro]
-
-    B --> D[Raw Runtime Facts]
-    C --> E[Rust-Level Metadata]
-
-    D --> F[MemoryEvent]
-    E --> F
-
-    F --> G[EventStore]
-    G --> H[Analysis]
-    H --> I[JSON / HTML Report]
-</div>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">User Code</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">GlobalAlloc Hook</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    A </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">track! Macro</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Raw Runtime Facts</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Rust</span><span>-</span><span style="color: #A6E3A1;">Level Metadata</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;</span><span> F</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">MemoryEvent</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;</span><span> F</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;</span><span> G</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EventStore</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    G </span><span style="color: #CBA6F7;">--&gt;</span><span> H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Analysis</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    H </span><span style="color: #CBA6F7;">--&gt;</span><span> I</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">JSON / HTML Report</span><span style="color: #CBA6F7;">]</span></span></code></pre>
 <p><code>GlobalAlloc</code> is the ground truth for pointer and size information, but it does not know Rust variable names or ownership semantics. The Rust-level semantic layer fills that gap explicitly.</p>
 <hr />
 <h2 id="2-runtime-ground-truth-globalalloc">2. Runtime Ground Truth: <code>GlobalAlloc</code></h2>
 <p>At the lowest layer, <code>memscope-rs</code> wraps the system allocator with a custom allocator.</p>
 <p>A simplified version looks like this:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">unsafe impl</span><span style="color: #F9E2AF;font-style: italic;"> GlobalAlloc</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> TrackingAllocator</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">unsafe impl</span><span style="color: #F9E2AF;font-style: italic;"> GlobalAlloc</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> TrackingAllocator</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    unsafe fn</span><span style="color: #89B4FA;font-style: italic;"> alloc</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> layout</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Layout</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt; *</span><span style="color: #CBA6F7;">mut u8</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> ptr</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> System</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">alloc</span><span style="color: #9399B2;">(</span><span>layout</span><span style="color: #9399B2;">);</span></span>
 <span class="giallo-l"></span>
@@ -160,7 +134,7 @@ flowchart TD
 <span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p>The real implementation also includes a thread-local guard to avoid recursive tracking. Tracking itself can allocate, so the allocator must temporarily disable tracking while recording allocation metadata.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">thread_local!</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">thread_local!</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    static</span><span style="color: #FAB387;"> TRACKING_DISABLED</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">cell</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cell</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">bool</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">        const</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">cell</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cell</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">false</span><span style="color: #9399B2;">) };</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
@@ -175,19 +149,19 @@ flowchart TD
 <hr />
 <h2 id="3-why-raw-allocation-data-is-not-enough">3. Why Raw Allocation Data Is Not Enough</h2>
 <p>Allocator-level data might look like this:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>alloc ptr=0x1048a0000 size=1024</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>alloc ptr=0x1048a0000 size=1024</span></span>
 <span class="giallo-l"><span>alloc ptr=0x1048b4000 size=24</span></span>
 <span class="giallo-l"><span>dealloc ptr=0x1048a0000</span></span></code></pre>
 <p>That is useful, but Rust developers usually want something closer to:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="plain"><span class="giallo-l"><span>variable: users</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>variable: users</span></span>
 <span class="giallo-l"><span>type: Vec&lt;User&gt;</span></span>
 <span class="giallo-l"><span>source: src/main.rs:42</span></span>
 <span class="giallo-l"><span>size: 1024 bytes</span></span></code></pre>
 <p>This is why <code>memscope-rs</code> uses an explicit macro layer:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> users</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">User</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Alice&quot;</span><span style="color: #9399B2;">),</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Bob&quot;</span><span style="color: #9399B2;">)];</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> users</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">User</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Alice&quot;</span><span style="color: #9399B2;">),</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Bob&quot;</span><span style="color: #9399B2;">)];</span></span>
 <span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">track!</span><span style="color: #9399B2;">(</span><span>tracker</span><span style="color: #9399B2;">,</span><span> users</span><span style="color: #9399B2;">);</span></span></code></pre>
 <p>The macro injects compile-time metadata:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">macro_rules!</span><span style="color: #89B4FA;font-style: italic;"> track</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">macro_rules!</span><span style="color: #89B4FA;font-style: italic;"> track</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">    (</span><span style="color: #F5C2E7;">$tracker</span><span style="color: #94E2D5;">:</span><span>expr</span><span style="color: #9399B2;">,</span><span style="color: #F5C2E7;"> $var</span><span style="color: #94E2D5;">:</span><span>expr</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {{</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> var_name</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> stringify!</span><span style="color: #9399B2;">(</span><span style="color: #F5C2E7;">$var</span><span style="color: #9399B2;">);</span></span>
 <span class="giallo-l"><span style="color: #F5C2E7;">        $tracker</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">track_as</span><span style="color: #9399B2;">(</span></span>
@@ -203,7 +177,7 @@ flowchart TD
 <hr />
 <h2 id="4-trackable-the-semantic-layer">4. <code>Trackable</code>: The Semantic Layer</h2>
 <p>To let a Rust value describe its memory role, <code>memscope-rs</code> uses the <code>Trackable</code> trait.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub trait</span><span style="color: #F9E2AF;font-style: italic;"> Trackable</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub trait</span><span style="color: #F9E2AF;font-style: italic;"> Trackable</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> track_kind</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> TrackKind</span><span style="color: #9399B2;">;</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> get_type_name</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt; &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #F9E2AF;font-style: italic;"> str</span><span style="color: #9399B2;">;</span></span>
@@ -222,36 +196,34 @@ flowchart TD
 <hr />
 <h2 id="5-trackkind-rust-types-as-memory-roles">5. <code>TrackKind</code>: Rust Types as Memory Roles</h2>
 <p><code>TrackKind</code> classifies tracked values into memory roles:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> TrackKind</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub enum</span><span style="color: #F9E2AF;font-style: italic;"> TrackKind</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    HeapOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> },</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Container</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Value</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    StackOwner</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> heap_ptr</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;"> },</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><div class="mermaid-direct" data-series="memscope-rs" data-name="graph.mmd">
-graph TB
-    V[Vec<T>] --> H[HeapOwner]
-    S[String] --> H
-    B[Box<T>] --> H
-
-    HM[HashMap<K,V>] --> C[Container]
-    BT[BTreeMap<K,V>] --> C
-    VD[VecDeque<T>] --> C
-
-    I[i32 / bool / simple value] --> Val[Value]
-
-    A[Arc<T>] --> SO[StackOwner]
-    R[Rc<T>] --> SO
-
-    H --> HP[Real Heap Pointer]
-    C --> Meta[Metadata Only]
-    Val --> NoHeap[No Heap Allocation]
-    SO --> SP[Stack Ptr + Heap Ptr]
-</div>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
+<span class="giallo-l"><span>    V</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Vec&lt;T&gt;</span><span style="color: #CBA6F7;">] --&gt;</span><span> H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">HeapOwner</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">String</span><span style="color: #CBA6F7;">] --&gt;</span><span> H</span></span>
+<span class="giallo-l"><span>    B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Box&lt;T&gt;</span><span style="color: #CBA6F7;">] --&gt;</span><span> H</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    HM</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">HashMap&lt;K,V&gt;</span><span style="color: #CBA6F7;">] --&gt;</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Container</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    BT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">BTreeMap&lt;K,V&gt;</span><span style="color: #CBA6F7;">] --&gt;</span><span> C</span></span>
+<span class="giallo-l"><span>    VD</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">VecDeque&lt;T&gt;</span><span style="color: #CBA6F7;">] --&gt;</span><span> C</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    I</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">i32 / bool / simple value</span><span style="color: #CBA6F7;">] --&gt;</span><span> Val</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Value</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Arc&lt;T&gt;</span><span style="color: #CBA6F7;">] --&gt;</span><span> SO</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">StackOwner</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Rc&lt;T&gt;</span><span style="color: #CBA6F7;">] --&gt;</span><span> SO</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    H </span><span style="color: #CBA6F7;">--&gt;</span><span> HP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Real Heap Pointer</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> Meta</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Metadata Only</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    Val </span><span style="color: #CBA6F7;">--&gt;</span><span> NoHeap</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">No Heap Allocation</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    SO </span><span style="color: #CBA6F7;">--&gt;</span><span> SP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Stack Ptr + Heap Ptr</span><span style="color: #CBA6F7;">]</span></span></code></pre>
 <p>This classification prevents <code>memscope-rs</code> from treating every Rust value as a fake heap allocation.</p>
 <hr />
 <h2 id="6-built-in-type-modeling">6. Built-in Type Modeling</h2>
 <p>For <code>Vec&lt;T&gt;</code>, the implementation uses the data pointer and capacity-based size estimate:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Trackable</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Trackable</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> track_kind</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> TrackKind</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        TrackKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HeapOwner</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span>            ptr</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">as_ptr</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> as usize</span><span style="color: #9399B2;">,</span></span>
@@ -268,7 +240,7 @@ graph TB
 <span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p>For <code>HashMap&lt;K, V&gt;</code>, the implementation is intentionally more conservative:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">K</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> V</span><span style="color: #89DCEB;">&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Trackable</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">collections</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">K</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> V</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">K</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> V</span><span style="color: #89DCEB;">&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Trackable</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">collections</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">K</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> V</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> track_kind</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> TrackKind</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        TrackKind</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Container</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
@@ -290,7 +262,7 @@ graph TB
 <h2 id="7-user-defined-types">7. User-Defined Types</h2>
 <p>Standard library support is only half the story. Real applications use custom structs and enums.</p>
 <p><code>memscope-rs</code> provides a derive macro for custom types:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> memscope_rs</span><span style="color: #94E2D5;">::</span><span style="color: #9399B2;">{</span><span>track</span><span style="color: #9399B2;">,</span><span> tracker</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Trackable</span><span style="color: #9399B2;">};</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> memscope_rs</span><span style="color: #94E2D5;">::</span><span style="color: #9399B2;">{</span><span>track</span><span style="color: #9399B2;">,</span><span> tracker</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Trackable</span><span style="color: #9399B2;">};</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> memscope_derive</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Trackable</span><span style="color: #9399B2;">;</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">#</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">derive</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Trackable</span><span style="color: #9399B2;">)]</span></span>
@@ -316,7 +288,7 @@ graph TB
 <h2 id="8-event-recording-strategy">8. Event Recording Strategy</h2>
 <p>When <code>track!</code> calls <code>track_as()</code>, the tracker branches based on <code>TrackKind</code>.</p>
 <p>For <code>HeapOwner</code>:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> event</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEvent</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">allocate</span><span style="color: #9399B2;">(</span><span>ptr</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #9399B2;">,</span><span> thread_id</span><span style="color: #9399B2;">);</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> event</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEvent</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">allocate</span><span style="color: #9399B2;">(</span><span>ptr</span><span style="color: #9399B2;">,</span><span> size</span><span style="color: #9399B2;">,</span><span> thread_id</span><span style="color: #9399B2;">);</span></span>
 <span class="giallo-l"><span>event</span><span style="color: #94E2D5;">.</span><span>var_name </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">());</span></span>
 <span class="giallo-l"><span>event</span><span style="color: #94E2D5;">.</span><span>type_name </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>type_name</span><span style="color: #9399B2;">);</span></span>
 <span class="giallo-l"><span>event</span><span style="color: #94E2D5;">.</span><span>source_file </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">());</span></span>
@@ -324,7 +296,7 @@ graph TB
 <span class="giallo-l"><span>event</span><span style="color: #94E2D5;">.</span><span>module_path </span><span style="color: #94E2D5;">=</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>module_path</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">());</span></span>
 <span class="giallo-l"><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span>event_store</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">record</span><span style="color: #9399B2;">(</span><span>event</span><span style="color: #9399B2;">);</span></span></code></pre>
 <p>For <code>Container</code> or <code>Value</code>:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;"><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> event</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEvent</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">metadata</span><span style="color: #9399B2;">(</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> event</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEvent</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">metadata</span><span style="color: #9399B2;">(</span></span>
 <span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">(),</span></span>
 <span class="giallo-l"><span>    type_name</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span>    thread_id</span><span style="color: #9399B2;">,</span></span>
@@ -386,9 +358,7 @@ graph TB
 <p>Capture what is real at runtime, then add Rust semantics explicitly and conservatively.</p>
 </blockquote>
 
-        </div>
-
-    
+    </div>
             <div class="pagination">
                 <div class="pagination__title">
                     <span class="pagination__title-h">Read other posts →</span>
@@ -396,16 +366,12 @@ graph TB
                 </div>
                 <div class="pagination__buttons">
                         <span class="button previous">
-                            <a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/lockfree-multithread-tracking/">
-                                <span class="button__icon">&#8592;</span>&nbsp;
-                                <span class="button__text">Lockfree Tracking: How `memscope-rs` Handles Concurrent Memory Events</span>
-                            </a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/memscope-rs/lockfree-multithread-tracking/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Lockfree Tracking: How `memscope-rs` Handles Concurrent Memory Events</span></a>
                         </span>
                     
                     </div>
             </div>
-        
-  </article>
+        </article>
   <aside class="toc-sidebar" id="toc">
     <div class="toc-sticky">
       <div class="toc-label">Contents</div>
@@ -420,9 +386,7 @@ graph TB
     <footer class="footer">
         <div class="footer__inner">
                 <div class="copyright">
-                        <span>&copy; 
-    2026
- Tim Wood</span>
+                        <span>&copy; 2026 Tim Wood</span>
                     <span class="copyright-theme">
                         <span class="copyright-theme-sep">:: </span>
                         terminal-zen
