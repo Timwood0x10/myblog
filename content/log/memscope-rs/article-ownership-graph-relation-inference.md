@@ -54,7 +54,7 @@ But it does not directly answer:
 
 The relation graph exists to answer those questions as an analysis layer.
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[MemoryEvent Stream] --> B[Snapshot]
     B --> C[Active Allocations]
@@ -78,7 +78,7 @@ flowchart TD
     L --> M[Diagnostics]
     L --> N[JSON Export]
     L --> O[Dashboard]
-{% end %}
+```
 
 ---
 
@@ -176,7 +176,7 @@ The real implementation runs these steps:
 8. detect variable evolution;
 9. detect shared ownership.
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[ActiveAllocation List] --> B[HeapScanner]
     B --> C[ScanResult]
@@ -197,7 +197,7 @@ flowchart TD
     J --> M
     K --> M
     L --> M
-{% end %}
+```
 
 ---
 

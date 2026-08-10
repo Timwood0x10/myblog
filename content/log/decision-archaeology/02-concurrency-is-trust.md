@@ -158,7 +158,7 @@ fn select_strategy(environment: &RuntimeEnvironment) -> MemScopeResult<TrackingS
 
 ## 决策树
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[数据被几个线程访问？] --> B{访问模式}
     B -->|1 个线程| C[无同步，直接操作]
@@ -169,7 +169,7 @@ flowchart TD
     D --> H[MemoryTracker ✓]
     E --> I[AsyncTracker ✓]
     F --> J[GlobalTracker ✓]
-{% end %}
+```
 
 ## 如果今天重新设计
 

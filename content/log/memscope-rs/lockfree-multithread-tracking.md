@@ -39,7 +39,7 @@ In a multithreaded flow:
 
 The design uses separate structures for separate responsibilities:
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[Concurrent Allocation Events] --> B[Lock-free Event Queue]
     A --> C[Concurrent Allocation Map]
@@ -52,7 +52,7 @@ flowchart TD
     E --> H[Analysis / Report]
     F --> H
     G --> H
-{% end %}
+```
 
 ---
 

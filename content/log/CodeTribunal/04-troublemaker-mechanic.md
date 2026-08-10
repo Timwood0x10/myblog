@@ -96,7 +96,7 @@ You are under suspicion. Your goals:
 
 This makes the Troublemaker an active participant in the debate, not just a passive target. It argues back, deflects, and counter-accuses. The debate becomes a genuine adversarial exchange, not a one-sided investigation.
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[Game Start] --> B[Random Strategy Selected]
     B --> C[80% Helpful + 20% Biased Review]
@@ -105,7 +105,7 @@ flowchart TD
     E --> F[Private Instructions to Troublemaker]
     F --> G[Deflect + Counter-accuse]
     G --> H[Vote]
-{% end %}
+```
 
 ## Why Not Use a Separate Model?
 

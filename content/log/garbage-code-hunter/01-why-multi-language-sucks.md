@@ -122,11 +122,11 @@ Each language has its own set of patterns. But the **concept** — "debug output
 
 This is the fundamental tension:
 
-{% mermaid() %}
+```mermaid
 graph LR
     A[Language-Specific<br/>AST Details] --> B[???]
     B --> C[Language-Neutral<br/>Quality Signals]
-{% end %}
+```
 
 How do you bridge this gap? Two options:
 
@@ -140,7 +140,7 @@ garbage-code-hunter chose Option B.
 
 Once you commit to Option B, the architecture becomes clear:
 
-{% mermaid() %}
+```mermaid
 graph TB
     subgraph PL["Per-Language (O(languages))"]
         RA[RustAdapter]
@@ -165,7 +165,7 @@ graph TB
     IR --> ND
     IR --> PD
     IR --> SD
-{% end %}
+```
 
 The key insight: **adapters are the complexity sink.** They absorb all language-specific knowledge so that detectors can be simple.
 

@@ -103,7 +103,7 @@ func ValidatePersonaOutput(output string, def PersonaDefinition) bool {
 
 If validation fails, `session.go:330` retries the LLM call with a reinforced prompt that emphasizes the missed keywords. This retry loop runs up to 3 times before falling back to the raw output.
 
-{% mermaid() %}
+```mermaid
 flowchart LR
     A[Build System Prompt] --> B[LLM Call]
     B --> C[ValidatePersonaOutput]
@@ -112,7 +112,7 @@ flowchart LR
     E --> F{Retry < 3?}
     F -->|Yes| B
     F -->|No| D
-{% end %}
+```
 
 ## Why Not Use Structured Output?
 

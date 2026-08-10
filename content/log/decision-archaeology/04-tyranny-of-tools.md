@@ -207,7 +207,7 @@ pub struct StyleIr {
 
 StyleIr 的设计原则是**存事实，不存判断**。`panic_call_count` 是一个数字，不是"这个代码有问题"的判断。判断留给上层的信号检测系统。
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[源代码文件] --> B[TreeSitter 解析]
     B --> C[ParsedFile AST]
@@ -216,7 +216,7 @@ flowchart TD
     E --> F[StyleIr 语言中立事实层]
     F --> G[SignalDetector 10 种信号]
     G --> H[CodeScorer 对数评分]
-{% end %}
+```
 
 ## 批量查询优化
 

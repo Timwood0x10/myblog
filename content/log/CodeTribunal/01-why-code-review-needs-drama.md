@@ -43,7 +43,7 @@ After the initial review, the agents enter a **debate phase** where they cross-e
 
 The user's job: read the debate, spot the real Troublemaker, and learn from the reasoning.
 
-{% mermaid() %}
+```mermaid
 sequenceDiagram
     participant User
     participant Panel as 8 Agents
@@ -59,7 +59,7 @@ sequenceDiagram
     end
     Panel->>User: Reveal + debate transcript
     User->>User: Identify the real Troublemaker
-{% end %}
+```
 
 ## Why This Works
 

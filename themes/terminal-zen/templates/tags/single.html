@@ -2,7 +2,13 @@
 
 {%- block title -%}
 {% set title = "Tag: " ~ term.name %}
-{{ title_macros::title(page_title=title, main_title=config.title) }}
+{%- if config.extra.page_titles and config.extra.page_titles == "combined" -%}
+    {%- if title -%}{{ title }} | {{ config.title }}{%- else -%}{{ config.title }}{%- endif -%}
+{%- elif config.extra.page_titles and config.extra.page_titles == "page_only" -%}
+    {%- if title -%}{{ title }}{%- else -%}{{ config.title }}{%- endif -%}
+{%- else -%}
+    {{ config.title }}
+{%- endif -%}
 {%- endblock -%}
 
 
@@ -17,6 +23,21 @@
             Show all tags
         </a>
 
-        {{ post_macros::list_posts(pages=term.pages) }}
+        <ul>
+        {%- for page in term.pages %}
+            {%- if page.draft %}{% continue %}{% endif -%}
+            <li class="post-list">
+                <a href="{{ page.permalink | safe }}"><span class="post-date">{{ page.date }}</span>:: <span class="post-list-title">{{ page.title }}</span></a>
+                {%- if page.taxonomies and page.taxonomies.tags %}
+                    :: <span class="post-tags-inline">
+                    {%- set sep = "," -%}
+                    {%- for tag in page.taxonomies.tags | sort | unique(case_sensitive=false) %}
+                        <a class="post-tag" href="{{ get_taxonomy_url(kind='tags', name=tag) | safe }}">#{{ tag }}</a>{%- if not loop.last %}{{ sep | safe }}{% endif -%}
+                    {% endfor -%}
+                    </span>
+                {% endif -%}
+            </li>
+        {% endfor -%}
+        </ul>
     </div>
 {% endblock content %}

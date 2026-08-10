@@ -1,26 +1,107 @@
-{% import "macros/date.html" as date_macros -%}
-{% import "macros/head.html" as head_macros -%}
-{% import "macros/menu.html" as menu_macros -%}
-{% import "macros/post.html" as post_macros -%}
-{% import "macros/title.html" as title_macros -%}
-{% import "macros/terminal_logo.html" as terminal_macros -%}
-
 <!DOCTYPE html>
 <html lang="{%- if config.default_language -%}{{ config.default_language }}{%- else -%}en{%- endif -%}">
 
 <head>
     <title>{%- block title %}{{ config.title }}{% endblock title -%}</title>
-    {{ head_macros::head(config=config) }}
 
-    {%- block open_graph %}{{ head_macros::open_graph(config=config) }}{% endblock open_graph -%}
+    {%- block head -%}
+    <meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    {# Main stylesheet — compiled from SASS #}
+    <link rel="stylesheet" href="{{ get_url(path="style.css", trailing_slash=false) | safe }}">
+
+    {# Color theme #}
+{%- if config.extra.accent_color %}
+    <link rel="stylesheet" href="{{ get_url(path="color/" ~ config.extra.accent_color ~ ".css", trailing_slash=false) | safe }}">
+{% else %}
+    <link rel="stylesheet" href="{{ get_url(path="color/green.css", trailing_slash=false) | safe }}">
+{% endif -%}
+
+{%- if config.extra.background_color %}
+    {%- if config.extra.accent_color and config.extra.background_color != config.extra.accent_color %}
+        <link rel="stylesheet" href="{{ get_url(path="color/background_" ~ config.extra.background_color ~ ".css", trailing_slash=false) | safe }}">
+    {% endif -%}
+{% endif -%}
+
+    {# Font #}
+{%- if config.extra.use_full_hack_font %}
+    <link rel="stylesheet" href="{{ get_url(path="font-hack.css", trailing_slash=false) | safe }}">
+{% else %}
+    <link rel="stylesheet" href="{{ get_url(path="font-hack-subset.css", trailing_slash=false) | safe }}">
+{% endif -%}
+
+    {# Custom stylesheets from project static/ #}
+    <link rel="stylesheet" href="{{ get_url(path="css/terminal-style.css", trailing_slash=false) | safe }}">
+
+    {# Cyberpunk theme (unified mermaid styling for all pages) #}
+    <link rel="stylesheet" href="{{ get_url(path="css/cyberpunk.css", trailing_slash=false) | safe }}">
+    {%- endblock head -%}
+
+    {%- block open_graph -%}
+    {%- if page %}
+        {%- set og_permalink = page.permalink %}
+        {%- set og_description = page.description %}
+        {%- set og_type = "article" %}
+        {%- if page.extra and page.extra.og_image %}
+            {%- if page.colocated_path %}
+                {%- set og_image = page.path ~ page.extra.og_image %}
+            {%- else %}
+                {%- set og_image = page.extra.og_image %}
+            {% endif %}
+        {%- elif config.extra.default_og_image %}
+            {%- set og_image = config.extra.default_og_image %}
+        {%- endif %}
+    {%- elif section %}
+        {%- set og_permalink = section.permalink %}
+        {%- set og_description = section.description | default(value=config.description) %}
+        {%- set og_type = "website" %}
+        {%- if section.extra and section.extra.og_image %}
+            {%- set og_image = section.extra.og_image %}
+        {%- elif config.extra.default_og_image %}
+            {%- set og_image = config.extra.default_og_image %}
+        {%- endif %}
+    {%- else %}
+        {# For 404 and taxonomy pages #}
+        {%- if taxonomy %}
+            {% if term %}
+                {%- set og_permalink = term.permalink %}
+                {%- set og_description = "All posts tagged " ~ term.name %}
+            {% else %}
+                {%- set og_permalink = config.base_url ~ "/" ~ taxonomy.slug %}
+                {%- set og_description = "All " ~ taxonomy.name %}
+            {% endif %}
+        {%- else %}
+            {%- set og_permalink = config.base_url %}
+            {%- set og_description = "Page not found" %}
+        {%- endif %}
+        {%- set og_type = "website" %}
+        {%- if config.extra.default_og_image %}
+            {%- set og_image = config.extra.default_og_image %}
+        {%- endif %}
+    {%- endif -%}
+    <meta name="description" content="{{ og_description | safe }}">
+    <meta property="og:description" content="{{ og_description | safe }}">
+    <meta property="og:type" content="{{ og_type }}">
+    <meta property="og:url" content="{{ og_permalink | safe }}">
+{% if og_image %}
+    <meta property="og:image" content="{{ get_url(path=og_image) }}">
+    <meta name="twitter:image" content="{{ get_url(path=og_image) }}">
+{% endif %}
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="{{ og_description | safe }}">
+    <meta property="twitter:domain" content="{{ config.base_url | replace(from="https://", to="") }}">
+    <meta property="twitter:url" content="{{ og_permalink | safe }}">
+    {%- endblock open_graph -%}
 
     {%- if config.generate_feeds %}
         {%- for feed in config.feed_filenames %}
-            {%- if feed is containing('atom') %}
+            {%- if "atom" in feed %}
                 <link rel="alternate" type="application/atom+xml" title="{{ config.title }} Atom Feed" href="{{ get_url(path=feed, trailing_slash=false, lang=lang) | safe }}" />
             {%- endif %}
 
-            {%- if feed is containing('rss') %}
+            {%- if "rss" in feed %}
                 <link rel="alternate" type="application/rss+xml" title="{{ config.title }} RSS Feed" href="{{ get_url(path=feed, trailing_slash=false, lang=lang) | safe }}" />
             {%- endif %}
 
@@ -48,7 +129,12 @@
                 <a href="{{ logo_link | safe }}" style="text-decoration: none;">
                     <div class="logo">
                       {% block logo_content %}
-                        {{ terminal_macros::terminal_logo() }}
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
                       {% endblock logo_content %}
                     </div>
                 </a>
@@ -56,7 +142,42 @@
         </div>
 
         {% block header_menu %}
-        {{ menu_macros::menu(config=config, current_path=current_path) }}
+        {%- set current_item = false -%}
+        {%- set base_item = false -%}
+        {%- if config.extra.menu_items %}
+            {%- set menu_items = config.extra.menu_items -%}
+            {%- for item in menu_items %}
+                {%- set abs_item_url = item.url | replace(from="$BASE_URL", to=config.base_url) -%}
+                {%- set is_current = current_url == abs_item_url ~ "/"
+                                     or abs_item_url in current_url
+                -%}
+                {%- set is_base = abs_item_url == config.base_url
+                                  or abs_item_url == config.base_url ~ "/"
+                -%}
+                {%- if is_base %}
+                    {%- set_global base_item = item -%}
+                {% endif -%}
+                {%- if is_current and not is_base %}
+                    {%- set_global current_item = item -%}
+                {% endif -%}
+            {% endfor -%}
+            {%- if not current_item and base_item %}
+                {%- set current_item = base_item -%}
+            {% endif -%}
+            <nav class="menu">
+                <ul class="menu__inner">
+                {%- for item in menu_items %}
+                    <li {%- if current_item and current_item == item %} class="active" {%- endif %}>
+                        {%- if item.newtab -%}
+                            <a href="{{ item.url | replace(from="$BASE_URL", to=config.base_url) | safe }}" target="_blank" rel="noopener noreferrer">{{ item.name | safe }}</a>
+                        {%- else -%}
+                            <a href="{{ item.url | replace(from="$BASE_URL", to=config.base_url) | safe }}">{{ item.name | safe }}</a>
+                        {%- endif -%}
+                    </li>
+                {% endfor -%}
+                </ul>
+            </nav>
+        {% endif -%}
         {% endblock header_menu %}
     </header>
     {% endblock header %}
@@ -72,9 +193,39 @@
 
             {%- for page in show_pages %}
                 <div class="post on-list">
-                    {{ post_macros::header(page=page) }}
+                    <h1 class="post-title"><a href="{{ page.permalink | safe }}">{{ page.title }}</a></h1>
+                    <div class="post-meta-inline">
+                        <span class="post-date">
+                            {%- if page.date %}{{ page.date | date(format="%Y-%m-%d") }}{% endif -%}
+                        </span>
+                    </div>
+                    {%- if page.taxonomies and page.taxonomies.tags %}
+                        <span class="post-tags-inline">:: tags:&nbsp;
+                        {%- for tag in page.taxonomies.tags | sort | unique(case_sensitive=false) %}
+                            <a class="post-tag" href="{{ get_taxonomy_url(kind='tags', name=tag) | safe }}">#{{ tag }}</a>{%- if not loop.last %}&nbsp;{% endif -%}
+                        {% endfor -%}
+                        </span>
+                    {% endif -%}
 
-                    {{ post_macros::content(page=page, summary=true, show_only_description=page.extra.show_only_description | default(value=false)) }}
+                    {%- if page.extra.show_only_description | default(value=false) %}
+                        <div class="post-content">
+                            {{ page.description | safe }}
+                        </div>
+                    {% elif page.summary %}
+                        <div class="post-content">
+                            {{ page.summary | safe }}
+                        </div>
+                        <div>
+                            <a class="read-more button" href="{{ page.permalink | safe }}">
+                                <span class="button__text">Read more</span>&nbsp;
+                                <span class="button__icon">&#8617;&#xFE0E;</span>
+                            </a>
+                        </div>
+                    {% else %}
+                        <div class="post-content">
+                            {{ page.content | safe }}
+                        </div>
+                    {%- endif %}
                 </div>
             {% endfor -%}
             <div class="pagination">
@@ -109,9 +260,9 @@
             {% else %}
                 <div class="copyright">
                     {%- if config.extra.author %}
-                        <span>&copy; {{ date_macros::now_year() }} {{ config.extra.author }}</span>
+                        <span>&copy; {{ now() | date(format="%Y") }} {{ config.extra.author }}</span>
                     {% else %}
-                        <span>&copy; {{ date_macros::now_year() }} Powered by <a href="https://www.getzola.org/">Zola</a></span>
+                        <span>&copy; {{ now() | date(format="%Y") }} Powered by <a href="https://www.getzola.org/">Zola</a></span>
                     {% endif -%}
 
                     <span class="copyright-theme">

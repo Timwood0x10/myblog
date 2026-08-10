@@ -132,7 +132,7 @@ This is more precise than the 20% rule — it identifies exactly which code is t
 
 ## Detection Flow
 
-{% mermaid() %}
+```mermaid
 sequenceDiagram
     participant A as Analyzer
     participant IR as StyleIR
@@ -160,7 +160,7 @@ sequenceDiagram
     end
 
     A->>S: calculate_score(findings)
-{% end %}
+```
 
 ## Why "Fewer Rules" Works
 

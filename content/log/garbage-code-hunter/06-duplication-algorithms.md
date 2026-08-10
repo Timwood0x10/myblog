@@ -30,7 +30,7 @@ The cross-file detector (`src/treesitter/duplication.rs`) works in three steps:
 
 For each file, the detector extracts all functions and normalizes their AST tokens:
 
-{% mermaid() %}
+```mermaid
 graph LR
     SRC[Source Code] --> AST[Parse to AST]
     AST --> TOKENS[Extract Tokens]
@@ -48,7 +48,7 @@ graph LR
     NORM --> NUM
     NORM --> KEY
     NORM --> HASH[Token Hash]
-{% end %}
+```
 
 The normalization rules:
 - **Identifiers** are replaced with a hash of their name. Two functions that differ only in variable names will produce the same token sequence.
@@ -75,13 +75,13 @@ This is O(n) — linear in the number of functions. Hash collisions are possible
 
 Exact duplicates are easy. Near-duplicates require a similarity metric. garbage-code-hunter uses **Jaccard similarity on token bigrams** (`src/treesitter/duplication.rs:275-343`):
 
-{% mermaid() %}
+```mermaid
 graph LR
     F1[Function A<br/>token bigrams] --> JACC[Jaccard<br/>Similarity]
     F2[Function B<br/>token bigrams] --> JACC
     JACC --> |">= 0.95"| MATCH[Near Duplicate]
     JACC --> |"< 0.95"| SKIP[Different]
-{% end %}
+```
 
 The algorithm:
 
@@ -105,7 +105,7 @@ Within a single file, duplication takes a different form: repeated code blocks t
 
 ### The Algorithm
 
-{% mermaid() %}
+```mermaid
 graph TB
     FILE[Source File] --> SPLIT[Split into<br/>5-line chunks]
     SPLIT --> NORM[Normalize each chunk<br/>strip comments, structure]
@@ -113,7 +113,7 @@ graph TB
     HASH --> GROUP[Group by hash]
     GROUP --> FILTER[Filter: appears 2+ times<br/>with spacing]
     FILTER --> DUPS[Duplicated Blocks]
-{% end %}
+```
 
 1. **Split** the file into overlapping 5-line chunks
 2. **Normalize** each chunk:

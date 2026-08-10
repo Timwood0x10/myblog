@@ -104,7 +104,7 @@ The naming convention is critical: each capture name is prefixed with a **2-lett
 
 Here is where the architecture gets clever. Instead of running each pattern separately (10 AST traversals per file), `batch_captures()` merges all patterns and runs them in **one pass**:
 
-{% mermaid() %}
+```mermaid
 graph LR
     subgraph "Naive: 10 traversals"
         T1[Pattern 1] --> AST1[AST Walk 1]
@@ -117,7 +117,7 @@ graph LR
         BM[All Patterns<br/>Merged] --> BAST[Single<br/>AST Walk]
         BAST --> BC[Vec of<br/>Capture Groups]
     end
-{% end %}
+```
 
 The implementation (`src/language/adapter/mod.rs:265-271`):
 
@@ -181,7 +181,7 @@ This is thread-local rather than shared because tree-sitter `Query` is not `Send
 
 ## The Full Call Flow
 
-{% mermaid() %}
+```mermaid
 sequenceDiagram
     participant IR as StyleIR
     participant Adapter as LanguageAdapter
@@ -202,7 +202,7 @@ sequenceDiagram
 
     Adapter->>Adapter: count_*_from_batch() for each signal
     Adapter-->>IR: AdapterCounts { all counts }
-{% end %}
+```
 
 ## Adding a New Language: The Checklist
 

@@ -132,7 +132,7 @@ This context is injected into the agents' system prompts. The agents now "know" 
 - Watch for disguise strategies that succeeded before
 - Avoid repeating mistakes from past sessions
 
-{% mermaid() %}
+```mermaid
 flowchart LR
     A[Current Code] --> B[GenerateEmbedding]
     B --> C[sqlite-vec KNN]
@@ -140,7 +140,7 @@ flowchart LR
     D --> E[BuildExperienceContext]
     E --> F[Inject into System Prompt]
     F --> G[Agents Now Have History]
-{% end %}
+```
 
 ## The Feedback Loop
 

@@ -158,7 +158,7 @@ ARES 的做法是定义自己的 `GenerateRequest` 和 `GenerateResponse`，它�
 
 这两个方法让 `LLMService` 承担了配置查询的职责。上层代码调用 `svc.IsEnabled()` 判断 provider 是否可用，调用 `svc.GetConfig()` 拿到 API key、endpoint 等配置信息。这看起来方便，但它违反了单一职责：`LLMService` 既是 LLM 调用器，又是配置的看门人。当你要做 provider 的健康检查或者动态切换时，你会发现 `IsEnabled` 的语义不够用——它是"配置存在"还是"网络可达"还是"模型可用"？这个歧义源于把状态查询和能力调用混在同一个接口里。配置应该由配置层暴露，`LLMService` 只负责"给我一个 prompt，我返回一个结果"。
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[要对接多个 LLM provider？] --> B{差异在哪里？}
     B -->|只在 API 格式| C[接口抽象行为，不抽象数据]
@@ -167,7 +167,7 @@ flowchart TD
     B -->|所有差异| F[分层：接口层 + 适配器层 + 传输层]
     C --> G[ARES 的选择]
     G --> H[债务：接口粒度不够细]
-{% end %}
+```
 
 ## 如果今天重新设计，会怎么做？
 

@@ -89,13 +89,13 @@ pub fn isOnDangerPath(...) DangerPathKind {
 
 一个指针在 LLVM IR 里经过 bitcast、load、store、传参、返回之后，会以好几个 SSA 值出现。所以还要做 **alias closure**（`traceAliasClosure`，`src/pass/analysis/danger_surface.zig:144`）——只标记原始指针会漏掉后续用法。这不是完整的别名分析，是**针对 FFI 指针家族的聚焦传播**。
 
-{% mermaid() %}
+```mermaid
 flowchart LR
     A[潜在内存问题] --> B{在危险路径上?}
     B -->|否| C[过滤 / 降级为本地问题]
     B -->|是| D[FFI 相关问题]
     D --> E[更高审查优先级]
-{% end %}
+```
 
 一个本地的 C `malloc`/`free` 配对，优先级可以很低；但一个指针穿过 FFI 参数、返回或回调，就值得人来看。**这就是"上下文感知"替代"危险函数穷举"的落地。**
 

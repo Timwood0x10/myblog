@@ -18,12 +18,12 @@ series = "garbage-code-hunter"
 
 Most code analysis tools follow a linear pipeline: parse, analyze, report. garbage-code-hunter adds a twist — it separates **duplication detection** from **signal detection** because they operate at different granularities:
 
-{% mermaid() %}
+```mermaid
 graph LR
     P1[Phase 1<br/>Parse] --> P2[Phase 2<br/>Cross-File<br/>Duplication]
     P2 --> P3[Phase 3<br/>Intra-File<br/>Duplication]
     P3 --> P4[Phase 4<br/>Signal<br/>Detection]
-{% end %}
+```
 
 Here is how it works in the actual source code (`src/analyzer.rs:174-275`):
 
@@ -114,7 +114,7 @@ Notice the test file downweighting: violations in test code count as 20% of thei
 
 The project is organized as a library + binary:
 
-{% mermaid() %}
+```mermaid
 graph TB
     subgraph BIN["Binary (main.rs)"]
         CLI[CLI Parser<br/>clap]
@@ -178,7 +178,7 @@ graph TB
     LANG --> ZA
     LANG --> RBA
     LANG --> JSA
-{% end %}
+```
 
 ### Key Modules
 
@@ -223,7 +223,7 @@ Each tool runs independently and produces its own score. The final report aggreg
 
 ## Data Flow: From Source File to Report
 
-{% mermaid() %}
+```mermaid
 sequenceDiagram
     participant CLI
     participant Analyzer
@@ -255,7 +255,7 @@ sequenceDiagram
 
     Analyzer->>Reporter: report(score, findings)
     Reporter-->>CLI: Formatted output
-{% end %}
+```
 
 The key insight in this flow: **StyleIR is computed once, consumed by many detectors.** This is the O(detectors + languages) scaling from Article 01 in action.
 
@@ -273,7 +273,7 @@ This layered approach means test code is neither fully ignored nor fully counted
 
 ## Configuration Discovery
 
-{% mermaid() %}
+```mermaid
 graph TD
     A[Working Directory] --> B{.garbage-code-hunter.toml<br/>exists?}
     B -->|Yes| C[Load project config]
@@ -285,7 +285,7 @@ graph TD
     F -->|No| H{~/.config/garbage-code-hunter/<br/>config.toml exists?}
     H -->|Yes| G
     H -->|No| I[Use defaults]
-{% end %}
+```
 
 Two independent config systems:
 - **ProjectConfig** (`.garbage-code-hunter.toml`): Per-project rules, whitelists, overrides. Lives in the repo.

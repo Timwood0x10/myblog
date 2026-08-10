@@ -121,7 +121,7 @@ Three design decisions:
 2. **Structured output**: Votes use JSON mode (`GenerateStructured`) for reliable parsing. Unlike free-form reviews, votes need to be machine-readable.
 3. **Plurality elimination**: The player with the most votes is eliminated. Ties result in no elimination, adding another round.
 
-{% mermaid() %}
+```mermaid
 sequenceDiagram
     participant S as Session
     participant P1 as Player 1
@@ -143,7 +143,7 @@ sequenceDiagram
 
     S->>S: Tally votes
     S->>S: Eliminate P3 (plurality)
-{% end %}
+```
 
 ## The Debate Loop
 

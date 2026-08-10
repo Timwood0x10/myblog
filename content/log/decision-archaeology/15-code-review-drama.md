@@ -102,7 +102,7 @@ When accusing a player, you MUST:
 
 没有这条约束，agent 只会含糊地说"Player 3 好像有问题"；有了它，就变成"Player 3 说'错误处理很扎实'，但这函数第 15-20 行根本没有错误处理"。然后**并行投票**（`AIVoteAndEliminate`，`session.go:671`，用 `errgroup` 并发、JSON 结构化）驱逐得票最高者——并行是为了**防止跟风效应**：没有 agent 在投票前看到别人的票。
 
-{% mermaid() %}
+```mermaid
 sequenceDiagram
     participant User
     participant Panel as 8 Agents
@@ -117,7 +117,7 @@ sequenceDiagram
     end
     Panel->>User: Reveal + debate transcript
     User->>User: Identify the real Troublemaker
-{% end %}
+```
 
 辩论最多 3 轮（`MaxDebateCycles`），每轮上下文越滚越厚，Troublemaker 越来越难藏。真实的命中分布是：
 

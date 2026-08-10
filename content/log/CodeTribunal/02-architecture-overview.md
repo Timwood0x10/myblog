@@ -24,7 +24,7 @@ If you mix the game logic, LLM calls, and WebSocket transport into one package, 
 
 ## The four packages
 
-{% mermaid() %}
+```mermaid
 flowchart TB
     subgraph "cmd/roundtable"
         Main[main.go]
@@ -60,7 +60,7 @@ flowchart TB
     Session --> Experience
     Hub --> Handler
     Handler --> Session
-{% end %}
+```
 
 ## Entry point: dual-mode binary
 
@@ -115,7 +115,7 @@ The key design decision: `GameState` is a value object, not a stateful service. 
 
 `DiscussionSession` in `internal/roundtable/session.go` orchestrates everything:
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[NewDiscussionSession] --> B[Deal: assign personas]
     B --> C[Analyze: each player reviews code]
@@ -129,7 +129,7 @@ flowchart TD
     G -->|Yes| I
     I --> J[Reveal]
     J --> K[DistillGame → Experience]
-{% end %}
+```
 
 The loop is synchronous within a session. Each phase completes before the next starts. The async part is the LLM calls — `NextSpeaker` calls the LLM for each player in sequence, not in parallel. This is deliberate: the debate needs ordered output, and parallel LLM calls would produce non-deterministic results.
 

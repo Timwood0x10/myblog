@@ -39,7 +39,7 @@ The single-thread model splits data collection into two complementary sources:
 1. `GlobalAlloc` captures runtime allocation facts.
 2. `track!` and `Trackable` add Rust-level context.
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[User Code] --> B[GlobalAlloc Hook]
     A --> C[track! Macro]
@@ -53,7 +53,7 @@ flowchart TD
     F --> G[EventStore]
     G --> H[Analysis]
     H --> I[JSON / HTML Report]
-{% end %}
+```
 
 `GlobalAlloc` is the ground truth for pointer and size information, but it does not know Rust variable names or ownership semantics. The Rust-level semantic layer fills that gap explicitly.
 
@@ -192,7 +192,7 @@ pub enum TrackKind {
 }
 ```
 
-{% mermaid() %}
+```mermaid
 graph TB
     V[Vec<T>] --> H[HeapOwner]
     S[String] --> H
@@ -211,7 +211,7 @@ graph TB
     C --> Meta[Metadata Only]
     Val --> NoHeap[No Heap Allocation]
     SO --> SP[Stack Ptr + Heap Ptr]
-{% end %}
+```
 
 This classification prevents `memscope-rs` from treating every Rust value as a fake heap allocation.
 

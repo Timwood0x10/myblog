@@ -1,6 +1,13 @@
 {% extends "index.html" %}
 {%- block title -%}
-{{ title_macros::title(page_title=page.title, main_title=config.title) }}
+{% set title = page.title %}
+{%- if config.extra.page_titles and config.extra.page_titles == "combined" -%}
+    {%- if title -%}{{ title }} | {{ config.title }}{%- else -%}{{ config.title }}{%- endif -%}
+{%- elif config.extra.page_titles and config.extra.page_titles == "page_only" -%}
+    {%- if title -%}{{ title }}{%- else -%}{{ config.title }}{%- endif -%}
+{%- else -%}
+    {{ config.title }}
+{%- endif -%}
 {%- endblock -%}
 
 
@@ -9,11 +16,26 @@
         <h1 class="post-title">{{ page.title }}</h1>
 
         {%- set all_series = get_taxonomy(kind="series") %}
-        {%- set all_pages = [] %}
+        {%- set_global all_pages = [] %}
         {%- for term in all_series.items %}
-          {%- set_global all_pages = all_pages | concat(with=term.pages) %}
+          {%- set_global all_pages = [...all_pages, ...term.pages] %}
         {%- endfor %}
         {%- set all_pages = all_pages | sort(attribute="date") | reverse %}
-        {{ post_macros::list_posts(pages=all_pages) }}
+        <ul>
+        {%- for page in all_pages %}
+            {%- if page.draft %}{% continue %}{% endif -%}
+            <li class="post-list">
+                <a href="{{ page.permalink | safe }}"><span class="post-date">{{ page.date }}</span>:: <span class="post-list-title">{{ page.title }}</span></a>
+                {%- if page.taxonomies and page.taxonomies.tags %}
+                    :: <span class="post-tags-inline">
+                    {%- set sep = "," -%}
+                    {%- for tag in page.taxonomies.tags | sort | unique(case_sensitive=false) %}
+                        <a class="post-tag" href="{{ get_taxonomy_url(kind='tags', name=tag) | safe }}">#{{ tag }}</a>{%- if not loop.last %}{{ sep | safe }}{% endif -%}
+                    {% endfor -%}
+                    </span>
+                {% endif -%}
+            </li>
+        {% endfor -%}
+        </ul>
     </div>
 {% endblock content %}

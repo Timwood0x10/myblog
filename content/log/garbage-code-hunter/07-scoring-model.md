@@ -30,7 +30,7 @@ garbage-code-hunter solves all three problems with a **two-tier logarithmic scor
 
 The total score is the sum of two independent tiers (`src/scoring.rs:141-166`):
 
-{% mermaid() %}
+```mermaid
 graph TB
     ISSUES[All Issues] --> SEV{Severity?}
     SEV --> |"Nuclear"| T1[Tier 1: Nuclear Score]
@@ -41,7 +41,7 @@ graph TB
     T2 --> |"log2(1+d) * 6<br/>cap: 60"| TOTAL
 
     TOTAL --> QL[Quality Level]
-{% end %}
+```
 
 ### Tier 1: Nuclear Score (High Confidence)
 
@@ -207,7 +207,7 @@ The classification is not per-rule — it is per-signal. A `NestedHell` violatio
 
 ## Putting It All Together
 
-{% mermaid() %}
+```mermaid
 graph TB
     subgraph PF["Per-File"]
         F1[File A] --> IR1[StyleIR]
@@ -238,7 +238,7 @@ graph TB
     T1 --> TOTAL
     T2 --> TOTAL
     TOTAL --> QL
-{% end %}
+```
 
 ---
 

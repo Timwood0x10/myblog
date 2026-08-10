@@ -65,12 +65,12 @@ The key insight: **every field is a `usize`** (or `Vec<FunctionNode>`). There ar
 
 The data flow is a three-step pipeline:
 
-{% mermaid() %}
+```mermaid
 graph LR
     PF[ParsedFile<br/>AST + source] --> AD[adapter.compute_all<br/>single traversal]
     AD --> AC[AdapterCounts<br/>raw counts]
     AC --> IR[StyleIr<br/>language-neutral]
-{% end %}
+```
 
 The construction happens in `StyleIr::from_parsed()` (`src/style_ir/mod.rs:143-172`):
 
@@ -242,7 +242,7 @@ Both return `ir.panic_call_count`. The detector has zero knowledge of Rust, Go, 
 
 ## The Architecture in One Diagram
 
-{% mermaid() %}
+```mermaid
 graph TB
     subgraph LL["Language Layer"]
         R[Rust<br/>Adapter]
@@ -282,7 +282,7 @@ graph TB
     D2 --> F
     D3 --> F
     DN --> F
-{% end %}
+```
 
 Three layers, each with a clear responsibility:
 - **Language Layer**: Adapters absorb grammar-specific knowledge

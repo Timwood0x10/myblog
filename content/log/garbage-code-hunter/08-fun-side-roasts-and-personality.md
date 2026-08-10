@@ -28,7 +28,7 @@ garbage-code-hunter takes a different approach: **make it entertaining.**
 
 garbage-code-hunter is not a single tool — it is a **tool belt** of 14 independent analyzers, each targeting a different aspect of project health:
 
-{% mermaid() %}
+```mermaid
 graph TB
     subgraph "Code Quality"
         A[analyze<br/>10 signal detectors]
@@ -59,7 +59,7 @@ graph TB
         CI[ci_bot<br/>CI integration]
         TREND[trend<br/>quality over time]
     end
-{% end %}
+```
 
 Each tool runs independently and produces its own score. The `scan` command runs all 14 in parallel:
 
@@ -231,13 +231,13 @@ A dry report saying "47 violations found" does not change behavior. A roast sayi
 
 The humor is not decoration — it is the **delivery mechanism** for genuine quality insights. Behind every joke is a real signal. Behind every personality archetype is a real pattern in the code.
 
-{% mermaid() %}
+```mermaid
 graph LR
     DRY[Traditional<br/>Linter Output] --> IGNORE[Ignored]
     FUN[garbage-code-hunter<br/>Roast + Signal] --> LAUGH[Laugh]
     LAUGH --> THINK[Think]
     THINK --> FIX[Fix]
-{% end %}
+```
 
 The 10 signal detectors provide the substance. The roasts, personalities, and badges provide the engagement. Together, they make code quality analysis something developers actually want to run.
 

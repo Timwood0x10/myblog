@@ -18,7 +18,7 @@ CodeTribunal asks one question: **if you put 8 LLM agents with different reviewi
 
 In one sentence: CodeTribunal is a Go application that orchestrates multi-LLM code review sessions where specialized agent personas analyze code, debate findings, vote to eliminate suspects, and learn from past sessions — turning code review from a chore into a game with real engineering value.
 
-{% mermaid() %}
+```mermaid
 flowchart LR
     A[Code Input] --> B[8 Agent Personas]
     B --> C[Individual Analysis]
@@ -30,7 +30,7 @@ flowchart LR
     G -->|Yes| H[Reveal + Experience Distillation]
     H --> I[Vector Store]
     I --> J[Next Session Learns]
-{% end %}
+```
 
 ## Articles
 

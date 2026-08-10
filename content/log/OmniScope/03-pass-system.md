@@ -28,7 +28,7 @@ Without orchestration, a pass can run before its inputs exist. Without shared co
 
 `PassManager` is defined at `src/pass/manager.zig:23`. It stores registered passes, a name-to-index map, resolved execution order, and cached execution names. Registration starts at `src/pass/manager.zig:61`.
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[registerPass] --> B[passes ArrayList]
     A --> C[pass_map]
@@ -36,7 +36,7 @@ flowchart TD
     C --> D
     D --> E[resolved_order]
     E --> F[run]
-{% end %}
+```
 
 This keeps scheduling separate from the CLI and from each individual pass.
 
@@ -44,7 +44,7 @@ This keeps scheduling separate from the CLI and from each individual pass.
 
 The dependency resolver builds an adjacency list and in-degree table. Passes with zero in-degree enter the queue. Each popped node reduces the in-degree of its successors. If the final result contains fewer nodes than the registered pass count, a cycle is reported.
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[Passes + dependencies] --> B[Build adjacency / in_degree]
     B --> C[Queue zero in-degree nodes]
@@ -56,7 +56,7 @@ flowchart TD
     G --> H{All passes resolved?}
     H -->|Yes| I[resolved_order]
     H -->|No| J[CycleDetected]
-{% end %}
+```
 
 This matters because later passes may consume facts produced by earlier passes: risk-path checks need cross-language edges and memory facts; ownership checks need allocation and call information.
 
@@ -64,7 +64,7 @@ This matters because later passes may consume facts produced by earlier passes: 
 
 The run loop starts at `src/pass/manager.zig:193`. If a pass fails, the manager logs a warning, increments a failure counter, and continues executing later passes.
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[Run pass] --> B{run_fn succeeds?}
     B -->|Yes| C[Record timing]
@@ -73,7 +73,7 @@ flowchart TD
     D --> E
     E -->|Yes| A
     E -->|No| F[Finish analysis]
-{% end %}
+```
 
 This is useful for real-world IR, which may come from different compilers, optimization levels, or link configurations. A failure in one analysis stage should not necessarily discard unrelated findings.
 
@@ -81,19 +81,19 @@ This is useful for real-world IR, which may come from different compilers, optim
 
 `PassContext` is defined at `src/pass/pass.zig:192`. It is the shared state through which passes exchange information. CallGraphPass may write `cross_lang_edges`; PtrLifetimePass may write `memory_graph`; DangerSurfacePass may write relevance sets; issue-producing passes read those facts.
 
-{% mermaid() %}
+```mermaid
 flowchart LR
     A[CallGraphPass] -->|writes| X[PassContext.cross_lang_edges]
     B[PtrLifetimePass] -->|writes| Y[PassContext.memory_graph]
     C[DangerSurfacePass] -->|reads X/Y, writes| Z[relevant sets]
     D[FFI / Ownership / Memory passes] -->|read Z/Y| E[Issue]
-{% end %}
+```
 
 ## DiagnosticWriter and structured issues
 
 Passes receive both `PassContext` and `DiagnosticWriter`. `DiagnosticWriter` handles logs and diagnostics. Structured findings are added through `ctx.addIssue`, whose entry point is at `src/pass/pass.zig:458`.
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[Pass detects finding] --> B{Diagnostic only?}
     B -->|Yes| C[DiagnosticWriter]
@@ -101,7 +101,7 @@ flowchart TD
     D --> E[ctx.addIssue]
     E --> F[DataFlowGraph issues]
     F --> G[Pipeline.getIssues]
-{% end %}
+```
 
 ## Summary
 

@@ -30,7 +30,7 @@ OmniScope’s choice follows from that gap: move down to LLVM IR, the layer wher
 
 A common Rust/C boundary pattern is: Rust exposes a pointer through `Box::into_raw`, then C stores or releases that pointer. In Rust, `into_raw` is an explicit ownership transfer. In C, `free(ptr)` is an ordinary deallocation. The problem is that no single compiler verifies the full protocol across both sides.
 
-{% mermaid() %}
+```mermaid
 sequenceDiagram
     participant R as Rust ownership model
     participant ABI as C ABI / LLVM IR
@@ -39,7 +39,7 @@ sequenceDiagram
     ABI->>C: extern C argument passing
     C->>C: store / free / callback use
     C-->>R: Rust cannot verify the C-side protocol
-{% end %}
+```
 
 At the IR layer, source syntax is gone, but external declarations, call/invoke instructions, allocas, loads/stores, bitcasts, symbol names, and some debug information may remain. The analyzer tries to recover enough ownership and lifetime semantics from these facts.
 
@@ -47,14 +47,14 @@ At the IR layer, source syntax is gone, but external declarations, call/invoke i
 
 OmniScope’s entry point consumes LLVM IR files such as `.ll` and `.bc`, not source directories. Argument parsing starts at `src/main.zig:73`, the main entry is `src/main.zig:567`, and single-module analysis is driven by `runModulePipeline` at `src/main.zig:171`.
 
-{% mermaid() %}
+```mermaid
 flowchart TD
     A[Source languages: Rust / C / Zig / Go / C++] --> B[Compiler emits LLVM IR]
     B --> C[IRLoader obtains ModuleRef]
     C --> D[Pipeline.setModule]
     D --> E[PassContext.module]
     E --> F[Passes iterate functions, blocks, instructions]
-{% end %}
+```
 
 This also defines the limits. OmniScope can inspect facts that remain in IR and can use symbols and debug information when available. Heavy optimization, missing symbols, or wrapper-heavy code may reduce the amount of recoverable semantics.
 
@@ -68,14 +68,14 @@ For example:
 - A Rust `Box` pointer released by C may indicate allocator mismatch or ownership protocol breakage.
 - Rust `as_ptr` used locally may be benign, while passing it to FFI and storing it may create a dangling pointer.
 
-{% mermaid() %}
+```mermaid
 flowchart LR
     A[Function call] --> B{Crosses language boundary?}
     B -->|No| C[Local semantics]
     B -->|Yes| D[FFI semantics]
     C --> E[May be lower priority]
     D --> F[Check ownership / lifetime / allocator context]
-{% end %}
+```
 
 ## Main source-level pillars
 
@@ -87,7 +87,7 @@ The implementation is organized around shared analysis structures:
 - `ZoneKind`: `safe`, `unsafe`, `ffi`, `runtime_internal`, and `unknown`, defined at `src/semantics/zone_classifier.zig:24`.
 - `SemanticRegistry`: layered function semantics, looked up through `src/registry/semantic_registry.zig:90`.
 
-{% mermaid() %}
+```mermaid
 flowchart TB
     A[LLVM IR facts] --> B[PassContext]
     B --> C[CrossLangEdge]
@@ -99,7 +99,7 @@ flowchart TB
     E --> G
     F --> G
     G --> H[Issue]
-{% end %}
+```
 
 ## Practical limits
 
