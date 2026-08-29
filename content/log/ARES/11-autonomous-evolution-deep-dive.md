@@ -893,8 +893,25 @@ Let me talk about the detour I took first.
 
 When I first implemented Dream Cycle, I only had Mutator — generate N children from one parent, pick the best. Simple enough:
 
-```
-Parent -> Mutate -> [Child A, Child B, Child C] -> Arena PK -> Best Child -> Replace Parent
+```mermaid
+graph LR
+    P[Parent] --> M[Mutator]
+    M --> CA[Child A]
+    M --> CB[Child B]
+    M --> CC[Child C]
+    CA --> A[Arena PK]
+    CB --> A
+    CC --> A
+    A --> B[Best Child]
+    B -->|Replace| P
+
+    style P fill:#1e1e2e,stroke:#50fa7b
+    style M fill:#1e1e2e,stroke:#e0af68
+    style CA fill:#1e1e2e,stroke:#56b6c2
+    style CB fill:#1e1e2e,stroke:#56b6c2
+    style CC fill:#1e1e2e,stroke:#56b6c2
+    style A fill:#1e1e2e,stroke:#bd93f9
+    style B fill:#1e1e2e,stroke:#50fa7b
 ```
 
 Seems intuitive, right? Keep only the optimal solution each time, simple and efficient. But after a few days I noticed a problem: **population diversity was rapidly deteriorating.**
@@ -1715,18 +1732,32 @@ All structs in interfaces.go now have complete JSON tags — `Strategy` has `jso
 
 The wiring architecture now looks like this:
 
-```
-mutation.Mutator --> GenomeMutatorAdapter --> genome.Population
-                                                    |
-                                          GenomePopulationAdapter
-                                                    |
-                                          EvolutionScheduler <-- callbacks.CallbackRegistrar
-                                                    ↑
-                                              DreamCycle <-- MutationAdapter + GenealogyRecorder
-                                                    ↑
-                                         StrategyStore (DB) <-- PGStrategyStore
-                                                    ↑
-                                            Infra Layer (Snapshot/Audit)
+```mermaid
+graph TD
+    MM[mutation.Mutator] --> GMA[GenomeMutatorAdapter]
+    GMA --> GP[genome.Population]
+    GP --> GPA[GenomePopulationAdapter]
+    GPA --> ES[EvolutionScheduler]
+    CR[callbacks.CallbackRegistrar] --> ES
+    ES --> DC[DreamCycle]
+    MA[MutationAdapter] --> DC
+    GR[GenealogyRecorder] --> DC
+    DC --> SS["StrategyStore (DB)"]
+    PGS[PGStrategyStore] --> SS
+    SS --> IL["Infra Layer\nSnapshot / Audit"]
+
+    style MM fill:#1e1e2e,stroke:#e0af68
+    style GMA fill:#1e1e2e,stroke:#56b6c2
+    style GP fill:#1e1e2e,stroke:#e0af68
+    style GPA fill:#1e1e2e,stroke:#56b6c2
+    style ES fill:#1e1e2e,stroke:#bd93f9
+    style CR fill:#1e1e2e,stroke:#56b6c2
+    style DC fill:#1e1e2e,stroke:#bd93f9
+    style MA fill:#1e1e2e,stroke:#56b6c2
+    style GR fill:#1e1e2e,stroke:#56b6c2
+    style SS fill:#1e1e2e,stroke:#50fa7b
+    style PGS fill:#1e1e2e,stroke:#56b6c2
+    style IL fill:#1e1e2e,stroke:#50fa7b
 ```
 
 Six layers deep, each with a clear responsibility. The genome layer (pure computation, zero I/O), the wiring layer (adapters and orchestration), the persistence layer (database via repository pattern), and the infrastructure layer (runtime snapshots and genealogy auditing). Each layer can be tested, replaced, or upgraded independently.
@@ -1852,12 +1883,20 @@ The experience system connects tool-call observability to evolution direction. I
 
 **Pipeline:**
 
-```
-ToolCallRecord → RawExperience → NormalizedExperience → MemoryExperienceStore
-                                      ↓
-                                AggregateEvidence
-                                      ↓
-                                EvolutionHint (for mutation guidance)
+```mermaid
+graph TD
+    TCR[ToolCallRecord] --> RE[RawExperience]
+    RE --> NE[NormalizedExperience]
+    NE --> MES[MemoryExperienceStore]
+    MES --> AE[AggregateEvidence]
+    AE --> EH["EvolutionHint\nmutation guidance"]
+
+    style TCR fill:#1e1e2e,stroke:#e0af68
+    style RE fill:#1e1e2e,stroke:#e0af68
+    style NE fill:#1e1e2e,stroke:#56b6c2
+    style MES fill:#1e1e2e,stroke:#56b6c2
+    style AE fill:#1e1e2e,stroke:#bd93f9
+    style EH fill:#1e1e2e,stroke:#50fa7b
 ```
 
 **Core Components:**
@@ -2131,25 +2170,37 @@ Step by step, each step delivers independent value. Genome package is icing on t
 
 ares's autonomous evolution system isn't black magic. It translates biology's most fundamental concept — **mutation, selection, inheritance, crossover** — into code:
 
-```
-Background ticker (5min) ──→ GenomePopulationAdapter.Run()
-OnAgentEnd callback     ──→ EvolutionScheduler ──→ GenomePopulationAdapter.Run()
-                                                       ↓
-                                                 GA Population.Evolve()
-                                                   → SortByScore() (-1 goes to end)
-                                                   → selectSurvivors() (SurvivalRate)
-                                                   → preserveElites() (keep best N)
-                                                   → Crossover.Uniform/TwoPoint/Segment
-                                                   → Mutator.Mutate() (6 types)
-                                                       ↓
-                                                 submitToCoordinator()
-                                                   → generateDiffPatches() across 6 genomes
-                                                   → Coordinator.Evaluate() (Apply/Reject/Delay)
-                                                   → Executors apply patches to live system
-                                                       ↓
-                                                 StrategyStore.SetActive()
-                                                   → persist winner to DB
-                                                   → next startup reads via GetActive()
+```mermaid
+graph TD
+    BT["Background ticker\n5min interval"] --> GPA[GenomePopulationAdapter.Run]
+    OAC[OnAgentEnd callback] --> ES[EvolutionScheduler]
+    ES --> GPA
+
+    GPA --> GA[GA Population.Evolve]
+    GA --> SORT["SortByScore → selectSurvivors → preserveElites"]
+    SORT --> CROSSMUT["Crossover + Mutator.Mutate\nUniform / TwoPoint / Segment × 6 types"]
+
+    CROSSMUT --> STC[submitToCoordinator]
+    STC --> GDP["generateDiffPatches\nacross 6 genomes"]
+    GDP --> CE["Coordinator.Evaluate\nApply / Reject / Delay"]
+    CE --> EXE["Executors apply patches\nto live system"]
+
+    EXE --> SSA[StrategyStore.SetActive]
+    SSA --> PW["persist winner → GetActive()"]
+
+    style BT fill:#1e1e2e,stroke:#56b6c2
+    style OAC fill:#1e1e2e,stroke:#56b6c2
+    style ES fill:#1e1e2e,stroke:#bd93f9
+    style GPA fill:#1e1e2e,stroke:#e0af68
+    style GA fill:#1e1e2e,stroke:#e0af68
+    style SORT fill:#1e1e2e,stroke:#e0af68
+    style CROSSMUT fill:#1e1e2e,stroke:#56b6c2
+    style STC fill:#1e1e2e,stroke:#bd93f9
+    style GDP fill:#1e1e2e,stroke:#bd93f9
+    style CE fill:#1e1e2e,stroke:#bd93f9
+    style EXE fill:#1e1e2e,stroke:#bd93f9
+    style SSA fill:#1e1e2e,stroke:#50fa7b
+    style PW fill:#1e1e2e,stroke:#50fa7b
 ```
 
 The system's design philosophy is **conservative incrementalism**:
@@ -2168,10 +2219,20 @@ The system's design philosophy is **conservative incrementalism**:
 
 The architecture has reached a meaningful milestone: **the evolution system is now a closed loop.** From background ticker to population evolution to coordinator decisions to executor patches to strategy store persistence — every link is connected. The path from "randomly initialized population" to "deployed strategy" looks like:
 
-```
-NewPopulation(base) → RunIdleEvolution(100 gens) →
-  BestStrategyFromSystem() → StrategyStore.SetActive() →
-  GetActive() on next startup → deployed strategy
+```mermaid
+graph LR
+    NP[NewPopulation] --> RIE["RunIdleEvolution\n100 gens"]
+    RIE --> BSF[BestStrategyFromSystem]
+    BSF --> SAS[StrategyStore.SetActive]
+    SAS --> GA["GetActive() on startup"]
+    GA --> DS[Deployed Strategy]
+
+    style NP fill:#1e1e2e,stroke:#e0af68
+    style RIE fill:#1e1e2e,stroke:#56b6c2
+    style BSF fill:#1e1e2e,stroke:#bd93f9
+    style SAS fill:#1e1e2e,stroke:#bd93f9
+    style GA fill:#1e1e2e,stroke:#50fa7b
+    style DS fill:#1e1e2e,stroke:#50fa7b
 ```
 
 That's a closed loop. Not a perfect one — `shouldEvolve()`'s score degradation detection isn't wired up, Level 3 tool auto-generation is still just an enum value, and several docs still need updating. But the skeleton is solid, and the system is production-ready for its intended use case: autonomous strategy evolution in live agents.

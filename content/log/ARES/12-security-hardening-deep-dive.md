@@ -67,16 +67,34 @@ Before diving into the solution, let me explain why this problem is so pervasive
 
 Traditional applications have clear trust boundaries:
 
-```
-User Input -> Validation Layer -> Sanitization Layer -> Business Logic -> Data Access
+```mermaid
+flowchart LR
+    A["User Input"] --> B["Validation Layer"]
+    B --> C["Sanitization Layer"]
+    C --> D["Business Logic"]
+    D --> E["Data Access"]
+
+    style A fill:#1e1e2e,stroke:#e0af68
+    style B fill:#1e1e2e,stroke:#56b6c2
+    style C fill:#1e1e2e,stroke:#56b6c2
+    style D fill:#1e1e2e,stroke:#bd93f9
+    style E fill:#1e1e2e,stroke:#50fa7b
 ```
 
 Each layer is written by humans who understand security. Each boundary has explicit checks. Each data transformation is deliberate.
 
 Agents break this chain completely:
 
-```
-User Input -> [LLM Black Box] -> Generated Code/Query/Command -> Direct Execution
+```mermaid
+flowchart LR
+    A["User Input"] --> B["LLM Black Box"]
+    B --> C["Generated Code/<br/>Query / Command"]
+    C --> D["Direct Execution"]
+
+    style A fill:#1e1e2e,stroke:#e0af68
+    style B fill:#1e1e2e,stroke:#e0af68
+    style C fill:#1e1e2e,stroke:#e0af68
+    style D fill:#1e1e2e,stroke:#e0af68
 ```
 
 The LLM is a black box. You don't control what comes out. You can't add validation inside the model's reasoning process. The output could be anything — a perfectly safe query, or a carefully crafted injection payload. And the agent framework? It trusts the output implicitly because "the LLM generated it, so it must be reasonable."
@@ -3022,39 +3040,66 @@ ares's security hardening system translates a simple insight into five coordinat
 
 The complete defense pipeline:
 
-```
-Raw Input / LLM Output
-  │
-  ├─ Layer 1: Input Sanitizer (~40μs)
-  │   SQL: ForceParameterized() — deny-by-default, pattern-match only
-  │   Path: Sanitize() + EvalSymlinks() — canonicalize + contain
-  │   Cmd:  Sanitize() + Allowlist — no shells, no dangerous binaries
-  │   URL:  Sanitize() + DNSRebindCheck() — allowlist + double-resolve
-  │
-  ├─ Layer 2: Permission Guard (~3μs)
-  │   RBAC: Evaluate() — role → permission → condition check
-  │   OpWhitelist: IsAllowed() — global operation bans
-  │   Sandbox: Execute() — resource-limited containment
-  │
-  ├─ Layer 3: Audit Logger (~2μs, async)
-  │   Log(): non-blocking channel → batch flush → EventSink
-  │   Hash chain: PrevEventHash ↔ ThisEventHash (tamper-evident)
-  │   PII-safe: SHA-256 fingerprint, no raw input logged
-  │
-  ├─ Layer 4: Rate Limiter (~0.5μs)
-  │   TokenBucket: Allow() — burst-friendly, long-term enforcement
-  │   SlidingWindow: Allow() — precise per-window counting
-  │   MultiLimiter: Check() — per-agent + per-tenant + per-op + global
-  │
-  └─ Layer 5: Kill Switch (~5μs)
-      BaselineLearner: Record() → Welford's online algorithm
-      AnomalyDetector: Evaluate() → Z-score + Rule-based (Composite)
-      CircuitBreaker: Allow() → Closed/Open/HalfOpen (atomic, <10ns)
-      EmergencyStop: Manual override (atomic bool)
-      │
-      ▼
-  PASS → Safe Execution (~51μs total overhead, <0.01% of LLM latency)
-  BLOCK → Audited rejection + alert + circuit isolation
+```mermaid
+flowchart TD
+    INPUT["Raw Input / LLM Output"] --> L1
+
+    subgraph L1 ["Layer 1: Input Sanitizer ~40μs"]
+        direction TB
+        L1A["SQL: ForceParameterized()"]
+        L1B["Path: Sanitize + EvalSymlinks"]
+        L1C["Cmd: Sanitize + Allowlist"]
+        L1D["URL: Sanitize + DNSRebindCheck"]
+    end
+
+    L1 --> L2
+
+    subgraph L2 ["Layer 2: Permission Guard ~3μs"]
+        direction TB
+        L2A["RBAC: Evaluate()"]
+        L2B["OpWhitelist: IsAllowed()"]
+        L2C["Sandbox: Execute()"]
+    end
+
+    L2 --> L3
+
+    subgraph L3 ["Layer 3: Audit Logger ~2μs async"]
+        direction TB
+        L3A["Log → batch flush → EventSink"]
+        L3B["Hash chain: tamper-evident"]
+        L3C["PII-safe: SHA-256 fingerprint"]
+    end
+
+    L3 --> L4
+
+    subgraph L4 ["Layer 4: Rate Limiter ~0.5μs"]
+        direction TB
+        L4A["TokenBucket: burst-friendly"]
+        L4B["SlidingWindow: per-window"]
+        L4C["MultiLimiter: multi-dimension"]
+    end
+
+    L4 --> L5
+
+    subgraph L5 ["Layer 5: Kill Switch ~5μs"]
+        direction TB
+        L5A["BaselineLearner: Welford's algorithm"]
+        L5B["AnomalyDetector: Z-score + Rules"]
+        L5C["CircuitBreaker: atomic <10ns"]
+        L5D["EmergencyStop: manual override"]
+    end
+
+    L5 --> PASS["PASS → Safe Execution<br/>~51μs total, <0.01% overhead"]
+    L5 --> BLOCK["BLOCK → Audited rejection<br/>+ alert + circuit isolation"]
+
+    style INPUT fill:#1e1e2e,stroke:#e0af68
+    style L1 fill:#1e1e2e,stroke:#56b6c2
+    style L2 fill:#1e1e2e,stroke:#56b6c2
+    style L3 fill:#1e1e2e,stroke:#bd93f9
+    style L4 fill:#1e1e2e,stroke:#bd93f9
+    style L5 fill:#1e1e2e,stroke:#bd93f9
+    style PASS fill:#1e1e2e,stroke:#50fa7b
+    style BLOCK fill:#1e1e2e,stroke:#e0af68
 ```
 
 The design principles that guided every decision:
