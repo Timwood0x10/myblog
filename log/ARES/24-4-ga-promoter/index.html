@@ -14,6 +14,11 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
@@ -84,22 +89,17 @@
 </blockquote>
 <h2 id="1-system-overview">1. System Overview</h2>
 <p>The Promoter is the core component of the evolution system that manages the "candidate strategy → champion strategy" promotion pipeline. Its design is inspired by the <strong>Champion/Challenger</strong> pattern: the system maintains a known-good "Champion" and multiple "Challengers" attempting to surpass it, determining strategy promotion and demotion through a rigorous evaluation process.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>┌─────────────────────────────────────────────────────┐</span></span>
-<span class="giallo-l"><span>│                  Promoter System Architecture        │</span></span>
-<span class="giallo-l"><span>│                                                       │</span></span>
-<span class="giallo-l"><span>│   ┌──────────┐    ┌──────────┐    ┌──────────┐      │</span></span>
-<span class="giallo-l"><span>│   │          │    │          │    │          │      │</span></span>
-<span class="giallo-l"><span>│   │ Candidate ├───→│  Shadow  ├───→│ Champion │      │</span></span>
-<span class="giallo-l"><span>│   │ (25选5) │    │  (Contend)│    │ (Execute)│      │</span></span>
-<span class="giallo-l"><span>│   │          │    │          │    │          │      │</span></span>
-<span class="giallo-l"><span>│   └──────────┘    └──────────┘    └──────────┘      │</span></span>
-<span class="giallo-l"><span>│        │                             │               │</span></span>
-<span class="giallo-l"><span>│        ▼                             ▼               │</span></span>
-<span class="giallo-l"><span>│   ┌──────────┐                  ┌──────────┐        │</span></span>
-<span class="giallo-l"><span>│   │  Demoted │                  │  Retired │        │</span></span>
-<span class="giallo-l"><span>│   │ (Cooling)│                  │ (Records)│        │</span></span>
-<span class="giallo-l"><span>│   └──────────┘                  └──────────┘        │</span></span>
-<span class="giallo-l"><span>└─────────────────────────────────────────────────────┘</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Candidate\n(25选5)&quot;</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">promote</span><span style="color: #CBA6F7;">|</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Shadow\n(Contend)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">promote</span><span style="color: #CBA6F7;">|</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Champion\n(Execute)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    A </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">fail</span><span style="color: #CBA6F7;">|</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Demoted\n(Cooling)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">demote</span><span style="color: #CBA6F7;">|</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Retired\n(Records)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style E fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>Source path: <code>internal/ares_evolution/promotion/</code></p>
 <h2 id="2-five-state-state-machine">2. Five-State State Machine</h2>
 <h3 id="2-1-state-definitions">2.1 State Definitions</h3>
@@ -119,26 +119,19 @@
 <span class="giallo-l"><span style="color: #FAB387;">    StrategyRetired</span><span style="color: #9399B2;font-style: italic;">                          // 4</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
 <p>Complete lifecycle of the five states:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>StrategyCandidate (0)</span></span>
-<span class="giallo-l"><span>    │</span></span>
-<span class="giallo-l"><span>    │ Collect ≥10 samples + SuccessRate ≥ 50%</span></span>
-<span class="giallo-l"><span>    ▼</span></span>
-<span class="giallo-l"><span>StrategyShadow (1)</span></span>
-<span class="giallo-l"><span>    │</span></span>
-<span class="giallo-l"><span>    │ MeetsPromotionCriteria() + MinAbsoluteImprovement ≥ 0.5</span></span>
-<span class="giallo-l"><span>    ▼</span></span>
-<span class="giallo-l"><span>StrategyChampion (2)</span></span>
-<span class="giallo-l"><span>    │</span></span>
-<span class="giallo-l"><span>    ├── Rolling improvement stays positive → Remain champion</span></span>
-<span class="giallo-l"><span>    ├── Rolling improvement turns negative + exceeds ChampionHoldPeriod → StrategyDemoted (3)</span></span>
-<span class="giallo-l"><span>    └── MaxChampionTenure = 20 generations → Forced demotion to StrategyShadow (1)</span></span>
-<span class="giallo-l"><span>                                        │</span></span>
-<span class="giallo-l"><span>                                        ▼</span></span>
-<span class="giallo-l"><span>                                  StrategyDemoted (3)</span></span>
-<span class="giallo-l"><span>                                        │</span></span>
-<span class="giallo-l"><span>                                        │ Cooldown ChampionHoldPeriod×2 generations</span></span>
-<span class="giallo-l"><span>                                        ▼</span></span>
-<span class="giallo-l"><span>                                  StrategyRetired (4)</span></span></code></pre><h3 id="2-2-state-transition-validation-explicit-directed-graph">2.2 State Transition Validation: Explicit Directed Graph</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyCandidate (0)&quot;</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">&quot;≥10 samples\nSuccessRate ≥ 50%&quot;</span><span style="color: #CBA6F7;">|</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyShadow (1)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;MeetsPromotionCriteria()\nMinAbsoluteImprovement ≥ 0.5&quot;</span><span style="color: #CBA6F7;">|</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyChampion (2)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;Rolling improvement positive&quot;</span><span style="color: #CBA6F7;">|</span><span> C</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;Rolling negative +\nexceeds HoldPeriod&quot;</span><span style="color: #CBA6F7;">|</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyDemoted (3)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;MaxChampionTenure = 20\nforced demotion&quot;</span><span style="color: #CBA6F7;">|</span><span> B</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;Cooldown HoldPeriod×2&quot;</span><span style="color: #CBA6F7;">|</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyRetired (4)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style E fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre><h3 id="2-2-state-transition-validation-explicit-directed-graph">2.2 State Transition Validation: Explicit Directed Graph</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: internal/ares_evolution/promotion/types.go</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// CanPromoteTo and CanDemoteTo use explicit transition mapping tables</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// This design is safer and more maintainable than implicit if-else chains</span></span>

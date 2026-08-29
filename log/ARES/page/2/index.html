@@ -14,6 +14,11 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
@@ -1229,7 +1234,24 @@ Resource limits: max concurrent evolutions, max duration per evolution, max stor
 <p>Let me talk about the detour I took first.</p>
 <h3 id="9-1-from-single-parent-to-population-evolution">9.1 From Single-Parent to Population Evolution</h3>
 <p>When I first implemented Dream Cycle, I only had Mutator — generate N children from one parent, pick the best. Simple enough:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Parent -&gt; Mutate -&gt; [Child A, Child B, Child C] -&gt; Arena PK -&gt; Best Child -&gt; Replace Parent</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    P</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Parent</span><span style="color: #CBA6F7;">] --&gt;</span><span> M</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Mutator</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    M </span><span style="color: #CBA6F7;">--&gt;</span><span> CA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Child A</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    M </span><span style="color: #CBA6F7;">--&gt;</span><span> CB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Child B</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    M </span><span style="color: #CBA6F7;">--&gt;</span><span> CC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Child C</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    CA </span><span style="color: #CBA6F7;">--&gt;</span><span> A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Arena PK</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    CB </span><span style="color: #CBA6F7;">--&gt;</span><span> A</span></span>
+<span class="giallo-l"><span>    CC </span><span style="color: #CBA6F7;">--&gt;</span><span> A</span></span>
+<span class="giallo-l"><span>    A </span><span style="color: #CBA6F7;">--&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Best Child</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Replace</span><span style="color: #CBA6F7;">|</span><span> P</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style P fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style M fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style CA fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style CB fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style CC fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>Seems intuitive, right? Keep only the optimal solution each time, simple and efficient. But after a few days I noticed a problem: <strong>population diversity was rapidly deteriorating.</strong></p>
 <p>First evolution: temperature changed from 0.7 to 0.3 (won). Second evolution: temperature can only vary starting from 0.3 — what if 0.3 is actually a local optimum? You've lost the 0.7 gene forever. Classic <strong>Genetic Drift</strong> problem — small population + strong selection pressure = rapid gene pool contraction.</p>
 <p>How does nature solve this? Answer: <strong>population + mating.</strong> Don't keep just one winner — preserve a group of survivors, let them interbreed. Good genes flow between individuals, never permanently lost due to one generation's accident.</p>
@@ -1826,17 +1848,31 @@ Resource limits: max concurrent evolutions, max duration per evolution, max stor
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p>All structs in interfaces.go now have complete JSON tags — <code>Strategy</code> has <code>json:"id"</code>, <code>json:"params"</code>, etc.; <code>StrategyLineage</code> has <code>json:"parent_id"</code>, <code>json:"child_id"</code>, etc. This isn't cosmetic: it's what makes <code>Population.Snapshot()</code>'s <code>json.MarshalIndent</code> produce clean, usable output.</p>
 <p>The wiring architecture now looks like this:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>mutation.Mutator --&gt; GenomeMutatorAdapter --&gt; genome.Population</span></span>
-<span class="giallo-l"><span>                                                    |</span></span>
-<span class="giallo-l"><span>                                          GenomePopulationAdapter</span></span>
-<span class="giallo-l"><span>                                                    |</span></span>
-<span class="giallo-l"><span>                                          EvolutionScheduler &lt;-- callbacks.CallbackRegistrar</span></span>
-<span class="giallo-l"><span>                                                    ↑</span></span>
-<span class="giallo-l"><span>                                              DreamCycle &lt;-- MutationAdapter + GenealogyRecorder</span></span>
-<span class="giallo-l"><span>                                                    ↑</span></span>
-<span class="giallo-l"><span>                                         StrategyStore (DB) &lt;-- PGStrategyStore</span></span>
-<span class="giallo-l"><span>                                                    ↑</span></span>
-<span class="giallo-l"><span>                                            Infra Layer (Snapshot/Audit)</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    MM</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">mutation.Mutator</span><span style="color: #CBA6F7;">] --&gt;</span><span> GMA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">GenomeMutatorAdapter</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    GMA </span><span style="color: #CBA6F7;">--&gt;</span><span> GP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">genome.Population</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    GP </span><span style="color: #CBA6F7;">--&gt;</span><span> GPA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">GenomePopulationAdapter</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    GPA </span><span style="color: #CBA6F7;">--&gt;</span><span> ES</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EvolutionScheduler</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    CR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">callbacks.CallbackRegistrar</span><span style="color: #CBA6F7;">] --&gt;</span><span> ES</span></span>
+<span class="giallo-l"><span>    ES </span><span style="color: #CBA6F7;">--&gt;</span><span> DC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">DreamCycle</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    MA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">MutationAdapter</span><span style="color: #CBA6F7;">] --&gt;</span><span> DC</span></span>
+<span class="giallo-l"><span>    GR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">GenealogyRecorder</span><span style="color: #CBA6F7;">] --&gt;</span><span> DC</span></span>
+<span class="giallo-l"><span>    DC </span><span style="color: #CBA6F7;">--&gt;</span><span> SS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyStore (DB)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    PGS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">PGStrategyStore</span><span style="color: #CBA6F7;">] --&gt;</span><span> SS</span></span>
+<span class="giallo-l"><span>    SS </span><span style="color: #CBA6F7;">--&gt;</span><span> IL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Infra Layer\nSnapshot / Audit&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style MM fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style GMA fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style GP fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style GPA fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style ES fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style CR fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style DC fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style MA fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style GR fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style SS fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style PGS fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style IL fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>Six layers deep, each with a clear responsibility. The genome layer (pure computation, zero I/O), the wiring layer (adapters and orchestration), the persistence layer (database via repository pattern), and the infrastructure layer (runtime snapshots and genealogy auditing). Each layer can be tested, replaced, or upgraded independently.</p>
 <h3 id="9-11-multi-objective-optimization-nsga-ii-selection">9.11 Multi-Objective Optimization: NSGA-II Selection</h3>
 <p>The basic selection operators (Truncation, Tournament, RouletteWheel, Rank) optimize a single score. But strategy quality isn't one-dimensional — a high-success-rate strategy might be expensive, and a low-cost strategy might be slow. Multi-objective optimization addresses this by maintaining Pareto-optimal trade-offs across multiple dimensions simultaneously.</p>
@@ -1934,11 +1970,19 @@ Resource limits: max concurrent evolutions, max duration per evolution, max stor
 <h3 id="9-14-experience-system-data-driven-evolution-guidance">9.14 Experience System: Data-Driven Evolution Guidance</h3>
 <p>The experience system connects tool-call observability to evolution direction. It provides a structured pipeline from raw execution traces to actionable evolution hints.</p>
 <p><strong>Pipeline:</strong></p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>ToolCallRecord → RawExperience → NormalizedExperience → MemoryExperienceStore</span></span>
-<span class="giallo-l"><span>                                      ↓</span></span>
-<span class="giallo-l"><span>                                AggregateEvidence</span></span>
-<span class="giallo-l"><span>                                      ↓</span></span>
-<span class="giallo-l"><span>                                EvolutionHint (for mutation guidance)</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    TCR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ToolCallRecord</span><span style="color: #CBA6F7;">] --&gt;</span><span> RE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">RawExperience</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    RE </span><span style="color: #CBA6F7;">--&gt;</span><span> NE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">NormalizedExperience</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    NE </span><span style="color: #CBA6F7;">--&gt;</span><span> MES</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">MemoryExperienceStore</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    MES </span><span style="color: #CBA6F7;">--&gt;</span><span> AE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">AggregateEvidence</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    AE </span><span style="color: #CBA6F7;">--&gt;</span><span> EH</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EvolutionHint\nmutation guidance&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style TCR fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style RE fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style NE fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style MES fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style AE fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style EH fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p><strong>Core Components:</strong></p>
 <p><code>tool_call_collector.go</code> — Captures tool calls as <code>ToolCallRecord</code> with strategy ID, task type, tool name, latency, success status, error codes, and result sizes. Runs through a normalizer that deduplicates and filters noise (high latency outliers, high error rate records).</p>
 <p><code>memory_store.go</code> — <code>MemoryExperienceStore</code> provides indexed storage with dict-based indexes on <code>strategy_id</code> and <code>task_type</code>:</p>
@@ -2142,24 +2186,36 @@ Resource limits: max concurrent evolutions, max duration per evolution, max stor
 <hr />
 <h2 id="conclusion">Conclusion</h2>
 <p>ares's autonomous evolution system isn't black magic. It translates biology's most fundamental concept — <strong>mutation, selection, inheritance, crossover</strong> — into code:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Background ticker (5min) ──→ GenomePopulationAdapter.Run()</span></span>
-<span class="giallo-l"><span>OnAgentEnd callback     ──→ EvolutionScheduler ──→ GenomePopulationAdapter.Run()</span></span>
-<span class="giallo-l"><span>                                                       ↓</span></span>
-<span class="giallo-l"><span>                                                 GA Population.Evolve()</span></span>
-<span class="giallo-l"><span>                                                   → SortByScore() (-1 goes to end)</span></span>
-<span class="giallo-l"><span>                                                   → selectSurvivors() (SurvivalRate)</span></span>
-<span class="giallo-l"><span>                                                   → preserveElites() (keep best N)</span></span>
-<span class="giallo-l"><span>                                                   → Crossover.Uniform/TwoPoint/Segment</span></span>
-<span class="giallo-l"><span>                                                   → Mutator.Mutate() (6 types)</span></span>
-<span class="giallo-l"><span>                                                       ↓</span></span>
-<span class="giallo-l"><span>                                                 submitToCoordinator()</span></span>
-<span class="giallo-l"><span>                                                   → generateDiffPatches() across 6 genomes</span></span>
-<span class="giallo-l"><span>                                                   → Coordinator.Evaluate() (Apply/Reject/Delay)</span></span>
-<span class="giallo-l"><span>                                                   → Executors apply patches to live system</span></span>
-<span class="giallo-l"><span>                                                       ↓</span></span>
-<span class="giallo-l"><span>                                                 StrategyStore.SetActive()</span></span>
-<span class="giallo-l"><span>                                                   → persist winner to DB</span></span>
-<span class="giallo-l"><span>                                                   → next startup reads via GetActive()</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    BT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Background ticker\n5min interval&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> GPA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">GenomePopulationAdapter.Run</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    OAC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">OnAgentEnd callback</span><span style="color: #CBA6F7;">] --&gt;</span><span> ES</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EvolutionScheduler</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    ES </span><span style="color: #CBA6F7;">--&gt;</span><span> GPA</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    GPA </span><span style="color: #CBA6F7;">--&gt;</span><span> GA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">GA Population.Evolve</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    GA </span><span style="color: #CBA6F7;">--&gt;</span><span> SORT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;SortByScore → selectSurvivors → preserveElites&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    SORT </span><span style="color: #CBA6F7;">--&gt;</span><span> CROSSMUT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Crossover + Mutator.Mutate\nUniform / TwoPoint / Segment × 6 types&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    CROSSMUT </span><span style="color: #CBA6F7;">--&gt;</span><span> STC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">submitToCoordinator</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    STC </span><span style="color: #CBA6F7;">--&gt;</span><span> GDP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;generateDiffPatches\nacross 6 genomes&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    GDP </span><span style="color: #CBA6F7;">--&gt;</span><span> CE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Coordinator.Evaluate\nApply / Reject / Delay&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    CE </span><span style="color: #CBA6F7;">--&gt;</span><span> EXE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Executors apply patches\nto live system&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    EXE </span><span style="color: #CBA6F7;">--&gt;</span><span> SSA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">StrategyStore.SetActive</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    SSA </span><span style="color: #CBA6F7;">--&gt;</span><span> PW</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;persist winner → GetActive()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style BT fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style OAC fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style ES fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style GPA fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style GA fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style SORT fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style CROSSMUT fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style STC fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style GDP fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style CE fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style EXE fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style SSA fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style PW fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>The system's design philosophy is <strong>conservative incrementalism</strong>:</p>
 <ul>
 <li><strong>Opt-in by default</strong>: <code>Enabled: false</code>, must explicitly enable</li>
@@ -2175,9 +2231,19 @@ Resource limits: max concurrent evolutions, max duration per evolution, max stor
 <li><strong>Fitness sharing</strong>: SelectionScore preserves canonical fitness from temporary adjustments</li>
 </ul>
 <p>The architecture has reached a meaningful milestone: <strong>the evolution system is now a closed loop.</strong> From background ticker to population evolution to coordinator decisions to executor patches to strategy store persistence — every link is connected. The path from "randomly initialized population" to "deployed strategy" looks like:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>NewPopulation(base) → RunIdleEvolution(100 gens) →</span></span>
-<span class="giallo-l"><span>  BestStrategyFromSystem() → StrategyStore.SetActive() →</span></span>
-<span class="giallo-l"><span>  GetActive() on next startup → deployed strategy</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    NP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">NewPopulation</span><span style="color: #CBA6F7;">] --&gt;</span><span> RIE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;RunIdleEvolution\n100 gens&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    RIE </span><span style="color: #CBA6F7;">--&gt;</span><span> BSF</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">BestStrategyFromSystem</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    BSF </span><span style="color: #CBA6F7;">--&gt;</span><span> SAS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">StrategyStore.SetActive</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    SAS </span><span style="color: #CBA6F7;">--&gt;</span><span> GA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;GetActive() on startup&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    GA </span><span style="color: #CBA6F7;">--&gt;</span><span> DS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Deployed Strategy</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style NP fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style RIE fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style BSF fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style SAS fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style GA fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style DS fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>That's a closed loop. Not a perfect one — <code>shouldEvolve()</code>'s score degradation detection isn't wired up, Level 3 tool auto-generation is still just an enum value, and several docs still need updating. But the skeleton is solid, and the system is production-ready for its intended use case: autonomous strategy evolution in live agents.</p>
 <p>If you want to add self-evolution capability to your agent too, my advice: <strong>don't start with the Genome package.</strong> First wire up Callback + FeedbackService — record every success and failure. Then add Arena for strategy validation. Then Mutator + single-parent mutation evolution. Add PGStrategyStore for persistence once you're ready to deploy. Finally — when you genuinely need to explore large-scale parameter spaces — bring in the Genome package's population genetic algorithm.</p>
 <p>Step by step, each step delivers independent value. That's what engineering should look like.</p>
@@ -2235,10 +2301,28 @@ This is the story of how ares learned to defend itself.</p>
 <p>Before diving into the solution, let me explain why this problem is so pervasive. It's not that LLMs are stupid — it's that the entire agent architecture creates a perfect storm for security vulnerabilities.</p>
 <h3 id="2-1-the-trust-chain-problem">2.1 The Trust Chain Problem</h3>
 <p>Traditional applications have clear trust boundaries:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>User Input -&gt; Validation Layer -&gt; Sanitization Layer -&gt; Business Logic -&gt; Data Access</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;User Input&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Validation Layer&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Sanitization Layer&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Business Logic&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Data Access&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style E fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>Each layer is written by humans who understand security. Each boundary has explicit checks. Each data transformation is deliberate.</p>
 <p>Agents break this chain completely:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>User Input -&gt; [LLM Black Box] -&gt; Generated Code/Query/Command -&gt; Direct Execution</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;User Input&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;LLM Black Box&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Generated Code/&lt;br/&gt;Query / Command&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Direct Execution&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#e0af68</span></span></code></pre>
 <p>The LLM is a black box. You don't control what comes out. You can't add validation inside the model's reasoning process. The output could be anything — a perfectly safe query, or a carefully crafted injection payload. And the agent framework? It trusts the output implicitly because "the LLM generated it, so it must be reasonable."</p>
 <p>That assumption is dead wrong.</p>
 <h3 id="2-2-the-attack-surface-map">2.2 The Attack Surface Map</h3>
@@ -4921,38 +5005,65 @@ This is the story of how ares learned to defend itself.</p>
 <h2 id="14-conclusion">14. Conclusion</h2>
 <p>ares's security hardening system translates a simple insight into five coordinated layers: <strong>agents are autonomous processes with natural language input and broad execution capabilities — that combination is inherently dangerous unless every step is guarded.</strong></p>
 <p>The complete defense pipeline:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Raw Input / LLM Output</span></span>
-<span class="giallo-l"><span>  │</span></span>
-<span class="giallo-l"><span>  ├─ Layer 1: Input Sanitizer (~40μs)</span></span>
-<span class="giallo-l"><span>  │   SQL: ForceParameterized() — deny-by-default, pattern-match only</span></span>
-<span class="giallo-l"><span>  │   Path: Sanitize() + EvalSymlinks() — canonicalize + contain</span></span>
-<span class="giallo-l"><span>  │   Cmd:  Sanitize() + Allowlist — no shells, no dangerous binaries</span></span>
-<span class="giallo-l"><span>  │   URL:  Sanitize() + DNSRebindCheck() — allowlist + double-resolve</span></span>
-<span class="giallo-l"><span>  │</span></span>
-<span class="giallo-l"><span>  ├─ Layer 2: Permission Guard (~3μs)</span></span>
-<span class="giallo-l"><span>  │   RBAC: Evaluate() — role → permission → condition check</span></span>
-<span class="giallo-l"><span>  │   OpWhitelist: IsAllowed() — global operation bans</span></span>
-<span class="giallo-l"><span>  │   Sandbox: Execute() — resource-limited containment</span></span>
-<span class="giallo-l"><span>  │</span></span>
-<span class="giallo-l"><span>  ├─ Layer 3: Audit Logger (~2μs, async)</span></span>
-<span class="giallo-l"><span>  │   Log(): non-blocking channel → batch flush → EventSink</span></span>
-<span class="giallo-l"><span>  │   Hash chain: PrevEventHash ↔ ThisEventHash (tamper-evident)</span></span>
-<span class="giallo-l"><span>  │   PII-safe: SHA-256 fingerprint, no raw input logged</span></span>
-<span class="giallo-l"><span>  │</span></span>
-<span class="giallo-l"><span>  ├─ Layer 4: Rate Limiter (~0.5μs)</span></span>
-<span class="giallo-l"><span>  │   TokenBucket: Allow() — burst-friendly, long-term enforcement</span></span>
-<span class="giallo-l"><span>  │   SlidingWindow: Allow() — precise per-window counting</span></span>
-<span class="giallo-l"><span>  │   MultiLimiter: Check() — per-agent + per-tenant + per-op + global</span></span>
-<span class="giallo-l"><span>  │</span></span>
-<span class="giallo-l"><span>  └─ Layer 5: Kill Switch (~5μs)</span></span>
-<span class="giallo-l"><span>      BaselineLearner: Record() → Welford&#39;s online algorithm</span></span>
-<span class="giallo-l"><span>      AnomalyDetector: Evaluate() → Z-score + Rule-based (Composite)</span></span>
-<span class="giallo-l"><span>      CircuitBreaker: Allow() → Closed/Open/HalfOpen (atomic, &lt;10ns)</span></span>
-<span class="giallo-l"><span>      EmergencyStop: Manual override (atomic bool)</span></span>
-<span class="giallo-l"><span>      │</span></span>
-<span class="giallo-l"><span>      ▼</span></span>
-<span class="giallo-l"><span>  PASS → Safe Execution (~51μs total overhead, &lt;0.01% of LLM latency)</span></span>
-<span class="giallo-l"><span>  BLOCK → Audited rejection + alert + circuit isolation</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    INPUT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Raw Input / LLM Output&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> L1</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L1 </span><span>[&quot;Layer 1: Input Sanitizer ~40μs&quot;]</span></span>
+<span class="giallo-l"><span>        direction TB</span></span>
+<span class="giallo-l"><span>        L1A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;SQL: ForceParameterized()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L1B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Path: Sanitize + EvalSymlinks&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L1C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Cmd: Sanitize + Allowlist&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L1D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;URL: Sanitize + DNSRebindCheck&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L1 </span><span style="color: #CBA6F7;">--&gt;</span><span> L2</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L2 </span><span>[&quot;Layer 2: Permission Guard ~3μs&quot;]</span></span>
+<span class="giallo-l"><span>        direction TB</span></span>
+<span class="giallo-l"><span>        L2A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;RBAC: Evaluate()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L2B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;OpWhitelist: IsAllowed()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L2C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Sandbox: Execute()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L2 </span><span style="color: #CBA6F7;">--&gt;</span><span> L3</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L3 </span><span>[&quot;Layer 3: Audit Logger ~2μs async&quot;]</span></span>
+<span class="giallo-l"><span>        direction TB</span></span>
+<span class="giallo-l"><span>        L3A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Log → batch flush → EventSink&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L3B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Hash chain: tamper-evident&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L3C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;PII-safe: SHA-256 fingerprint&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L3 </span><span style="color: #CBA6F7;">--&gt;</span><span> L4</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L4 </span><span>[&quot;Layer 4: Rate Limiter ~0.5μs&quot;]</span></span>
+<span class="giallo-l"><span>        direction TB</span></span>
+<span class="giallo-l"><span>        L4A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;TokenBucket: burst-friendly&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L4B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;SlidingWindow: per-window&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L4C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;MultiLimiter: multi-dimension&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L4 </span><span style="color: #CBA6F7;">--&gt;</span><span> L5</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L5 </span><span>[&quot;Layer 5: Kill Switch ~5μs&quot;]</span></span>
+<span class="giallo-l"><span>        direction TB</span></span>
+<span class="giallo-l"><span>        L5A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;BaselineLearner: Welford&#39;s algorithm&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L5B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;AnomalyDetector: Z-score + Rules&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L5C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;CircuitBreaker: atomic &lt;10ns&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L5D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EmergencyStop: manual override&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L5 </span><span style="color: #CBA6F7;">--&gt;</span><span> PASS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;PASS → Safe Execution&lt;br/&gt;~51μs total, &lt;0.01% overhead&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    L5 </span><span style="color: #CBA6F7;">--&gt;</span><span> BLOCK</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;BLOCK → Audited rejection&lt;br/&gt;+ alert + circuit isolation&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style INPUT fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style L1 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style L2 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style L3 fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style L4 fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style L5 fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style PASS fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style BLOCK fill:#1e1e2e,stroke:#e0af68</span></span></code></pre>
 <p>The design principles that guided every decision:</p>
 <ul>
 <li><strong>Deny by default</strong>: If it's not explicitly allowed, it's blocked. No "looks safe enough," no heuristic guesses.</li>

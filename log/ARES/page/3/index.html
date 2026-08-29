@@ -14,6 +14,11 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
@@ -757,7 +762,20 @@ v0.2.8: "We'll extract this in the next release."</p>
 <h2 id="1-a-naive-idea-single-parent-breeding-is-enough">1. A Naive Idea: Single-Parent Breeding Is Enough</h2>
 <p>When I first wrote the GA, I thought it was simple.</p>
 <p>The evolution system (DreamCycle) already had a Mutator — mutate a parent into several children, pick the best one, replace the parent. Straightforward:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Parent → Mutate → [Child A, Child B, Child C] → Arena PK → Best Child → Replace Parent</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    P</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Parent&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> M</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Mutate&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    M </span><span style="color: #CBA6F7;">--&gt;</span><span> C1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Child A&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    M </span><span style="color: #CBA6F7;">--&gt;</span><span> C2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Child B&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    M </span><span style="color: #CBA6F7;">--&gt;</span><span> C3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Child C&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C1 </span><span style="color: #CBA6F7;">--&gt;</span><span> A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Arena PK&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C2 </span><span style="color: #CBA6F7;">--&gt;</span><span> A</span></span>
+<span class="giallo-l"><span>    C3 </span><span style="color: #CBA6F7;">--&gt;</span><span> A</span></span>
+<span class="giallo-l"><span>    A </span><span style="color: #CBA6F7;">--</span><span style="color: #A6E3A1;">&gt; B[&quot;Best Child&quot;] </span><span style="color: #CBA6F7;">--&gt;</span><span> R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Replace Parent&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> default</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> output</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> P,M,C1,C2,C3,A</span><span style="color: #A6E3A1;"> default</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> B,R</span><span style="color: #A6E3A1;"> output</span></span></code></pre>
 <p>Keep one optimal solution at a time. Simple and efficient. My argument against having a population was: "What's the point of a population? Only one strategy is deployed at a time — keeping suboptimal ones around just wastes memory."</p>
 <p>After a few days of running, the problem surfaced.</p>
 <p>First evolution: temperature went from 0.7 to 0.3 (it won). Second evolution: temperature could only mutate from 0.3 onward. What if 0.3 was actually a local optimum? You've already lost the 0.7 allele — you can never get it back.</p>
@@ -782,36 +800,35 @@ v0.2.8: "We'll extract this in the next release."</p>
 <hr />
 <h2 id="3-system-architecture-overview">3. System Architecture Overview</h2>
 <p>The GA evolution system has three layers with clear boundaries:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>┌─────────────────────────────────────────────────────────────────────┐</span></span>
-<span class="giallo-l"><span>│                     api/evolution/ (Public API)                      │</span></span>
-<span class="giallo-l"><span>│    Population, DreamCycle, Mutator, Promoter interfaces + adapters   │</span></span>
-<span class="giallo-l"><span>│    External modules and AI assistants must NOT import internal/       │</span></span>
-<span class="giallo-l"><span>└──────────────────────┬──────────────────────────────────────────────┘</span></span>
-<span class="giallo-l"><span>                       │</span></span>
-<span class="giallo-l"><span>┌──────────────────────▼──────────────────────────────────────────────┐</span></span>
-<span class="giallo-l"><span>│              internal/ares_evolution/ (Core GA Engine)               │</span></span>
-<span class="giallo-l"><span>│                                                                      │</span></span>
-<span class="giallo-l"><span>│  ┌──────────┐   ┌──────────────┐   ┌────────────┐   ┌───────────┐  │</span></span>
-<span class="giallo-l"><span>│  │ mutation │──▶│ genome       │──▶│ scheduler  │──▶│ experience │  │</span></span>
-<span class="giallo-l"><span>│  │ .Strategy │   │ .Population  │   │ .Scheduler  │   │ .Evidence  │  │</span></span>
-<span class="giallo-l"><span>│  │ .Mutator  │   │ .Selection[] │   │ .DreamCycle │   │ .Store     │  │</span></span>
-<span class="giallo-l"><span>│  │ .Types    │   │ .Crossover[] │   │             │   │ .Guidance  │  │</span></span>
-<span class="giallo-l"><span>│  └──────────┘   └──────────────┘   └────────────┘   └───────────┘  │</span></span>
-<span class="giallo-l"><span>│                                                                      │</span></span>
-<span class="giallo-l"><span>│  ┌────────────────────────────────────────────────────────────────┐  │</span></span>
-<span class="giallo-l"><span>│  │  WiredEvolutionSystem (Factory + Adapter)                       │  │</span></span>
-<span class="giallo-l"><span>│  │  Wires Scheduler + DreamCycle + Population + Scoring + Genealogy│  │</span></span>
-<span class="giallo-l"><span>│  └────────────────────────────────────────────────────────────────┘  │</span></span>
-<span class="giallo-l"><span>└──────────────────────┬──────────────────────────────────────────────┘</span></span>
-<span class="giallo-l"><span>                       │ Phase 6 bridge</span></span>
-<span class="giallo-l"><span>┌──────────────────────▼──────────────────────────────────────────────┐</span></span>
-<span class="giallo-l"><span>│              internal/evolution/ (Runtime Evolution Engine)          │</span></span>
-<span class="giallo-l"><span>│                                                                      │</span></span>
-<span class="giallo-l"><span>│  genome/Registry  ──▶  diff/Registry  ──▶  coordinator/Coordinator  │</span></span>
-<span class="giallo-l"><span>│  (Genome interface)    (Differ interface)    (Patch decisions)       │</span></span>
-<span class="giallo-l"><span>│  MemoryGenome          DiffAll()             Apply/Reject/Delay     │</span></span>
-<span class="giallo-l"><span>│  PlannerGenome                                                      │</span></span>
-<span class="giallo-l"><span>└─────────────────────────────────────────────────────────────────────┘</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    API</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;api/evolution/ — Public API\nPopulation, DreamCycle,\nMutator, Promoter interfaces&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> CORE</span><span>[&quot;internal/ares_evolution/ — Core GA Engine&quot;]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        direction</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>        M</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;mutation\n.Strategy / .Mutator / .Types&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> G</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;genome\n.Population\n.Selection[] / .Crossover[]&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        G </span><span style="color: #CBA6F7;">--&gt;</span><span> SC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;scheduler\n.Scheduler / .DreamCycle&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        SC </span><span style="color: #CBA6F7;">--&gt;</span><span> EX</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;experience\n.Evidence / .Store / .Guidance&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>        W</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;WiredEvolutionSystem\nFactory + Adapter — wires\nScheduler, Population, Scoring, Genealogy&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> RUN</span><span>[&quot;internal/evolution/ — Runtime Evolution Engine&quot;]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        direction</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>        GR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;genome/Registry\nMemoryGenome / PlannerGenome&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> DR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;diff/Registry\nDiffAll()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        DR </span><span style="color: #CBA6F7;">--&gt;</span><span> CR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;coordinator/Coordinator\nApply / Reject / Delay&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    API </span><span style="color: #CBA6F7;">--&gt;</span><span> CORE</span></span>
+<span class="giallo-l"><span>    CORE </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;Phase 6 bridge&quot;</span><span style="color: #CBA6F7;">|</span><span> RUN</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> default</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> secondary</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> tertiary</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> output</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> API</span><span style="color: #A6E3A1;"> default</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> M,G,SC,EX,W</span><span style="color: #A6E3A1;"> secondary</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> GR,DR</span><span style="color: #A6E3A1;"> tertiary</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> CR</span><span style="color: #A6E3A1;"> output</span></span></code></pre>
 <p><strong>Design principle: the API layer exposes only interfaces, never implementations.</strong> External consumers interact with GA through <code>api/evolution.Population</code> — they don't need to know there are 7 selection operators inside. AI assistants are only allowed to reference packages under <code>api/evolution</code>, never <code>internal/</code>.</p>
 <hr />
 <h2 id="4-population-the-skeleton">4. Population: The Skeleton</h2>
@@ -1025,20 +1042,38 @@ v0.2.8: "We'll extract this in the next release."</p>
 <span class="giallo-l"><span>    AfterRun</span><span style="color: #CBA6F7;">              func</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">ctx</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> system</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;font-style: italic;">            // post-run hook</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p>The <code>RunIdleEvolution</code> method runs a complete N-generation evolution loop:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Scoring → Evolution → Genealogy Recording → LLM Reflection →</span></span>
-<span class="giallo-l"><span>Meta Control → Diff Engine → Coordinator → Post-Generation Hooks</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    S</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Scoring&quot;</span><span style="color: #CBA6F7;">] --</span><span style="color: #A6E3A1;">&gt; E[&quot;Evolution&quot;] </span><span style="color: #CBA6F7;">--&gt;</span><span> G</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Genealogy Recording&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;LLM Reflection&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    R </span><span style="color: #CBA6F7;">--</span><span style="color: #A6E3A1;">&gt; M[&quot;Meta Control&quot;] </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Diff Engine&quot;</span><span style="color: #CBA6F7;">] --</span><span style="color: #A6E3A1;">&gt; C[&quot;Coordinator&quot;] </span><span style="color: #CBA6F7;">--&gt;</span><span> H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Post-Generation Hooks&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> default</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> output</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> S,E,G,R,M,D,C</span><span style="color: #A6E3A1;"> default</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> H</span><span style="color: #A6E3A1;"> output</span></span></code></pre>
 <p>The scoring pipeline is layered, assembled by <code>GenomePopulationAdapter</code>:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>1. ScoreCache hit check (avoid repeated scoring)</span></span>
-<span class="giallo-l"><span>2. TieredScorer → LLM budget gating</span></span>
-<span class="giallo-l"><span>3. Heuristic fallback (when LLM is unavailable)</span></span>
-<span class="giallo-l"><span>4. MemoryAwareScorer (adjust scores based on experiential evidence)</span></span>
-<span class="giallo-l"><span>5. BatchScorer batch pre-fill</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    S1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ScoreCache hit check\navoid repeated scoring&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> S2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;TieredScorer\nLLM budget gating&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S2 </span><span style="color: #CBA6F7;">--&gt;</span><span> S3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Heuristic fallback\nwhen LLM is unavailable&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S3 </span><span style="color: #CBA6F7;">--&gt;</span><span> S4</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;MemoryAwareScorer\nadjust scores based on\nexperiential evidence&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S4 </span><span style="color: #CBA6F7;">--&gt;</span><span> S5</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;BatchScorer\nbatch pre-fill&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> default</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> output</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> S1,S2,S3,S4</span><span style="color: #A6E3A1;"> default</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> S5</span><span style="color: #A6E3A1;"> output</span></span></code></pre>
 <p>The benefit of this design: <strong>each layer has a distinct concern with low coupling.</strong> ScoreCache only handles caching, not scoring logic; MemoryAwareScorer only handles experience adjustment, not how LLMs are called. Modifying one layer doesn't affect the others.</p>
 <hr />
 <h2 id="9-experience-system-from-data-to-evolution-guidance">9. Experience System: From Data to Evolution Guidance</h2>
 <p>GA mutations need direction, otherwise it's just random search. The experience system converts historical observation data into evolution guidance signals.</p>
 <p>Pipeline:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>ToolCallRecord → ToolCallExperienceCollector → Normalizer → MemoryExperienceStore → AggregateEvidence → EvolutionHint</span></span></code></pre><h3 id="toolcallrecord">ToolCallRecord</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    TC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ToolCallRecord&quot;</span><span style="color: #CBA6F7;">] --</span><span style="color: #A6E3A1;">&gt; COL[&quot;ToolCallExperience\nCollector&quot;] </span><span style="color: #CBA6F7;">--&gt;</span><span> N</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Normalizer&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    N </span><span style="color: #CBA6F7;">--</span><span style="color: #A6E3A1;">&gt; MES[&quot;MemoryExperience\nStore&quot;] </span><span style="color: #CBA6F7;">--&gt;</span><span> AE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;AggregateEvidence&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> EH</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EvolutionHint&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> default</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> output</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> TC,COL,N,MES,AE</span><span style="color: #A6E3A1;"> default</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> EH</span><span style="color: #A6E3A1;"> output</span></span></code></pre><h3 id="toolcallrecord">ToolCallRecord</h3>
 <p>Captures detailed metrics for each tool invocation:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ToolCallRecord</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span>    StrategyID</span><span style="color: #CBA6F7;">      string</span></span>
@@ -1162,9 +1197,15 @@ v0.2.8: "We'll extract this in the next release."</p>
 <li><strong>PlannerGenome</strong>: planning parameters (Strategy "balanced"/"architecture-first"/"memory-first", MaxSources [3,30], MinRelevance [0.1,0.9])</li>
 </ul>
 <p>The diff engine converts genome differences into deployable patches:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>Genome</span><span style="color: #9399B2;"> (</span><span>old</span><span style="color: #9399B2;">)</span><span> ──┐</span></span>
-<span class="giallo-l"><span>                ├──→ Diff Engine ──→ </span><span style="color: #9399B2;">[]</span><span>RuntimePatch</span></span>
-<span class="giallo-l"><span>Genome</span><span style="color: #9399B2;"> (</span><span>new</span><span style="color: #9399B2;">)</span><span> ──┘</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    GO</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Genome (old)&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> DE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Diff Engine&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    GN</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Genome (new)&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> DE</span></span>
+<span class="giallo-l"><span>    DE </span><span style="color: #CBA6F7;">--&gt;</span><span> RP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;RuntimePatch[]&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> default</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    classDef</span><span> output</span><span style="color: #A6E3A1;"> fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> GO,GN,DE</span><span style="color: #A6E3A1;"> default</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span> RP</span><span style="color: #A6E3A1;"> output</span></span></code></pre>
 <p>The coordinator decides the fate of patches:</p>
 <ul>
 <li>Fitness &gt;= 60.0 → Apply (deploy immediately)</li>
@@ -1228,21 +1269,21 @@ v0.2.8: "We'll extract this in the next release."</p>
 </blockquote>
 <h2 id="1-architecture-overview">1. Architecture Overview</h2>
 <p>TieredScorer is the core scoring component in the evolutionary algorithm. It achieves a balance between cost and quality through a three-layer pipeline (Cache → LLM → Heuristic). The core idea is: <strong>use the cheapest tier that provides sufficiently good scores, and only invoke the expensive LLM when necessary</strong>.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>┌─────────────────────────────────────────────────┐</span></span>
-<span class="giallo-l"><span>│                  TieredScorer                    │</span></span>
-<span class="giallo-l"><span>│                                                   │</span></span>
-<span class="giallo-l"><span>│   ┌──────────┐    ┌──────────┐    ┌──────────┐  │</span></span>
-<span class="giallo-l"><span>│   │ Tier 1   │    │ Tier 2   │    │ Tier 3   │  │</span></span>
-<span class="giallo-l"><span>│   │ Cache    │───→│ LLM      │───→│Heuristic │  │</span></span>
-<span class="giallo-l"><span>│   │ O(1) hit │    │ Budget   │    │ Always   │  │</span></span>
-<span class="giallo-l"><span>│   │          │    │ Control  │    │ Available│  │</span></span>
-<span class="giallo-l"><span>│   └──────────┘    └──────────┘    └──────────┘  │</span></span>
-<span class="giallo-l"><span>│        │               │               │         │</span></span>
-<span class="giallo-l"><span>│        ▼               ▼               ▼         │</span></span>
-<span class="giallo-l"><span>│   CacheHit+1     LLMCall+1      HeuristicCall+1  │</span></span>
-<span class="giallo-l"><span>│   Return cached  Write cache    Write cache      │</span></span>
-<span class="giallo-l"><span>│   score                                          │</span></span>
-<span class="giallo-l"><span>└─────────────────────────────────────────────────┘</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> TS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">TieredScorer</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        T1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Tier 1: Cache\nO(1) hit&quot;</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">miss</span><span style="color: #CBA6F7;">|</span><span> T2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Tier 2: LLM\nBudget Control&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        T2 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">fail/over budget</span><span style="color: #CBA6F7;">|</span><span> T3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Tier 3: Heuristic\nAlways Available&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        T1 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">hit</span><span style="color: #CBA6F7;">|</span><span> R1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;CacheHit +1\nReturn cached score&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        T2 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">scored</span><span style="color: #CBA6F7;">|</span><span> R2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;LLMCall +1\nWrite cache&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        T3 </span><span style="color: #CBA6F7;">--&gt;</span><span> R3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;HeuristicCall +1\nWrite cache&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style T1 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style T2 fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style T3 fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style R1 fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style R2 fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style R3 fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>Source path: <code>internal/ares_evolution/scoring/tiered_scorer.go</code></p>
 <h2 id="2-tier-definition-and-pipeline-orchestration">2. Tier Definition and Pipeline Orchestration</h2>
 <h3 id="2-1-three-tier-enumeration">2.1 Three-Tier Enumeration</h3>
@@ -1862,22 +1903,17 @@ v0.2.8: "We'll extract this in the next release."</p>
 </blockquote>
 <h2 id="1-system-overview">1. System Overview</h2>
 <p>The Promoter is the core component of the evolution system that manages the "candidate strategy → champion strategy" promotion pipeline. Its design is inspired by the <strong>Champion/Challenger</strong> pattern: the system maintains a known-good "Champion" and multiple "Challengers" attempting to surpass it, determining strategy promotion and demotion through a rigorous evaluation process.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>┌─────────────────────────────────────────────────────┐</span></span>
-<span class="giallo-l"><span>│                  Promoter System Architecture        │</span></span>
-<span class="giallo-l"><span>│                                                       │</span></span>
-<span class="giallo-l"><span>│   ┌──────────┐    ┌──────────┐    ┌──────────┐      │</span></span>
-<span class="giallo-l"><span>│   │          │    │          │    │          │      │</span></span>
-<span class="giallo-l"><span>│   │ Candidate ├───→│  Shadow  ├───→│ Champion │      │</span></span>
-<span class="giallo-l"><span>│   │ (25选5) │    │  (Contend)│    │ (Execute)│      │</span></span>
-<span class="giallo-l"><span>│   │          │    │          │    │          │      │</span></span>
-<span class="giallo-l"><span>│   └──────────┘    └──────────┘    └──────────┘      │</span></span>
-<span class="giallo-l"><span>│        │                             │               │</span></span>
-<span class="giallo-l"><span>│        ▼                             ▼               │</span></span>
-<span class="giallo-l"><span>│   ┌──────────┐                  ┌──────────┐        │</span></span>
-<span class="giallo-l"><span>│   │  Demoted │                  │  Retired │        │</span></span>
-<span class="giallo-l"><span>│   │ (Cooling)│                  │ (Records)│        │</span></span>
-<span class="giallo-l"><span>│   └──────────┘                  └──────────┘        │</span></span>
-<span class="giallo-l"><span>└─────────────────────────────────────────────────────┘</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Candidate\n(25选5)&quot;</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">promote</span><span style="color: #CBA6F7;">|</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Shadow\n(Contend)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">promote</span><span style="color: #CBA6F7;">|</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Champion\n(Execute)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    A </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">fail</span><span style="color: #CBA6F7;">|</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Demoted\n(Cooling)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">demote</span><span style="color: #CBA6F7;">|</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Retired\n(Records)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style E fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>Source path: <code>internal/ares_evolution/promotion/</code></p>
 <h2 id="2-five-state-state-machine">2. Five-State State Machine</h2>
 <h3 id="2-1-state-definitions">2.1 State Definitions</h3>
@@ -1897,26 +1933,19 @@ v0.2.8: "We'll extract this in the next release."</p>
 <span class="giallo-l"><span style="color: #FAB387;">    StrategyRetired</span><span style="color: #9399B2;font-style: italic;">                          // 4</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
 <p>Complete lifecycle of the five states:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>StrategyCandidate (0)</span></span>
-<span class="giallo-l"><span>    │</span></span>
-<span class="giallo-l"><span>    │ Collect ≥10 samples + SuccessRate ≥ 50%</span></span>
-<span class="giallo-l"><span>    ▼</span></span>
-<span class="giallo-l"><span>StrategyShadow (1)</span></span>
-<span class="giallo-l"><span>    │</span></span>
-<span class="giallo-l"><span>    │ MeetsPromotionCriteria() + MinAbsoluteImprovement ≥ 0.5</span></span>
-<span class="giallo-l"><span>    ▼</span></span>
-<span class="giallo-l"><span>StrategyChampion (2)</span></span>
-<span class="giallo-l"><span>    │</span></span>
-<span class="giallo-l"><span>    ├── Rolling improvement stays positive → Remain champion</span></span>
-<span class="giallo-l"><span>    ├── Rolling improvement turns negative + exceeds ChampionHoldPeriod → StrategyDemoted (3)</span></span>
-<span class="giallo-l"><span>    └── MaxChampionTenure = 20 generations → Forced demotion to StrategyShadow (1)</span></span>
-<span class="giallo-l"><span>                                        │</span></span>
-<span class="giallo-l"><span>                                        ▼</span></span>
-<span class="giallo-l"><span>                                  StrategyDemoted (3)</span></span>
-<span class="giallo-l"><span>                                        │</span></span>
-<span class="giallo-l"><span>                                        │ Cooldown ChampionHoldPeriod×2 generations</span></span>
-<span class="giallo-l"><span>                                        ▼</span></span>
-<span class="giallo-l"><span>                                  StrategyRetired (4)</span></span></code></pre><h3 id="2-2-state-transition-validation-explicit-directed-graph">2.2 State Transition Validation: Explicit Directed Graph</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyCandidate (0)&quot;</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">&quot;≥10 samples\nSuccessRate ≥ 50%&quot;</span><span style="color: #CBA6F7;">|</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyShadow (1)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;MeetsPromotionCriteria()\nMinAbsoluteImprovement ≥ 0.5&quot;</span><span style="color: #CBA6F7;">|</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyChampion (2)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;Rolling improvement positive&quot;</span><span style="color: #CBA6F7;">|</span><span> C</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;Rolling negative +\nexceeds HoldPeriod&quot;</span><span style="color: #CBA6F7;">|</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyDemoted (3)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;MaxChampionTenure = 20\nforced demotion&quot;</span><span style="color: #CBA6F7;">|</span><span> B</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;Cooldown HoldPeriod×2&quot;</span><span style="color: #CBA6F7;">|</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;StrategyRetired (4)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style E fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre><h3 id="2-2-state-transition-validation-explicit-directed-graph">2.2 State Transition Validation: Explicit Directed Graph</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: internal/ares_evolution/promotion/types.go</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// CanPromoteTo and CanDemoteTo use explicit transition mapping tables</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// This design is safer and more maintainable than implicit if-else chains</span></span>
@@ -2250,32 +2279,35 @@ v0.2.8: "We'll extract this in the next release."</p>
 </blockquote>
 <h2 id="1-two-genealogy-systems">1. Two Genealogy Systems</h2>
 <p>ARES's evolution system maintains <strong>two parallel genealogy records</strong> serving different purposes:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>┌──────────────────────────────────────────────────────────────┐</span></span>
-<span class="giallo-l"><span>│                    Genealogy Recording Architecture            │</span></span>
-<span class="giallo-l"><span>│                                                                │</span></span>
-<span class="giallo-l"><span>│  ┌─────────────────────┐    ┌─────────────────────────────┐   │</span></span>
-<span class="giallo-l"><span>│  │  System A: Agent     │    │  System B: Strategy Lineage │   │</span></span>
-<span class="giallo-l"><span>│  │  Family Tree         │    │  (GA)                      │   │</span></span>
-<span class="giallo-l"><span>│  │  (ares_flight)       │    │  (ares_evolution)          │   │</span></span>
-<span class="giallo-l"><span>│  ├─────────────────────┤    ├─────────────────────────────┤   │</span></span>
-<span class="giallo-l"><span>│  │ Records: Agent       │    │ Records: Strategy           │   │</span></span>
-<span class="giallo-l"><span>│  │ lifecycle events     │    │ inheritance relationships   │   │</span></span>
-<span class="giallo-l"><span>│  │ Events: Spawn/Death/ │    │ Structure: StrategyLineage  │   │</span></span>
-<span class="giallo-l"><span>│  │       Resurrection   │    │ Storage: 10000-entry ring   │   │</span></span>
-<span class="giallo-l"><span>│  │ Structure: Tree      │    │          buffer             │   │</span></span>
-<span class="giallo-l"><span>│  │ (with parent node)   │    │ Structure: Flat list        │   │</span></span>
-<span class="giallo-l"><span>│  │ Purpose: Agent       │    │          (ordered)          │   │</span></span>
-<span class="giallo-l"><span>│  │ visualization        │    │ Purpose: Diversity control  │   │</span></span>
-<span class="giallo-l"><span>│  │                      │    │          + selection        │   │</span></span>
-<span class="giallo-l"><span>│  └─────────────────────┘    └─────────────────────────────┘   │</span></span>
-<span class="giallo-l"><span>│                                                                │</span></span>
-<span class="giallo-l"><span>│                        ┌──────────────┐                       │</span></span>
-<span class="giallo-l"><span>│                        │  LineageRank  │                      │</span></span>
-<span class="giallo-l"><span>│                        │  Selection    │                       │</span></span>
-<span class="giallo-l"><span>│                        │  MetaController│                      │</span></span>
-<span class="giallo-l"><span>│                        │  Guardrails   │                       │</span></span>
-<span class="giallo-l"><span>│                        └──────────────┘                       │</span></span>
-<span class="giallo-l"><span>└──────────────────────────────────────────────────────────────┘</span></span></code></pre><h2 id="2-strategylineage-core-data-structure">2. StrategyLineage: Core Data Structure</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Genealogy Recording Architecture&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;System A: Agent Family Tree\nares_flight&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    A </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;System B: Strategy Lineage (GA)\nares_evolution&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    A </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;LineageRank Selection\nMetaController\nGuardrails&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> B1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Records: Agent lifecycle events&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> B2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Events: Spawn / Death / Resurrection&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> B3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Structure: Tree (with parent node)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> B4</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Purpose: Agent visualization&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> C1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Records: Strategy inheritance relationships&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> C2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Structure: StrategyLineage&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> C3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Storage: 10000-entry ring buffer&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> C4</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Structure: Flat list (ordered)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> C5</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Purpose: Diversity control + selection&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style B1 fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B2 fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B3 fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B4 fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style C1 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C2 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C3 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C4 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C5 fill:#1e1e2e,stroke:#56b6c2</span></span></code></pre><h2 id="2-strategylineage-core-data-structure">2. StrategyLineage: Core Data Structure</h2>
 <h3 id="2-1-evolution-package-definition">2.1 Evolution Package Definition</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// File: internal/ares_evolution/interfaces.go:191-224</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> StrategyLineage</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
@@ -2662,28 +2694,28 @@ v0.2.8: "We'll extract this in the next release."</p>
 <span class="giallo-l"><span>    ChildScore</span><span style="color: #9399B2;">:</span><span>       best</span><span style="color: #9399B2;">.</span><span>Score</span><span style="color: #9399B2;">,</span></span>
 <span class="giallo-l"><span>    Timestamp</span><span style="color: #9399B2;">:</span><span>        time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Now</span><span style="color: #9399B2;">().</span><span style="color: #89B4FA;font-style: italic;">Unix</span><span style="color: #9399B2;">(),</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="11-lineage-diversity-control-panorama">11. Lineage Diversity Control Panorama</h2>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Lineage diversity decline process (unfavorable direction):</span></span>
-<span class="giallo-l"><span>    lineageDiv ↓  →  dominantShare ↑</span></span>
-<span class="giallo-l"><span>        │                 │</span></span>
-<span class="giallo-l"><span>        ▼                 ▼</span></span>
-<span class="giallo-l"><span>    MetaController    population.go</span></span>
-<span class="giallo-l"><span>    lineageDiv &lt; 0.3  DominantLineageShare &gt; 0.6</span></span>
-<span class="giallo-l"><span>        │                 │</span></span>
-<span class="giallo-l"><span>        ▼                 ▼</span></span>
-<span class="giallo-l"><span>    &quot;lineage_rank&quot;    injectFreshMutants()</span></span>
-<span class="giallo-l"><span>        │                 │</span></span>
-<span class="giallo-l"><span>        ▼                 ▼</span></span>
-<span class="giallo-l"><span>    LineageRankSelection  Fresh mutant injection</span></span>
-<span class="giallo-l"><span>    (penalize dominant    (add new lineages)</span></span>
-<span class="giallo-l"><span>     lineage)</span></span>
-<span class="giallo-l"><span>        │                 │</span></span>
-<span class="giallo-l"><span>        └───────┬─────────┘</span></span>
-<span class="giallo-l"><span>                ▼</span></span>
-<span class="giallo-l"><span>          Lineage diversity recovery ↑</span></span>
-<span class="giallo-l"><span>                │</span></span>
-<span class="giallo-l"><span>                ▼</span></span>
-<span class="giallo-l"><span>          Guardrails monitoring</span></span>
-<span class="giallo-l"><span>          MaxLineageShare = 0.8</span></span></code></pre><h2 id="12-summary">12. Summary</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;lineageDiv ↓&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;MetaController\nlineageDiv &amp;lt; 0.3&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;dominantShare ↑&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;population.go\nDominantLineageShare &amp;gt; 0.6&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Switch to lineage_rank selection&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;</span><span> F</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;injectFreshMutants()\nFresh mutant injection&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;</span><span> G</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;LineageRankSelection\nPenalize dominant lineage&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;</span><span> G</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    G </span><span style="color: #CBA6F7;">--&gt;</span><span> H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Lineage diversity recovery ↑&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    H </span><span style="color: #CBA6F7;">--&gt;</span><span> I</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Guardrails monitoring\nMaxLineageShare = 0.8&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style E fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style F fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style G fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style H fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style I fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre><h2 id="12-summary">12. Summary</h2>
 <p>The genealogy recording system is the core infrastructure for <strong>diversity control</strong> in the ARES evolution framework:</p>
 <ol>
 <li><strong>Two Parallel Systems</strong>: The Agent Family Tree (event-driven, tree structure) and Strategy Lineage (GA-driven, flat list) serve different visualization and analysis needs</li>
@@ -2929,7 +2961,25 @@ v0.2.8: "We'll extract this in the next release."</p>
 <h3 id="root-cause">Root Cause</h3>
 <p>File: <code>internal/ares_evolution/genome_wiring_system.go</code></p>
 <p>The <code>CreateWiredSystem</code> function was missing this line:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>PromptTemplates</span><span style="color: #94E2D5;"> =</span><span> PromptPool</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> WS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">CreateWiredSystem</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Population</span><span style="color: #CBA6F7;">] --&gt;</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">WiredSystem</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Genealogy</span><span style="color: #CBA6F7;">] --&gt;</span><span> E</span></span>
+<span class="giallo-l"><span>        C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">StopChan</span><span style="color: #CBA6F7;">] --&gt;</span><span> E</span></span>
+<span class="giallo-l"><span>        D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Generation</span><span style="color: #CBA6F7;">] --&gt;</span><span> E</span></span>
+<span class="giallo-l"><span>        X</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;PromptTemplates&quot;</span><span style="color: #CBA6F7;">] -.-&gt;|</span><span style="color: #A6E3A1;">&quot;MISSING&quot;</span><span style="color: #CBA6F7;">|</span><span> E</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    PP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">PromptPool</span><span style="color: #CBA6F7;">] -.-&gt;|</span><span style="color: #A6E3A1;">&quot;never connected&quot;</span><span style="color: #CBA6F7;">|</span><span> X</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style X fill:#1e1e2e,stroke:#ff6e6e,stroke-dasharray:6 3</span></span>
+<span class="giallo-l"><span>    style PP fill:#1e1e2e,stroke:#ff6e6e,stroke-dasharray:6 3</span></span>
+<span class="giallo-l"><span>    style E fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style WS fill:#1a1a28,stroke:#6272a4,stroke-dasharray:4 3</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>PromptTemplates</span><span style="color: #94E2D5;"> =</span><span> PromptPool</span></span></code></pre>
 <p>That's it. One field assignment.</p>
 <p>Wired mode uses <code>PromptPool</code> — an evidence-tracking prompt pool that manages available prompt templates. But <code>CreateWiredSystem</code> never set <code>PromptTemplates</code> to point to <code>PromptPool</code>. So all <code>PromptTemplates</code> lookups returned empty/null.</p>
 <p>The consequence? Prompt mutations recorded in the lineage system, but when the Wired system tried to render a genome with a mutated prompt template, it found nothing. The genome fell through to a default state — effectively disabling prompt evolution.</p>
@@ -2998,6 +3048,19 @@ v0.2.8: "We'll extract this in the next release."</p>
 <h3 id="6-data-driven-evolution-connect-real-execution-to-the-ga-loop">6. Data-Driven Evolution: Connect Real Execution to the GA Loop</h3>
 <p>The fifth lesson hints at a powerful idea: if the LLM can validate candidates, what else can observe and guide evolution? The <strong>Experience System</strong> answers this by closing the loop from production execution back to the GA.</p>
 <p>The pipeline: <code>ToolCallRecord → RawExperience → NormalizedExperience → MemoryExperienceStore → AggregateEvidence → EvolutionHint</code></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    TC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ToolCallRecord</span><span style="color: #CBA6F7;">] --&gt;</span><span> RE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">RawExperience</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    RE </span><span style="color: #CBA6F7;">--&gt;</span><span> NE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">NormalizedExperience</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    NE </span><span style="color: #CBA6F7;">--&gt;</span><span> MS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">MemoryExperienceStore</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    MS </span><span style="color: #CBA6F7;">--&gt;</span><span> AE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">AggregateEvidence</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    AE </span><span style="color: #CBA6F7;">--&gt;</span><span> EH</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EvolutionHint</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style TC fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style RE fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style NE fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style MS fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style AE fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style EH fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>Three key components:</p>
 <ul>
 <li>

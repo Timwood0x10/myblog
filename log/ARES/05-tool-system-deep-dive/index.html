@@ -14,6 +14,11 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
@@ -118,19 +123,21 @@ So I added a fourth path — a deterministic fallback engine for when the LLM ge
 <span class="giallo-l"><span>    P3A </span><span style="color: #CBA6F7;">--&gt;</span><span> TOOL</span></span>
 <span class="giallo-l"><span>    P4A </span><span style="color: #CBA6F7;">--&gt;</span><span> TOOL</span></span></code></pre>
 <p>When the LLM decides to call a tool, the data flows like this:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>LLM returns tool_calls (OpenAI JSON)</span></span>
-<span class="giallo-l"><span>    ↓</span></span>
-<span class="giallo-l"><span>parseToolCallsFromResponse()     [internal/llm/output/openai.go]</span></span>
-<span class="giallo-l"><span>    ↓ ToolCallResponse { ToolCalls: [{ID, Name, Arguments}] }</span></span>
-<span class="giallo-l"><span>sub-agent executor               [internal/agents/sub/executor.go]</span></span>
-<span class="giallo-l"><span>    ↓ iterate ToolCalls</span></span>
-<span class="giallo-l"><span>toolBinder.CallTool(name, args)  [internal/agents/sub/tools.go]</span></span>
-<span class="giallo-l"><span>    ↓ lookup closure mapping</span></span>
-<span class="giallo-l"><span>Registry.Execute(ctx, params)    [internal/tools/resources/core/registry.go]</span></span>
-<span class="giallo-l"><span>    ↓ lookup by name</span></span>
-<span class="giallo-l"><span>Tool.Execute(ctx, params)        [core/tool.go]</span></span>
-<span class="giallo-l"><span>    ↓</span></span>
-<span class="giallo-l"><span>core.Result { Success, Data, Error }</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;LLM returns tool_calls&lt;br/&gt;OpenAI JSON&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;parseToolCallsFromResponse()&lt;br/&gt;&lt;i&gt;internal/llm/output/openai.go&lt;/i&gt;&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;sub-agent executor&lt;br/&gt;&lt;i&gt;internal/agents/sub/executor.go&lt;/i&gt;&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;toolBinder.CallTool(name, args)&lt;br/&gt;&lt;i&gt;internal/agents/sub/tools.go&lt;/i&gt;&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Registry.Execute(ctx, params)&lt;br/&gt;&lt;i&gt;internal/tools/resources/core/registry.go&lt;/i&gt;&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;</span><span> F</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Tool.Execute(ctx, params)&lt;br/&gt;&lt;i&gt;core/tool.go&lt;/i&gt;&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;</span><span> G</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;core.Result&lt;br/&gt;Success / Data / Error&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style E fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style F fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style G fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>But there's a hidden branch: if the LLM's <code>tool_name</code> doesn't exist in the Registry, or the LLM didn't return any <code>tool_calls</code> at all, the system falls through to <strong>Path 2</strong> — the Planner safety net.</p>
 <hr />
 <h2 id="2-path-1-llm-driven-tool-invocation">2. Path 1: LLM-Driven Tool Invocation</h2>
@@ -243,24 +250,31 @@ So I added a fourth path — a deterministic fallback engine for when the LLM ge
 </tbody></table>
 <h3 id="3-3-planner-s-five-step-pipeline">3.3 Planner's Five-Step Pipeline</h3>
 <p>When the Planner receives a request, it executes five deterministic steps:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>User Request &quot;sum from 1 to 1,000,000&quot;</span></span>
-<span class="giallo-l"><span>    ↓</span></span>
-<span class="giallo-l"><span>Step 1: Semantic Analysis (SemanticAnalyzer)</span></span>
-<span class="giallo-l"><span>    → Intent{goal: &quot;mathematical computation&quot;, capabilities: [&quot;Summation&quot;]}</span></span>
-<span class="giallo-l"><span>    ↓</span></span>
-<span class="giallo-l"><span>Step 2: Capability Planning (CapabilityPlanner)</span></span>
-<span class="giallo-l"><span>    → [CapabilityRequirement{Name: &quot;Summation&quot;, Tool: &quot;calculator&quot;}]</span></span>
-<span class="giallo-l"><span>    ↓</span></span>
-<span class="giallo-l"><span>Step 3: Tool Resolution (ToolResolver)</span></span>
-<span class="giallo-l"><span>    → [ToolCandidate{Name: &quot;calculator&quot;, Score: 0, Cost: 1}]</span></span>
-<span class="giallo-l"><span>    ↓</span></span>
-<span class="giallo-l"><span>Step 4: Evidence Scoring (ToolScorer)</span></span>
-<span class="giallo-l"><span>    → calculator 28.5pts vs web_search 15.3pts</span></span>
-<span class="giallo-l"><span>    ↓</span></span>
-<span class="giallo-l"><span>Step 5: Parameter Extraction (ParameterExtractor)</span></span>
-<span class="giallo-l"><span>    → {&quot;expression&quot;: &quot;1000000*(1000000+1)/2&quot;}</span></span>
-<span class="giallo-l"><span>    ↓</span></span>
-<span class="giallo-l"><span>Execution Plan → Bridge.Execute()</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    U</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;User Request&lt;br/&gt;&lt;i&gt;sum from 1 to 1,000,000&lt;/i&gt;&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> S1</span></span>
+<span class="giallo-l"><span>    S1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Step 1: Semantic Analysis&lt;br/&gt;SemanticAnalyzer&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> S1O</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Intent&lt;br/&gt;goal: mathematical computation&lt;br/&gt;capabilities: Summation&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S1O </span><span style="color: #CBA6F7;">--&gt;</span><span> S2</span></span>
+<span class="giallo-l"><span>    S2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Step 2: Capability Planning&lt;br/&gt;CapabilityPlanner&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> S2O</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;CapabilityRequirement&lt;br/&gt;Name: Summation, Tool: calculator&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S2O </span><span style="color: #CBA6F7;">--&gt;</span><span> S3</span></span>
+<span class="giallo-l"><span>    S3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Step 3: Tool Resolution&lt;br/&gt;ToolResolver&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> S3O</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ToolCandidate&lt;br/&gt;Name: calculator, Score: 0, Cost: 1&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S3O </span><span style="color: #CBA6F7;">--&gt;</span><span> S4</span></span>
+<span class="giallo-l"><span>    S4</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Step 4: Evidence Scoring&lt;br/&gt;ToolScorer&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> S4O</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;calculator 28.5pts&lt;br/&gt;vs web_search 15.3pts&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S4O </span><span style="color: #CBA6F7;">--&gt;</span><span> S5</span></span>
+<span class="giallo-l"><span>    S5</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Step 5: Parameter Extraction&lt;br/&gt;ParameterExtractor&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> S5O</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;expression: 1000000*(1000000+1)/2&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S5O </span><span style="color: #CBA6F7;">--&gt;</span><span> EP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Execution Plan&lt;br/&gt;→ Bridge.Execute()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style U fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style S1 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style S1O fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style S2 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style S2O fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style S3 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style S3O fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style S4 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style S4O fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style S5 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style S5O fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style EP fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p><strong>Step 1: Semantic Analysis</strong></p>
 <p>The <code>SemanticAnalyzer</code> is a rule engine with 20 built-in rules covering both Chinese and English:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/tools/planner/analyzer.go</span></span>

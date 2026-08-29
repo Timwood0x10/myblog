@@ -14,6 +14,11 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
@@ -297,7 +302,25 @@
 <h3 id="root-cause">Root Cause</h3>
 <p>File: <code>internal/ares_evolution/genome_wiring_system.go</code></p>
 <p>The <code>CreateWiredSystem</code> function was missing this line:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>PromptTemplates</span><span style="color: #94E2D5;"> =</span><span> PromptPool</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> WS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">CreateWiredSystem</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Population</span><span style="color: #CBA6F7;">] --&gt;</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">WiredSystem</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Genealogy</span><span style="color: #CBA6F7;">] --&gt;</span><span> E</span></span>
+<span class="giallo-l"><span>        C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">StopChan</span><span style="color: #CBA6F7;">] --&gt;</span><span> E</span></span>
+<span class="giallo-l"><span>        D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Generation</span><span style="color: #CBA6F7;">] --&gt;</span><span> E</span></span>
+<span class="giallo-l"><span>        X</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;PromptTemplates&quot;</span><span style="color: #CBA6F7;">] -.-&gt;|</span><span style="color: #A6E3A1;">&quot;MISSING&quot;</span><span style="color: #CBA6F7;">|</span><span> E</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    PP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">PromptPool</span><span style="color: #CBA6F7;">] -.-&gt;|</span><span style="color: #A6E3A1;">&quot;never connected&quot;</span><span style="color: #CBA6F7;">|</span><span> X</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style X fill:#1e1e2e,stroke:#ff6e6e,stroke-dasharray:6 3</span></span>
+<span class="giallo-l"><span>    style PP fill:#1e1e2e,stroke:#ff6e6e,stroke-dasharray:6 3</span></span>
+<span class="giallo-l"><span>    style E fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style WS fill:#1a1a28,stroke:#6272a4,stroke-dasharray:4 3</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>PromptTemplates</span><span style="color: #94E2D5;"> =</span><span> PromptPool</span></span></code></pre>
 <p>That's it. One field assignment.</p>
 <p>Wired mode uses <code>PromptPool</code> — an evidence-tracking prompt pool that manages available prompt templates. But <code>CreateWiredSystem</code> never set <code>PromptTemplates</code> to point to <code>PromptPool</code>. So all <code>PromptTemplates</code> lookups returned empty/null.</p>
 <p>The consequence? Prompt mutations recorded in the lineage system, but when the Wired system tried to render a genome with a mutated prompt template, it found nothing. The genome fell through to a default state — effectively disabling prompt evolution.</p>
@@ -366,6 +389,19 @@
 <h3 id="6-data-driven-evolution-connect-real-execution-to-the-ga-loop">6. Data-Driven Evolution: Connect Real Execution to the GA Loop</h3>
 <p>The fifth lesson hints at a powerful idea: if the LLM can validate candidates, what else can observe and guide evolution? The <strong>Experience System</strong> answers this by closing the loop from production execution back to the GA.</p>
 <p>The pipeline: <code>ToolCallRecord → RawExperience → NormalizedExperience → MemoryExperienceStore → AggregateEvidence → EvolutionHint</code></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    TC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ToolCallRecord</span><span style="color: #CBA6F7;">] --&gt;</span><span> RE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">RawExperience</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    RE </span><span style="color: #CBA6F7;">--&gt;</span><span> NE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">NormalizedExperience</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    NE </span><span style="color: #CBA6F7;">--&gt;</span><span> MS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">MemoryExperienceStore</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    MS </span><span style="color: #CBA6F7;">--&gt;</span><span> AE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">AggregateEvidence</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    AE </span><span style="color: #CBA6F7;">--&gt;</span><span> EH</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EvolutionHint</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style TC fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style RE fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style NE fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style MS fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style AE fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style EH fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>Three key components:</p>
 <ul>
 <li>

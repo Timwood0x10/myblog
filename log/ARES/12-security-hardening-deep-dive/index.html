@@ -14,6 +14,11 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
@@ -114,10 +119,28 @@ This is the story of how ares learned to defend itself.</p>
 <p>Before diving into the solution, let me explain why this problem is so pervasive. It's not that LLMs are stupid — it's that the entire agent architecture creates a perfect storm for security vulnerabilities.</p>
 <h3 id="2-1-the-trust-chain-problem">2.1 The Trust Chain Problem</h3>
 <p>Traditional applications have clear trust boundaries:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>User Input -&gt; Validation Layer -&gt; Sanitization Layer -&gt; Business Logic -&gt; Data Access</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;User Input&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Validation Layer&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Sanitization Layer&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Business Logic&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Data Access&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style E fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>Each layer is written by humans who understand security. Each boundary has explicit checks. Each data transformation is deliberate.</p>
 <p>Agents break this chain completely:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>User Input -&gt; [LLM Black Box] -&gt; Generated Code/Query/Command -&gt; Direct Execution</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;User Input&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;LLM Black Box&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Generated Code/&lt;br/&gt;Query / Command&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Direct Execution&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style A fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style B fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style C fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style D fill:#1e1e2e,stroke:#e0af68</span></span></code></pre>
 <p>The LLM is a black box. You don't control what comes out. You can't add validation inside the model's reasoning process. The output could be anything — a perfectly safe query, or a carefully crafted injection payload. And the agent framework? It trusts the output implicitly because "the LLM generated it, so it must be reasonable."</p>
 <p>That assumption is dead wrong.</p>
 <h3 id="2-2-the-attack-surface-map">2.2 The Attack Surface Map</h3>
@@ -2800,38 +2823,65 @@ This is the story of how ares learned to defend itself.</p>
 <h2 id="14-conclusion">14. Conclusion</h2>
 <p>ares's security hardening system translates a simple insight into five coordinated layers: <strong>agents are autonomous processes with natural language input and broad execution capabilities — that combination is inherently dangerous unless every step is guarded.</strong></p>
 <p>The complete defense pipeline:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Raw Input / LLM Output</span></span>
-<span class="giallo-l"><span>  │</span></span>
-<span class="giallo-l"><span>  ├─ Layer 1: Input Sanitizer (~40μs)</span></span>
-<span class="giallo-l"><span>  │   SQL: ForceParameterized() — deny-by-default, pattern-match only</span></span>
-<span class="giallo-l"><span>  │   Path: Sanitize() + EvalSymlinks() — canonicalize + contain</span></span>
-<span class="giallo-l"><span>  │   Cmd:  Sanitize() + Allowlist — no shells, no dangerous binaries</span></span>
-<span class="giallo-l"><span>  │   URL:  Sanitize() + DNSRebindCheck() — allowlist + double-resolve</span></span>
-<span class="giallo-l"><span>  │</span></span>
-<span class="giallo-l"><span>  ├─ Layer 2: Permission Guard (~3μs)</span></span>
-<span class="giallo-l"><span>  │   RBAC: Evaluate() — role → permission → condition check</span></span>
-<span class="giallo-l"><span>  │   OpWhitelist: IsAllowed() — global operation bans</span></span>
-<span class="giallo-l"><span>  │   Sandbox: Execute() — resource-limited containment</span></span>
-<span class="giallo-l"><span>  │</span></span>
-<span class="giallo-l"><span>  ├─ Layer 3: Audit Logger (~2μs, async)</span></span>
-<span class="giallo-l"><span>  │   Log(): non-blocking channel → batch flush → EventSink</span></span>
-<span class="giallo-l"><span>  │   Hash chain: PrevEventHash ↔ ThisEventHash (tamper-evident)</span></span>
-<span class="giallo-l"><span>  │   PII-safe: SHA-256 fingerprint, no raw input logged</span></span>
-<span class="giallo-l"><span>  │</span></span>
-<span class="giallo-l"><span>  ├─ Layer 4: Rate Limiter (~0.5μs)</span></span>
-<span class="giallo-l"><span>  │   TokenBucket: Allow() — burst-friendly, long-term enforcement</span></span>
-<span class="giallo-l"><span>  │   SlidingWindow: Allow() — precise per-window counting</span></span>
-<span class="giallo-l"><span>  │   MultiLimiter: Check() — per-agent + per-tenant + per-op + global</span></span>
-<span class="giallo-l"><span>  │</span></span>
-<span class="giallo-l"><span>  └─ Layer 5: Kill Switch (~5μs)</span></span>
-<span class="giallo-l"><span>      BaselineLearner: Record() → Welford&#39;s online algorithm</span></span>
-<span class="giallo-l"><span>      AnomalyDetector: Evaluate() → Z-score + Rule-based (Composite)</span></span>
-<span class="giallo-l"><span>      CircuitBreaker: Allow() → Closed/Open/HalfOpen (atomic, &lt;10ns)</span></span>
-<span class="giallo-l"><span>      EmergencyStop: Manual override (atomic bool)</span></span>
-<span class="giallo-l"><span>      │</span></span>
-<span class="giallo-l"><span>      ▼</span></span>
-<span class="giallo-l"><span>  PASS → Safe Execution (~51μs total overhead, &lt;0.01% of LLM latency)</span></span>
-<span class="giallo-l"><span>  BLOCK → Audited rejection + alert + circuit isolation</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    INPUT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Raw Input / LLM Output&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> L1</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L1 </span><span>[&quot;Layer 1: Input Sanitizer ~40μs&quot;]</span></span>
+<span class="giallo-l"><span>        direction TB</span></span>
+<span class="giallo-l"><span>        L1A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;SQL: ForceParameterized()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L1B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Path: Sanitize + EvalSymlinks&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L1C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Cmd: Sanitize + Allowlist&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L1D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;URL: Sanitize + DNSRebindCheck&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L1 </span><span style="color: #CBA6F7;">--&gt;</span><span> L2</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L2 </span><span>[&quot;Layer 2: Permission Guard ~3μs&quot;]</span></span>
+<span class="giallo-l"><span>        direction TB</span></span>
+<span class="giallo-l"><span>        L2A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;RBAC: Evaluate()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L2B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;OpWhitelist: IsAllowed()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L2C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Sandbox: Execute()&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L2 </span><span style="color: #CBA6F7;">--&gt;</span><span> L3</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L3 </span><span>[&quot;Layer 3: Audit Logger ~2μs async&quot;]</span></span>
+<span class="giallo-l"><span>        direction TB</span></span>
+<span class="giallo-l"><span>        L3A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Log → batch flush → EventSink&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L3B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Hash chain: tamper-evident&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L3C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;PII-safe: SHA-256 fingerprint&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L3 </span><span style="color: #CBA6F7;">--&gt;</span><span> L4</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L4 </span><span>[&quot;Layer 4: Rate Limiter ~0.5μs&quot;]</span></span>
+<span class="giallo-l"><span>        direction TB</span></span>
+<span class="giallo-l"><span>        L4A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;TokenBucket: burst-friendly&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L4B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;SlidingWindow: per-window&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L4C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;MultiLimiter: multi-dimension&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L4 </span><span style="color: #CBA6F7;">--&gt;</span><span> L5</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L5 </span><span>[&quot;Layer 5: Kill Switch ~5μs&quot;]</span></span>
+<span class="giallo-l"><span>        direction TB</span></span>
+<span class="giallo-l"><span>        L5A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;BaselineLearner: Welford&#39;s algorithm&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L5B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;AnomalyDetector: Z-score + Rules&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L5C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;CircuitBreaker: atomic &lt;10ns&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L5D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EmergencyStop: manual override&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    L5 </span><span style="color: #CBA6F7;">--&gt;</span><span> PASS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;PASS → Safe Execution&lt;br/&gt;~51μs total, &lt;0.01% overhead&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    L5 </span><span style="color: #CBA6F7;">--&gt;</span><span> BLOCK</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;BLOCK → Audited rejection&lt;br/&gt;+ alert + circuit isolation&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style INPUT fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style L1 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style L2 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style L3 fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style L4 fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style L5 fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style PASS fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style BLOCK fill:#1e1e2e,stroke:#e0af68</span></span></code></pre>
 <p>The design principles that guided every decision:</p>
 <ul>
 <li><strong>Deny by default</strong>: If it's not explicitly allowed, it's blocked. No "looks safe enough," no heuristic guesses.</li>

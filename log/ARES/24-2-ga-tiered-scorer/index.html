@@ -14,6 +14,11 @@
 
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
@@ -84,21 +89,21 @@
 </blockquote>
 <h2 id="1-architecture-overview">1. Architecture Overview</h2>
 <p>TieredScorer is the core scoring component in the evolutionary algorithm. It achieves a balance between cost and quality through a three-layer pipeline (Cache → LLM → Heuristic). The core idea is: <strong>use the cheapest tier that provides sufficiently good scores, and only invoke the expensive LLM when necessary</strong>.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>┌─────────────────────────────────────────────────┐</span></span>
-<span class="giallo-l"><span>│                  TieredScorer                    │</span></span>
-<span class="giallo-l"><span>│                                                   │</span></span>
-<span class="giallo-l"><span>│   ┌──────────┐    ┌──────────┐    ┌──────────┐  │</span></span>
-<span class="giallo-l"><span>│   │ Tier 1   │    │ Tier 2   │    │ Tier 3   │  │</span></span>
-<span class="giallo-l"><span>│   │ Cache    │───→│ LLM      │───→│Heuristic │  │</span></span>
-<span class="giallo-l"><span>│   │ O(1) hit │    │ Budget   │    │ Always   │  │</span></span>
-<span class="giallo-l"><span>│   │          │    │ Control  │    │ Available│  │</span></span>
-<span class="giallo-l"><span>│   └──────────┘    └──────────┘    └──────────┘  │</span></span>
-<span class="giallo-l"><span>│        │               │               │         │</span></span>
-<span class="giallo-l"><span>│        ▼               ▼               ▼         │</span></span>
-<span class="giallo-l"><span>│   CacheHit+1     LLMCall+1      HeuristicCall+1  │</span></span>
-<span class="giallo-l"><span>│   Return cached  Write cache    Write cache      │</span></span>
-<span class="giallo-l"><span>│   score                                          │</span></span>
-<span class="giallo-l"><span>└─────────────────────────────────────────────────┘</span></span></code></pre>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> TS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">TieredScorer</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        T1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Tier 1: Cache\nO(1) hit&quot;</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">miss</span><span style="color: #CBA6F7;">|</span><span> T2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Tier 2: LLM\nBudget Control&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        T2 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">fail/over budget</span><span style="color: #CBA6F7;">|</span><span> T3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Tier 3: Heuristic\nAlways Available&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        T1 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">hit</span><span style="color: #CBA6F7;">|</span><span> R1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;CacheHit +1\nReturn cached score&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        T2 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">scored</span><span style="color: #CBA6F7;">|</span><span> R2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;LLMCall +1\nWrite cache&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        T3 </span><span style="color: #CBA6F7;">--&gt;</span><span> R3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;HeuristicCall +1\nWrite cache&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    style T1 fill:#1e1e2e,stroke:#56b6c2</span></span>
+<span class="giallo-l"><span>    style T2 fill:#1e1e2e,stroke:#e0af68</span></span>
+<span class="giallo-l"><span>    style T3 fill:#1e1e2e,stroke:#bd93f9</span></span>
+<span class="giallo-l"><span>    style R1 fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style R2 fill:#1e1e2e,stroke:#50fa7b</span></span>
+<span class="giallo-l"><span>    style R3 fill:#1e1e2e,stroke:#50fa7b</span></span></code></pre>
 <p>Source path: <code>internal/ares_evolution/scoring/tiered_scorer.go</code></p>
 <h2 id="2-tier-definition-and-pipeline-orchestration">2. Tier Definition and Pipeline Orchestration</h2>
 <h3 id="2-1-three-tier-enumeration">2.1 Three-Tier Enumeration</h3>
