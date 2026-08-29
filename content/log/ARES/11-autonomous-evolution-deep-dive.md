@@ -130,9 +130,6 @@ graph TD
     WR2 --> |Fail| DISCARD
     WR3 --> |Fail| DISCARD
 
-    style M fill:#e1f5fe
-    style WIN fill:#c8e6c9
-    style DISCARD fill:#ffcdd2
 ```
 
 Key design decisions:
@@ -684,10 +681,6 @@ graph TB
     FS -.-> |"inject"| AGENT3["LeaderAgent"]
     ER -.-> |"inject"| ARENA["RegressionTester"]
 
-    style MAIN fill:#fff9c4
-    style CR fill:#e1f5fe
-    style GA fill:#c8e6c9
-    style SS fill:#fff9c4
 ```
 
 ### Core Code
@@ -905,13 +898,6 @@ graph LR
     A --> B[Best Child]
     B -->|Replace| P
 
-    style P fill:#1e1e2e,stroke:#50fa7b
-    style M fill:#1e1e2e,stroke:#e0af68
-    style CA fill:#1e1e2e,stroke:#56b6c2
-    style CB fill:#1e1e2e,stroke:#56b6c2
-    style CC fill:#1e1e2e,stroke:#56b6c2
-    style A fill:#1e1e2e,stroke:#bd93f9
-    style B fill:#1e1e2e,stroke:#50fa7b
 ```
 
 Seems intuitive, right? Keep only the optimal solution each time, simple and efficient. But after a few days I noticed a problem: **population diversity was rapidly deteriorating.**
@@ -1566,9 +1552,6 @@ graph TD
         POLICY -.-> |"Detect continuous decline"| ROLLBACK["Auto-rollback to<br/>historical peak"]
     end
 
-    style STORE fill:#fff9c4
-    style METRICS fill:#e1f5fe
-    style ROLLBACK fill:#c8e6c9
 ```
 
 Three persistence paths, each with a distinct role:
@@ -1746,18 +1729,6 @@ graph TD
     PGS[PGStrategyStore] --> SS
     SS --> IL["Infra Layer\nSnapshot / Audit"]
 
-    style MM fill:#1e1e2e,stroke:#e0af68
-    style GMA fill:#1e1e2e,stroke:#56b6c2
-    style GP fill:#1e1e2e,stroke:#e0af68
-    style GPA fill:#1e1e2e,stroke:#56b6c2
-    style ES fill:#1e1e2e,stroke:#bd93f9
-    style CR fill:#1e1e2e,stroke:#56b6c2
-    style DC fill:#1e1e2e,stroke:#bd93f9
-    style MA fill:#1e1e2e,stroke:#56b6c2
-    style GR fill:#1e1e2e,stroke:#56b6c2
-    style SS fill:#1e1e2e,stroke:#50fa7b
-    style PGS fill:#1e1e2e,stroke:#56b6c2
-    style IL fill:#1e1e2e,stroke:#50fa7b
 ```
 
 Six layers deep, each with a clear responsibility. The genome layer (pure computation, zero I/O), the wiring layer (adapters and orchestration), the persistence layer (database via repository pattern), and the infrastructure layer (runtime snapshots and genealogy auditing). Each layer can be tested, replaced, or upgraded independently.
@@ -1891,12 +1862,6 @@ graph TD
     MES --> AE[AggregateEvidence]
     AE --> EH["EvolutionHint\nmutation guidance"]
 
-    style TCR fill:#1e1e2e,stroke:#e0af68
-    style RE fill:#1e1e2e,stroke:#e0af68
-    style NE fill:#1e1e2e,stroke:#56b6c2
-    style MES fill:#1e1e2e,stroke:#56b6c2
-    style AE fill:#1e1e2e,stroke:#bd93f9
-    style EH fill:#1e1e2e,stroke:#50fa7b
 ```
 
 **Core Components:**
@@ -2188,19 +2153,6 @@ graph TD
     EXE --> SSA[StrategyStore.SetActive]
     SSA --> PW["persist winner → GetActive()"]
 
-    style BT fill:#1e1e2e,stroke:#56b6c2
-    style OAC fill:#1e1e2e,stroke:#56b6c2
-    style ES fill:#1e1e2e,stroke:#bd93f9
-    style GPA fill:#1e1e2e,stroke:#e0af68
-    style GA fill:#1e1e2e,stroke:#e0af68
-    style SORT fill:#1e1e2e,stroke:#e0af68
-    style CROSSMUT fill:#1e1e2e,stroke:#56b6c2
-    style STC fill:#1e1e2e,stroke:#bd93f9
-    style GDP fill:#1e1e2e,stroke:#bd93f9
-    style CE fill:#1e1e2e,stroke:#bd93f9
-    style EXE fill:#1e1e2e,stroke:#bd93f9
-    style SSA fill:#1e1e2e,stroke:#50fa7b
-    style PW fill:#1e1e2e,stroke:#50fa7b
 ```
 
 The system's design philosophy is **conservative incrementalism**:
@@ -2227,12 +2179,6 @@ graph LR
     SAS --> GA["GetActive() on startup"]
     GA --> DS[Deployed Strategy]
 
-    style NP fill:#1e1e2e,stroke:#e0af68
-    style RIE fill:#1e1e2e,stroke:#56b6c2
-    style BSF fill:#1e1e2e,stroke:#bd93f9
-    style SAS fill:#1e1e2e,stroke:#bd93f9
-    style GA fill:#1e1e2e,stroke:#50fa7b
-    style DS fill:#1e1e2e,stroke:#50fa7b
 ```
 
 That's a closed loop. Not a perfect one — `shouldEvolve()`'s score degradation detection isn't wired up, Level 3 tool auto-generation is still just an enum value, and several docs still need updating. But the skeleton is solid, and the system is production-ready for its intended use case: autonomous strategy evolution in live agents.

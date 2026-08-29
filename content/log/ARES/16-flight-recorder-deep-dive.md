@@ -84,11 +84,6 @@ graph TB
     MM -.- FR
     ES --> C
 
-    style FR fill:#e1f5fe
-    style C fill:#fff3cd
-    style ES fill:#f0f0f0
-    style GL fill:#f0f0f0
-    style MM fill:#f0f0f0
 ```
 
 The `FlightRecorder` struct itself has just four fields:

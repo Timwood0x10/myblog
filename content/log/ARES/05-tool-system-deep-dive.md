@@ -65,13 +65,6 @@ flowchart TD
     E --> F["Tool.Execute(ctx, params)<br/><i>core/tool.go</i>"]
     F --> G["core.Result<br/>Success / Data / Error"]
 
-    style A fill:#1e1e2e,stroke:#e0af68
-    style B fill:#1e1e2e,stroke:#56b6c2
-    style C fill:#1e1e2e,stroke:#56b6c2
-    style D fill:#1e1e2e,stroke:#56b6c2
-    style E fill:#1e1e2e,stroke:#bd93f9
-    style F fill:#1e1e2e,stroke:#bd93f9
-    style G fill:#1e1e2e,stroke:#50fa7b
 ```
 
 But there's a hidden branch: if the LLM's `tool_name` doesn't exist in the Registry, or the LLM didn't return any `tool_calls` at all, the system falls through to **Path 2** — the Planner safety net.
@@ -241,18 +234,6 @@ flowchart TD
     S5["Step 5: Parameter Extraction<br/>ParameterExtractor"] --> S5O["expression: 1000000*(1000000+1)/2"]
     S5O --> EP["Execution Plan<br/>→ Bridge.Execute()"]
 
-    style U fill:#1e1e2e,stroke:#e0af68
-    style S1 fill:#1e1e2e,stroke:#56b6c2
-    style S1O fill:#1e1e2e,stroke:#bd93f9
-    style S2 fill:#1e1e2e,stroke:#56b6c2
-    style S2O fill:#1e1e2e,stroke:#bd93f9
-    style S3 fill:#1e1e2e,stroke:#56b6c2
-    style S3O fill:#1e1e2e,stroke:#bd93f9
-    style S4 fill:#1e1e2e,stroke:#56b6c2
-    style S4O fill:#1e1e2e,stroke:#bd93f9
-    style S5 fill:#1e1e2e,stroke:#56b6c2
-    style S5O fill:#1e1e2e,stroke:#bd93f9
-    style EP fill:#1e1e2e,stroke:#50fa7b
 ```
 
 **Step 1: Semantic Analysis**

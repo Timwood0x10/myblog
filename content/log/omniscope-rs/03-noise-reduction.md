@@ -85,10 +85,6 @@ flowchart TD
     I --> J[9. Reconcile Arbitration]
     J --> K[Final Report]
 
-    style F fill:#ff6b6b,color:#fff
-    style G fill:#ffa502,color:#fff
-    style H fill:#2ed573,color:#fff
-    style J fill:#747d8c,color:#fff
 ```
 
 ### Layers 1–5: Quick Pre-Filter

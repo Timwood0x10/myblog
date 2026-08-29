@@ -74,11 +74,6 @@ flowchart LR
     C --> D["Business Logic"]
     D --> E["Data Access"]
 
-    style A fill:#1e1e2e,stroke:#e0af68
-    style B fill:#1e1e2e,stroke:#56b6c2
-    style C fill:#1e1e2e,stroke:#56b6c2
-    style D fill:#1e1e2e,stroke:#bd93f9
-    style E fill:#1e1e2e,stroke:#50fa7b
 ```
 
 Each layer is written by humans who understand security. Each boundary has explicit checks. Each data transformation is deliberate.
@@ -91,10 +86,6 @@ flowchart LR
     B --> C["Generated Code/<br/>Query / Command"]
     C --> D["Direct Execution"]
 
-    style A fill:#1e1e2e,stroke:#e0af68
-    style B fill:#1e1e2e,stroke:#e0af68
-    style C fill:#1e1e2e,stroke:#e0af68
-    style D fill:#1e1e2e,stroke:#e0af68
 ```
 
 The LLM is a black box. You don't control what comes out. You can't add validation inside the model's reasoning process. The output could be anything — a perfectly safe query, or a carefully crafted injection payload. And the agent framework? It trusts the output implicitly because "the LLM generated it, so it must be reasonable."
@@ -210,10 +201,6 @@ graph TD
     KS1 --> |"PASS"| OUTPUT["Safe Execution"]
     KS2 --> |"TRIGGER"| KILL["FUSE BLOWN<br/>Execution Blocked"]
 
-    style INPUT fill:#ffcdd2
-    style KILL fill:#ffcdd2
-    style OUTPUT fill:#c8e6c9
-    style KS1 fill:#fff9c4
 ```
 
 Each layer is independent. Each layer can operate alone. But together, they form a defense mesh where an attacker would need to bypass ALL five layers simultaneously to cause real damage. Let's go through each one.
@@ -2830,9 +2817,6 @@ graph TB
     DETECT --> |"OnAnomaly"| CB
     LEARN --> |"Baseline"| DETECT
 
-    style MAIN fill:#fff9c4
-    style MGR fill:#ffecb3
-    style CB fill:#ffcdd2
 ```
 
 ### Bootstrap Function
@@ -3092,14 +3076,6 @@ flowchart TD
     L5 --> PASS["PASS → Safe Execution<br/>~51μs total, <0.01% overhead"]
     L5 --> BLOCK["BLOCK → Audited rejection<br/>+ alert + circuit isolation"]
 
-    style INPUT fill:#1e1e2e,stroke:#e0af68
-    style L1 fill:#1e1e2e,stroke:#56b6c2
-    style L2 fill:#1e1e2e,stroke:#56b6c2
-    style L3 fill:#1e1e2e,stroke:#bd93f9
-    style L4 fill:#1e1e2e,stroke:#bd93f9
-    style L5 fill:#1e1e2e,stroke:#bd93f9
-    style PASS fill:#1e1e2e,stroke:#50fa7b
-    style BLOCK fill:#1e1e2e,stroke:#e0af68
 ```
 
 The design principles that guided every decision:

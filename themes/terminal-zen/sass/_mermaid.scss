@@ -1,15 +1,16 @@
 @import 'variables';
 
 // ================================================
-// Mermaid — Retro Pixel Theme
-// Multi-color nodes for clarity, warm palette,
-// pixel font labels, square corners.
+// Mermaid — Unified Retro Theme
+// Design rule: dark canvas + light nodes + dark text
+// = maximum contrast, always readable.
 // ================================================
 
 // Hide raw source until JS swaps it for an SVG-bearing .mermaid div.
 .mermaid-direct,
 pre:has(> code[data-lang="mermaid"]),
 pre > code[data-lang="mermaid"] {
+  display: none !important;
   visibility: hidden;
   height: 0;
   padding: 0;
@@ -20,29 +21,53 @@ pre > code[data-lang="mermaid"] {
   &::before { display: none; }
 }
 
-// Retro color palette for mermaid nodes
-$node-amber:    #e0af68;   // default / process nodes
-$node-teal:     #56b6c2;   // decision / conditional
-$node-purple:   #bd93f9;   // start / end / terminal
-$node-salmon:   #ff6e6e;   // error / warning paths
-$node-green:    #50fa7b;   // success paths
-$node-cyan:     #8be9fd;   // edge labels / data
-$node-pink:     #ff79c6;   // highlight / accent
-$node-comment:  #6272a4;   // muted / comments
-$node-bg:       #1e1e2e;   // solid node fill
+// ── Color Palette ────────────────────────────────
+// Canvas = dark, nodes = light, text = dark
+// CHANGE COLORS HERE — JS reads these CSS vars at runtime.
+// This is the SINGLE source of truth for all mermaid styling.
+$canvas:     #181824;
+$bar:        #141420;
+$node-bg:    #e8e0d0;
+$text:       #1a1a1a;
+$border:     #c8a96e;
+$border-teal:#3a9ea5;
+$border-purple:#8a6db8;
+$edge:       #5a8a9a;
+$edge-label-bg: #d0ccc4;
+$edge-label-fg: #1a1a1a;
+$cluster-border: #8a6db8;
+$cluster-bg: rgba(138, 109, 184, .08);
+$muted:      #6a6a7a;
+$accent:     #c8a96e;
+
+// Expose as CSS custom properties for JS to read
+:root {
+  --m-canvas:        #{$canvas};
+  --m-bar:           #{$bar};
+  --m-node:          #{$node-bg};
+  --m-text:          #{$text};
+  --m-border:        #{$border};
+  --m-border-teal:   #{$border-teal};
+  --m-border-purple: #{$border-purple};
+  --m-edge:          #{$edge};
+  --m-edge-label-bg: #{$edge-label-bg};
+  --m-edge-label-fg: #{$edge-label-fg};
+  --m-cluster-border:#{$cluster-border};
+  --m-cluster-bg:    #{$cluster-bg};
+  --m-muted:         #{$muted};
+  --m-accent:        #{$accent};
+}
 
 .mermaid {
   position: relative;
   margin: 2em 0;
   padding: 40px $gap-md $gap-md;
-  background: #1a1a28;
-  border: 1px solid rgba($node-amber, .15);
+  background: $canvas;
+  border: 1px solid rgba($accent, .2);
   border-radius: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  box-shadow:
-    0 0 0 1px rgba($node-amber, .06),
-    0 4px 20px rgba(0, 0, 0, .35);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, .35);
 
   visibility: hidden;
   min-height: 80px;
@@ -52,7 +77,7 @@ $node-bg:       #1e1e2e;   // solid node fill
     min-height: 0;
   }
 
-  // Terminal title bar — pixel style dots
+  // Terminal title bar
   &::before {
     content: '● ● ●';
     position: absolute;
@@ -62,9 +87,9 @@ $node-bg:       #1e1e2e;   // solid node fill
     padding: 8px 14px;
     font-size: 10px;
     letter-spacing: 4px;
-    color: $node-comment;
-    background: #12121e;
-    border-bottom: 1px solid rgba($node-amber, .12);
+    color: $muted;
+    background: $bar;
+    border-bottom: 1px solid rgba($accent, .15);
     border-radius: 0;
   }
 
@@ -77,7 +102,7 @@ $node-bg:       #1e1e2e;   // solid node fill
     font-family: $mono;
     font-size: 11px;
     letter-spacing: .03em;
-    color: $node-comment;
+    color: $muted;
     opacity: .8;
     pointer-events: none;
   }
@@ -96,14 +121,35 @@ $node-bg:       #1e1e2e;   // solid node fill
     overflow: visible;
   }
 
-  // ── Default nodes (process / rect) ─────────────
+  // ── UNIVERSAL OVERRIDE — beats any inline style ─
+  svg rect,
+  svg polygon,
+  svg circle,
+  svg ellipse {
+    fill: $node-bg !important;
+    stroke: $border !important;
+  }
+
+  svg path[class*="path"],
+  svg .edgePath .path,
+  svg .flowchart-link {
+    stroke: $edge !important;
+    fill: none !important;
+  }
+
+  svg marker path {
+    fill: $edge !important;
+    stroke: $edge !important;
+  }
+
+  // ── Node shapes ────────────────────────────────
   .node rect,
   .node polygon:not(.label-container),
   .flowchart-node rect,
   [id*="flowchart-"] rect,
   [id*="flowchart-"] polygon:not(.label-container) {
     fill: $node-bg !important;
-    stroke: $node-amber !important;
+    stroke: $border !important;
     stroke-width: 1.5px;
     rx: 0;
     ry: 0;
@@ -111,37 +157,34 @@ $node-bg:       #1e1e2e;   // solid node fill
     transition: stroke-width .15s ease;
   }
 
-  // Decision nodes (diamond) — teal
   .node polygon.label-container,
   .flowchart-node polygon.label-container,
   [id*="flowchart-"] polygon.label-container {
     fill: $node-bg !important;
-    stroke: $node-teal !important;
+    stroke: $border-teal !important;
     stroke-width: 1.5px;
     filter: none;
   }
 
-  // Circles (start/end) — purple
   .node circle,
   .flowchart-node circle,
   [id*="flowchart-"] circle {
     fill: $node-bg !important;
-    stroke: $node-purple !important;
+    stroke: $border-purple !important;
     stroke-width: 1.5px;
     filter: none;
   }
 
-  // Ellipses — also purple for terminal nodes
   .node ellipse,
   .flowchart-node ellipse,
   [id*="flowchart-"] ellipse {
     fill: $node-bg !important;
-    stroke: $node-purple !important;
+    stroke: $border-purple !important;
     stroke-width: 1.5px;
     filter: none;
   }
 
-  // Hover — brighter stroke
+  // Hover
   .node,
   .flowchart-node,
   [id*="flowchart-"] {
@@ -153,32 +196,38 @@ $node-bg:       #1e1e2e;   // solid node fill
     &:hover ellipse,
     &:hover path {
       stroke-width: 2.5px;
-      filter: drop-shadow(0 0 6px rgba($node-amber, .3));
+      filter: drop-shadow(0 0 6px rgba($accent, .3));
     }
   }
 
-  // Node labels — clear, readable
+  // ── Node labels — dark text on light node bg ───
   .node .label,
   .node .nodeLabel,
   .node foreignObject div,
   .flowchart-node .label,
   .flowchart-node .nodeLabel,
   .flowchart-node foreignObject div,
-  [id*="flowchart-"] foreignObject div {
-    color: #ffffff !important;
+  [id*="flowchart-"] foreignObject div,
+  .node text,
+  .node tspan,
+  .flowchart-node text,
+  .flowchart-node tspan,
+  [id*="flowchart-"] text,
+  [id*="flowchart-"] tspan {
+    fill: $text !important;
+    color: $text !important;
     font-family: $mono !important;
     font-size: 13px !important;
     font-weight: 500;
-    white-space: nowrap;
     line-height: 1.5;
     background-color: transparent !important;
-    text-shadow: 0 0 2px rgba(0, 0, 0, .5) !important;
+    text-shadow: none !important;
   }
 
   // ── Edges / arrows ─────────────────────────────
   .edgePath .path,
   .flowchart-link {
-    stroke: rgba($node-cyan, .6) !important;
+    stroke: $edge !important;
     stroke-width: 1.5px;
     fill: none;
   }
@@ -186,14 +235,14 @@ $node-bg:       #1e1e2e;   // solid node fill
   .edgePath marker path,
   .arrowheadPath,
   marker path {
-    fill: $node-cyan !important;
-    stroke: $node-cyan !important;
+    fill: $edge !important;
+    stroke: $edge !important;
   }
 
-  // Edge labels — high contrast chip
+  // Edge labels
   .edgeLabel {
-    color: #1a1a28 !important;
-    background: rgba($node-cyan, .85) !important;
+    color: $edge-label-fg !important;
+    background: $edge-label-bg !important;
     font-family: $mono !important;
     font-size: 11px !important;
     font-weight: 600;
@@ -202,14 +251,14 @@ $node-bg:       #1e1e2e;   // solid node fill
   }
 
   .edgeLabel rect {
-    fill: rgba($node-cyan, .85) !important;
+    fill: $edge-label-bg !important;
     opacity: 1;
   }
 
   // ── Clusters / subgraphs ──────────────────────
   .cluster rect {
-    fill: rgba($node-purple, .06);
-    stroke: rgba($node-purple, .35);
+    fill: $cluster-bg;
+    stroke: $cluster-border;
     stroke-width: 1.5px;
     stroke-dasharray: 6 3;
     rx: 0;
@@ -218,7 +267,7 @@ $node-bg:       #1e1e2e;   // solid node fill
 
   .cluster .label,
   .cluster .nodeLabel {
-    color: $node-purple !important;
+    color: $border-purple !important;
     font-family: $mono !important;
     font-size: 12px !important;
     font-weight: 600;
@@ -230,92 +279,88 @@ $node-bg:       #1e1e2e;   // solid node fill
   // ── Sequence diagrams ──────────────────────────
   .actor {
     fill: $node-bg !important;
-    stroke: $node-amber !important;
+    stroke: $border !important;
     stroke-width: 1.5px;
   }
   text.actor > tspan {
-    fill: #ffffff !important;
+    fill: $text !important;
     font-family: $mono !important;
     font-size: 13px !important;
-    text-shadow: 0 0 2px rgba(0, 0, 0, .5) !important;
+    text-shadow: none !important;
   }
 
-  // Sequence diagram activation boxes
   .activation0, .activation1, .activation2 {
-    fill: rgba($node-amber, .08) !important;
-    stroke: $node-amber !important;
+    fill: rgba($accent, .08) !important;
+    stroke: $border !important;
     stroke-width: 1px;
   }
 
   .messageLine0,
   .messageLine1 {
-    stroke: $node-cyan !important;
+    stroke: $edge !important;
     stroke-width: 1.2px;
   }
   .messageText {
-    fill: #ffffff !important;
+    fill: $text !important;
     font-family: $mono !important;
     font-size: 12px !important;
-    text-shadow: 0 0 2px rgba(0, 0, 0, .5) !important;
     text-shadow: none !important;
   }
 
-  // Sequence note boxes
   .note {
-    fill: rgba($node-teal, .1) !important;
-    stroke: $node-teal !important;
+    fill: rgba($border-teal, .1) !important;
+    stroke: $border-teal !important;
     stroke-width: 1px;
   }
   text.noteText > tspan {
-    fill: #ffffff !important;
+    fill: $text !important;
     font-family: $mono !important;
-    text-shadow: 0 0 2px rgba(0, 0, 0, .5) !important;
+    text-shadow: none !important;
   }
 
-  // Sequence loop/alt/opt boxes
   .loopText,
   .labelText {
-    fill: $node-comment !important;
+    fill: $muted !important;
     font-family: $mono !important;
     font-size: 11px !important;
   }
   .loopLine,
   .labelBox {
-    stroke: $node-comment !important;
+    stroke: $muted !important;
     stroke-dasharray: 4 3;
   }
 
-  // ── Gantt charts ───────────────────────────────
+  // ── Gantt ──────────────────────────────────────
   .today {
-    stroke: $node-salmon !important;
+    stroke: #e05050 !important;
     stroke-width: 2px;
   }
 
   // ── Git graph ──────────────────────────────────
   .commit-label-bkg {
-    fill: rgba($node-amber, .1) !important;
-    stroke: $node-amber !important;
+    fill: rgba($accent, .1) !important;
+    stroke: $border !important;
   }
 
   // ── Class diagrams ─────────────────────────────
   .classText {
-    fill: #ffffff !important;
+    fill: $text !important;
     font-family: $mono !important;
-    text-shadow: 0 0 2px rgba(0, 0, 0, .5) !important;
+    text-shadow: none !important;
   }
   rect[class="outer"] {
-    fill: rgba($node-amber, .08) !important;
-    stroke: $node-amber !important;
+    fill: rgba($accent, .08) !important;
+    stroke: $border !important;
   }
 
   // ── Pie charts ─────────────────────────────────
   text.pieTitleText {
-    fill: #ffffff !important;
+    fill: $text !important;
     font-family: $mono !important;
-    text-shadow: 0 0 2px rgba(0, 0, 0, .5) !important;
+    text-shadow: none !important;
   }
   text.pieSectionText {
-    fill: #1a1a28 !important;
+    fill: $canvas !important;
     font-weight: 600;
   }
 }
