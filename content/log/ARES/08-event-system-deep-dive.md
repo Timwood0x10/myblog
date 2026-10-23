@@ -1,7 +1,7 @@
 +++
-title = "Event System — Event Sourcing Foundation for State Recovery and Audit Trails"
+title = "Event System — Append-Only Event Log and Task Lifecycle"
 date = 2026-06-28
-description = "If I record every single thing the Agent does, can I fully reconstruct its state after it crashes?"
+description = "Task Fabric appends every state transition to an in-memory log and, when an EventStore is attached, writes to the durable layer."
 weight = 8
 [taxonomies]
 tags = ["Go", "Agent", "Event Sourcing", "Audit"]
@@ -10,66 +10,60 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (VIII): Event System — Event Sourcing Foundation for State Recovery and Audit Trails
+# ares Architecture Deep Dive (VIII): Event System — Append-Only Event Log, Compaction, and the Task Lifecycle (0.3.x)
 
-> Agent startup is an event, task assignment is an event, tool call is an event, LLM response is an event, Agent crash is an event too.
-> I thought at the time: **If I record every single thing the Agent does, can I fully reconstruct its state after it crashes?**
-> The answer is yes. That's how Event Sourcing works in ares.
+> 0.3.x update: `internal/fabric/task` now carries a full Task lifecycle event set (created/ready/acquired/started/yielded/checkpointed/preempted/released/completed/failed/expired/stolen). Task Fabric appends every state transition to an in-memory log and, when an `EventStore` is attached, writes to the durable layer so Scheduler/Task/Lease state can be rebuilt across restarts. Note: "events directly drive scheduling" is over-hyped — the scheduler is capability+priority work-stealing scoring, NOT event-driven dispatch where `task.completed → dependent becomes Ready`.
+
+> Agent startup is an event, a task state transition is an event, a tool call is an event, an LLM response is an event, an Agent crash leaves an event too.
+> My idea was: if I record every state change as an append-only record, can I replay what happened after the process dies?
+> The answer: some of it can be rebuilt. But honestly — **not all of it** (see "What it does NOT do").
 
 ---
 
-## 1. Why Record Every Single Thing
+## 1. Why Record Events
 
-Back in the early days when I was building Agents, I managed state with a global struct. Everything crammed into one big map — what step the Agent was on, what data it had processed, what errors it hit. It looked simple, but problems surfaced.
+In the early days I kept Agent state in an in-memory struct. Where it was, what it processed, what errors it hit — everything lived in the process. When the process die, zero evidence: no history, no replay, no way to audit whether a step escalated to an unauthorized tool call.
 
-I still remember the worst one: an Agent had been running in production all afternoon, handling 30+ user requests, each involving multiple rounds of conversation and tool calls. Then the process crashed — OOM killed, with only a single "signal: killed" line in the logs.
-
-All state was gone. No checkpoint, no recovery path, no way to tell what it was working on when it died.
-
-Users came asking: "Why isn't the Agent responding?" I said: "It lost its memory." That was the moment I realized: without persistent state, an Agent is a disposable consumable — use it once and you can't get it back.
-
-To put it bluntly, the global map approach has three hard problems:
-
-1. Agent crashes → map is gone → state is lost
-2. Want to know what the Agent did five minutes ago? No record.
-3. Need to audit whether the Agent made unauthorized tool calls? No log.
-
-Later I looked into Event Sourcing, and I found its approach is the complete opposite: **Don't store the current state. Store every operation that changed the state. Want the current state? Replay the events and compute it yourself.**
-
-This pattern has been used in financial systems for years, but not so much in Agent frameworks. I figured: since nobody's doing it, I'll build it.
+So I turned to Event Sourcing: **don't store the current state, store every change. Want the current state? Replay the event stream and compute it yourself.**
 
 ```mermaid
 graph LR
     subgraph "Traditional Approach (State Store)"
-        S1[Current State] -->|Update| S2[New State]
+        S1[Current State] -->|UPDATE| S2[New State]
     end
 
-    subgraph "Event Sourcing"
+    subgraph "Append-Only Event Log"
         E1[Event 1] --> E2[Event 2]
         E2 --> E3[Event 3]
-        E3 -->|Replay| STATE[Derived State]
+        E3 -->|REPLAY| STATE[Derived State]
     end
 ```
 
-This architecture provides three critical guarantees:
-- **Complete audit trail**: Every state change is recorded with a timestamp and payload
-- **Temporal query**: The system can answer "what was the state at time T?"
-- **State reconstruction**: Any Agent's state can be rebuilt from scratch by replaying its event stream
+But let me be clear about what this design actually buys you, and what it does **not** — so you don't come away with inflated expectations:
+
+- ✅ **Audit trail**: every change carries a timestamp, type, emitting module (`module_name`), and payload.
+- ✅ **Replay**: read a stream ascending and step through it; `ares_flight`'s ReplaySession replays/jumps through events.
+- ✅ **Cross-restart rebuild**: `taskfabric` can rebuild its task set from the persisted events (`RestoreFromStore`).
+- ⚠️ **It does NOT** guarantee "replayable side effects" — it records what happened, it doesn't rewind external world effects.
+- ⚠️ **It does NOT** persist every lifecycle event (see Section 5): most transitions are observability-only; after a restart the topology is rebuilt by recompiling the live DAG, not by replaying these.
 
 Core files:
 
 | File | Purpose |
 |------|---------|
-| `internal/ares_events/types.go` | Event model, EventStore interface |
-| `internal/ares_events/memory_store.go` | In-memory EventStore |
-| `internal/ares_events/pg_store.go` | PostgreSQL EventStore |
-| `internal/ares_events/compactor.go` | Event compaction into summaries |
-| `internal/ares_events/trim_store.go` | Delete old events after compaction |
+| `internal/ares_events/types.go` | Event model, EventType enum, ReadOptions / EventFilter, sentinel errors |
+| `internal/ares_events/store.go` | EventStore / EventAppender interfaces + `Emit` helper |
+| `internal/ares_events/memory_store.go` | In-memory `MemoryEventStore` (subscribe, trim) |
+| `internal/ares_events/pg_store.go` | PostgreSQL `PostgresEventStore` |
+| `internal/ares_events/compactor.go` | Compactor: aggregate old events into summaries |
+| `internal/ares_events/summary.go` | EventSummary model + SummaryRepository interface + CompactionConfig |
 | `internal/ares_events/compactable_store.go` | Auto-compacting EventStore wrapper |
-| `internal/ares_events/summary.go` | EventSummary model + CompactionConfig |
-| `internal/ares_events/summary_repository.go` | PgSummaryRepository |
-| `internal/ares_events/memory_summary_repo.go` | In-memory SummaryRepository |
-| `internal/ares_flight/replay.go` | ReplaySession for step-by-step replay |
+| `internal/ares_events/trim_store.go` | `TrimAwareStore`: trim old events after compaction |
+| `internal/ares_events/archive_hook.go` | `ArchiveSink`: round archiving hook |
+| `internal/ares_events/tool_events.go` | Unified tool-completion payload keys |
+| `internal/fabric/task/events.go` | Task lifecycle EventType + TaskEvent |
+| `internal/fabric/task/fabric.go` | Event recording / persistence / restore logic |
+| `internal/runtime/observability/flight/replay.go` | ReplaySession for step-by-step replay (see series #16) |
 
 ---
 
@@ -77,7 +71,7 @@ Core files:
 
 ### 2.1 Event Structure
 
-`internal/ares_events/types.go` defines the foundational types:
+`internal/ares_events/types.go`:
 
 ```go
 type Event struct {
@@ -92,29 +86,45 @@ type Event struct {
 }
 ```
 
-Each event belongs to a **stream** (identified by `StreamID`). A stream is an append-only sequence of events for a single entity — typically an Agent. The `Version` field enables optimistic concurrency control, and the `Type` field is used for routing and replay classification. The `ModuleName` field records which subsystem emitted the event — "runtime", "workflow", "memory", etc. This sounds obvious until you try to replay an event stream and discover you can't tell whether `step.started` came from the workflow engine or the plugin bus. Without it, you're reverse-engineering the source from the payload shape. With it, you know.
+An event belongs to a **stream** (`StreamID`) — an append-only sequence for one entity, typically a task or agent. `Version` is assigned and incremented by the store on append (optimistic concurrency). `ModuleName` records which subsystem emitted it (e.g. `taskfabric`), so on replay you know the source directly. `Type` is used for routing and classification.
 
-### 2.2 Event Types
+The same file also provides: `VerifyStreamIntegrity` (checks a stream's versions are contiguous, no gaps) and `StreamHash` (deterministic stream hash to detect silent corruption), plus sentinel errors `ErrVersionConflict`, `ErrStreamNotFound`, `ErrEventStoreClosed`, `ErrEventIntegrity`, `ErrSummaryNotFound`.
+
+### 2.2 Event Types (ares_events side)
+
+`ares_events.EventType` is a string alias enumerating events across subsystems:
 
 ```go
-const (
-    EventAgentStarted        EventType = "agent.started"
-    EventAgentStopped        EventType = "agent.stopped"
-    EventAgentFailed         EventType = "agent.failed"
-    EventTaskCreated         EventType = "task.created"
-    EventTaskAssigned        EventType = "task.assigned"
-    EventTaskCompleted       EventType = "task.completed"
-    EventTaskFailed          EventType = "task.failed"
-    EventMessageAdded        EventType = "message.added"
-    EventLLMCall             EventType = "llm.call"
-    EventToolCall            EventType = "tool.call"
-    EventSessionCreated      EventType = "session.created"
-    EventFailoverTriggered   EventType = "failover.triggered"
-    EventFailoverCompleted   EventType = "failover.completed"
-)
+// excerpt
+EventAgentStarted      = "agent.started"
+EventTaskCreated       = "task.created"
+EventTaskCompleted     = "task.completed"
+EventTaskFailed        = "task.failed"
+EventSessionCreated    = "session.created"
+EventMessageAdded      = "message.added"
+EventMemoryDistilled   = "memory.distilled"
+EventLLMCall           = "llm.call"
+EventToolCallStarted   = "tool.call.started"
+EventToolCallCompleted = "tool.call.completed"
+// Task lifecycle (published by taskfabric)
+EventTaskReady       = "task.ready"
+EventTaskAcquired    = "task.acquired"
+EventTaskStarted     = "task.started"
+EventTaskYielded     = "task.yielded"
+EventTaskCheckpointed= "task.checkpointed"
+EventTaskPreempted   = "task.preempted"
+EventTaskReleased    = "task.released"
+EventTaskExpired     = "task.expired"
+EventTaskStolen      = "task.stolen"
+// Leader-sub collaboration
+EventSubTaskResult    = "sub_task.result"
+EventSubAgentFailed   = "sub_agent.failed"
+// others: step.* / discovery.* / component.failed
 ```
 
 ### 2.3 EventStore Interface
+
+`internal/ares_events/store.go`:
 
 ```go
 type EventStore interface {
@@ -126,323 +136,342 @@ type EventStore interface {
 }
 ```
 
+Key semantics (consistent across both implementations):
+
+- `Append(expectedVersion)`: `>0` must match the stream's current version or it returns `ErrVersionConflict`; `<=0` means "append after the current version, no conflict check." Both implementations do this via lock/transaction.
+- `ReadOptions`: `FromVersion` (inclusive), `ToVersion` (inclusive, 0 = no cap), `Limit` (0 = no limit), `Direction` (Ascending/Descending), `Since`. `ToVersion` is the version upper bound shared by the bounded compaction read (4.3) and the summary-merge read path (4.5).
+- `EventAppender` is a narrow one-method interface used by `Emit`. `Emit(ctx, store, streamID, type, moduleName, payload)` is the canonical publish entry; on failure it only logs a warning and returns false.
+
+---
+
+## 3. Two Store Implementations
+
+Both satisfy the same interface with aligned semantics, but different mechanics:
+
 ```mermaid
 classDiagram
     class EventStore {
         <<interface>>
         +Append(ctx, streamID, events, expectedVersion) error
-        +Read(ctx, streamID, opts) []Event
-        +ReadAll(ctx, opts) []Event
-        +Subscribe(ctx, filter) <-chan Event
+        +Read(ctx, streamID, opts) []*Event
+        +ReadAll(ctx, opts) []*Event
+        +Subscribe(ctx, filter) <-chan *Event
         +StreamVersion(ctx, streamID) int64
     }
 
     class MemoryEventStore {
-        -streams map[string][]Event
-        +Append()
-        +Read()
+        -mu sync.RWMutex
+        -events []*Event
+        -streams map[string][]*Event
+        -versions map[string]int64
+        -subscribers []subscription
+        -dropped atomic.Int64
     }
 
     class PostgresEventStore {
         -pool *Pool
-        +Append()
-        +Read()
-    }
-
-    class CompactableEventStore {
-        +Append()
-        +Read()
-        +ForceCompact()
     }
 
     EventStore <|-- MemoryEventStore
     EventStore <|-- PostgresEventStore
-    EventStore <|-- CompactableEventStore
-    CompactableEventStore o-- Compactor
-    Compactor o-- SummaryRepository
 ```
-
-Key semantics:
-- `Append` uses `expectedVersion` for optimistic concurrency control: `0` means the stream must be empty, `-1` bypasses the check, a positive value must match the current version
-- `Read` supports `FromVersion`, `Limit`, and `Direction` (ascending/descending) via `ReadOptions`
-- `Subscribe` returns a channel of events matching the filter; the channel closes when the context is cancelled
-
----
-
-## 3. Store Implementations
 
 ### 3.1 MemoryEventStore
 
-`internal/ares_events/memory_store.go` provides an in-memory implementation, primarily used for testing and demo mode:
+`memory_store.go`. Lock → version check → assign an incrementing `Version` to each non-nil event (nil events are skipped, never consuming a version) → write to both flat `events` and per-stream `streams` → notify subscribers. Subscribers are handed a **clone** (B19), because the `*Event` pointer is shared with the internal store and a mutating subscriber would race concurrent Read/Append.
 
-```go
-type MemoryEventStore struct {
-    mu      sync.RWMutex
-    streams map[string][]*Event
-    events  []*Event
-    version int64
-}
-```
+`Subscribe`'s channel capacity is **64**; `notifySubscribers` is a **non-blocking send** — if the buffer is full the event is silently dropped into the `dropped` counter (`Stats()` exposes `dropped_events`, for monitoring only; the write path is never blocked). When the subscriber's context is cancelled or the store `Close()`s, its channel is closed and cleaned up.
 
-The `Append` method performs: lock → version validation → assign sequence numbers → write to both stream store and flat store → notify subscribers. `Subscribe` creates a buffered channel (capacity 100); new events are broadcast to all channels; if the buffer is full, the event is dropped (non-blocking send).
+`MemoryEventStore` also implements `TrimBefore`, so the compaction-trim loop works on the memory half too — otherwise long-running serve processes grow the in-memory store without bound.
 
 ### 3.2 PostgresEventStore
 
-`internal/ares_events/pg_store.go` provides a production-grade PostgreSQL implementation:
+`pg_store.go`. `Append` runs in a transaction: `SELECT MAX(version) WHERE stream_id = $1`, optimistic check, then per-event `INSERT INTO events (id, stream_id, type, payload, metadata, version, created_at)`. A concurrent unique-key violation (PG error code `23505`) is translated to `ErrVersionConflict`.
 
-```sql
-INSERT INTO events (id, stream_id, type, payload, metadata, version, created_at, timestamp)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT (stream_id, version) DO NOTHING
-```
+`Subscribe` does **not** use LISTEN/NOTIFY — it **polls every 1 second** (sliding window of `defaultEventReadLimit = 100`), de-duplicating by id (`maxDeliveredIDs = 8192`, resets the set on overflow — at worst re-delivers old events, never loses new ones). This reduces "subscribe" to "scheduled query," so real-time lag is only second-ish.
 
-`ON CONFLICT DO NOTHING` provides idempotent append — if the same event is inserted twice due to a client retry, the second insert is silently ignored. This is critical for at-least-once delivery semantics.
+The two implementations share the same `Emit`, `ReadOptions`, and `expectedVersion` semantics.
 
 ---
 
-## 4. Event Compaction Pipeline
+## 4. Compaction & Archiving Pipeline
 
-Without compaction, the event store grows unboundedly. ares's Compactor solves this by summarizing old events into compact snapshots.
+Without compaction the event store grows without bound. `Compactor` aggregates old events into compact `EventSummary` records in a `SummaryRepository` (relational), then trims the raw events out of the hot store.
 
-### 4.1 CompactionConfig
+### 4.1 CompactionConfig Defaults
 
 ```go
-type CompactionConfig struct {
-    Threshold              int           // Events triggering compaction (default: 500)
-    KeepRecent             int           // Raw events to retain (default: 100)
-    MaxSummariesPerStream  int           // Max summaries per stream
-    SummaryTTL             time.Duration // Summary retention (default: 30 days)
-    EnableTrimming         bool          // Delete raw events after compaction
+func DefaultCompactionConfig() CompactionConfig {
+    return CompactionConfig{
+        Threshold:             500,
+        KeepRecent:            100,
+        MaxSummariesPerStream: 50,
+        SummaryTTL:            30 * 24 * time.Hour, // 30 days
+        EnableTrimming:        true,
+    }
 }
 ```
 
-Default behavior: when a stream exceeds 500 events, compact the oldest 400 into a summary, keep the most recent 100 as raw events.
+`CompactableEventStore` is an **auto-compacting wrapper** (`compactable_store.go`): it embeds `EventStore`, overrides `Append`, and asynchronously checks whether the stream needs compaction after the write.
 
-### 4.2 Compaction Pipeline
+> **`SummaryTTL` semantic fix**: `CleanupOldSummaries` now explicitly handles `SummaryTTL <= 0` — the pre-fix let the zero value flow straight into `threshold := time.Now().Add(-SummaryTTL)`, so the first cleanup pass would delete *every* summary ever created (zero TTL was indistinguishable from "disable cleanup"). The new code returns `(0, nil)` when `SummaryTTL <= 0`, treating it as "cleanup disabled."
+
+### 4.2 Auto-Trigger + Debounce
+
+`Append` only writes synchronously; the real compaction work is **async** (one goroutine per batch, derived from the store's own lifecycle context `lctx` rather than the caller's, so short-lived requests can't cancel it — each run is still bounded by `compactionTimeout = 30s`):
+
+- `maybeCompact` reads `StreamVersion`, **debounced**: it only really checks when `version - lastChecked >= threshold/4` (`compactionCheckDivisor = 4`), to avoid doing I/O on every append on a hot stream.
+- Past threshold → `compactor.CheckAndCompact`.
+- Progress is tracked by the `lastChecked` map.
+
+### 4.3 Compaction Flow
 
 ```mermaid
 graph TD
-    A[Stream exceeds threshold] --> B[Read all events\nascending order]
-    B --> C{Split at\nKeepRecent}
-    C -->|Candidate events| D[Build EventSummary\nrule-based aggregation]
-    C -->|Recent events| E[Keep in raw store]
-    D --> F[Save summary to\nSummaryRepository]
-    F --> G{EnableTrimming?}
-    G -->|Yes| H[TrimBefore\nDelete old events]
-    G -->|No| I[Keep raw events]
-    H --> J[✓ Compacted]
-    I --> J
+    A[Append to hot store] --> B{terminal in batch?<br/>task.completed/failed?}
+    B -->|yes| C[DrainPendingRounds<br/>archive current round]
+    B -->|no| D[proceed to compaction check]
+    C --> D
+    D --> E{version-lastCheck >= threshold/4 ?}
+    E -->|no| Z[debounce skip]
+    E -->|yes| F[CheckAndCompact]
+    F --> G{version <= Threshold ?}
+    G -->|yes| Z
+    G -->|no| H[Read bounded candidates<br/>ToVersion = version-KeepRecent]
+    H --> I[buildSummary<br/>rule-based aggregation]
+    I --> K[repo.Save summary]
+    K --> K2{MaxSummariesPerStream > 0 ?}
+    K2 -->|yes| K3[pruneSummaries<br/>delete oldest beyond cap]
+    K2 -->|no| L
+    K3 --> L{EnableTrimming && trimStore wired?}
+    L -->|yes| M[TrimBefore trims raw events]
+    L -->|no| Z
 ```
 
-### 4.3 DefaultSummarizer
+Key points:
 
-The rule-based summarizer produces concise English summaries without requiring an LLM call:
+- **Summary is saved before trimming.** The trim boundary is the summary's `EndVersion`, so every trimmed event is already captured in a summary.
+- **The candidate read is bounded.** `compactStream` uses `ReadOptions{Direction: Ascending, ToVersion: version - KeepRecent}` to read only the candidate window instead of the entire stream. The pre-fix unbounded read pulled every event of the stream into memory — O(n) on very long streams, and the keep-recent tail was never a compaction candidate anyway. The bound is exact even on trimmed streams (prefix deletions only shift the earliest version; the version cap naturally skips the missing prefix).
+- **`MaxSummariesPerStream` is now actually enforced.** After the summary is persisted, `pruneSummaries` lists all existing summaries for the stream, sorts them (by `StartVersion` / `EndVersion` / `CreatedAt` three-way tie-break, not trusting the repo's ordering contract), and deletes the oldest ones beyond the cap. Best-effort: a failed delete is logged and the loop continues. The pre-fix documented the field ("older summaries are merged or pruned when this limit is exceeded") but never implemented it — summaries accumulated without bound.
+- **Config sanitisation:** `NewCompactor` replaces a non-positive `Threshold` or negative `KeepRecent` with the defaults. A negative `KeepRecent` would turn `events[:total-KeepRecent]` into a slice past the end, panicking inside the store's background worker and killing the whole process, not just the request.
+- `Compactor` also exposes `ForceCompact` (compact regardless of threshold) and `CleanupOldSummaries` (delete expired summaries per `SummaryTTL`).
+
+### 4.4 DefaultSummarizer: Rule-Based
+
+`EventSummarizer` is a function type (`func([]*Event) string`), and the default `DefaultSummarizer` is pure rule-based — no LLM call. It counts events, de-duplicates task IDs from `task.created` and tool names from `llm.call` / `tool.call.*`, snippets the user request, and derives outcome from `task.failed` / `task.completed` (`failed` / `partial` / `completed` / `active`). Example output:
 
 ```
-Agent agent-1 ran 3 task(s) [task-42, task-43, task-44],
-called 5 tool(s) [search, book, weather, calculator, email],
-emitted 23 events over 3m12s,
-bound to user request: "Plan a trip to Tokyo",
-result: completed
+Agent stream-1, ran 1 task(s) [task-42], called 2 tool(s) [search, calculator], emitted 6 events, duration 1s, bound to user request: "Plan a trip to Tokyo", result: completed
 ```
 
-### 4.4 Summary Fallback on Read
+(Tools capped at 5, tasks at 3, request snippet at 120 chars, errors at 3 — hard limits to keep summaries bounded.)
 
-If raw events have been trimmed, `Read` automatically falls back to summaries:
+Two details worth calling out:
+
+- **Rune-safe truncation**: both `RequestSummary` (in `buildSummary`) and the `DefaultSummarizer` request snippet use `internal/truncate.WithEllipsis` (truncates on `[]rune`, appends `"..."` keeping total length ≤ `maxLen`). Byte-level truncation can split a multi-byte CJK character in the middle, producing invalid UTF-8 that PostgreSQL `text` columns reject — one such character in the first 200 bytes permanently failed compaction while the stream kept growing. This is a bug that actually hit in production.
+- **Multi-agent window attribution**: `buildSummary` tracks the first non-empty agent ID across all events in the window; if a later event carries a *different* agent ID, the summary is marked `"multi"` rather than silently attributing everything to the first agent. `"unknown"` is the fallback when no event carries an `agent_id`.
+
+### 4.5 Summary Fallback on Read (v2)
+
+The v2 read path is substantially richer than the pre-fix version (which only looked up summaries when the underlying `Read` returned **empty**):
+
+1. **Wider trigger**: after the underlying `Read`, if the caller's `FromVersion` falls below the oldest live event (i.e. the requested window reaches into the trimmed head), `SummaryRepository` is also consulted. A partially trimmed stream with a live tail no longer skips the summary lookup just because "there are results."
+2. **Synthetic events honour `ReadOptions`**: `applyReadOptions` filters and orders synthetic `event.summary` events by `FromVersion` / `ToVersion` (inclusive) / `Since` / `Direction` / `Limit`. The pre-fix fallback ignored all of these — a paged `Limit` call got an unbounded summary list, and `DESC` callers got ascending order.
+3. **Overlap dropping**: `dropOverlappingSummaries` removes synthetic summaries whose range reaches into the live events' version span. Concurrent compaction rounds can leave a summary covering 1–15 while a later trim only removed up to 11, leaving live events 12–14 *inside* the summary's range; splicing such a summary before the live tail would break the version-ordered merge contract. Dropping the overlap is lossless for replay semantics. The summary range endpoint is read from each synthetic event's own payload (accepting `int64`, `int`, and `float64` to cover PG JSON round-trips); a decode failure defaults to `MaxInt64` (conservative: drop rather than splice out of order).
+4. **Direction-aware merge**: `mergeSyntheticWithLive` places summaries before live events in ascending reads and after them in descending reads (summary versions are always ≤ the trim point < every live version). `Limit` applies to the merged slice.
+
+Note: this is still a **degradation** — you get summaries (`event.summary`), not the originals.
+
+### 4.6 ArchiveSink: Round Archiving
+
+`compactable_store.go` lets you attach an `ArchiveSink` (function type in `archive_hook.go`) via `WithArchiveSink`. Its job is to archive the record of one "round" (from the previous terminal event to `task.completed`/`task.failed`) **before** compaction trims the raw events, so a durable copy exists for the context-compression strategy. Archiving runs on terminal hits (detected synchronously, executed in the async goroutine) or before compaction, via `drainPendingRounds` paging (`archiveReadLimit = 500`/page, up to `maxArchiveDrainRounds = 1000` rounds). Three layers of defence in the new version:
+
+- **Exclusive claim (`archiveInflight`)**: the pre-fix boundary check alone (`lastArchivedVersion` comparison) was not a true claim — two goroutines could both observe the same `lastArchivedVersion` before either wrote anything, both pass the boundary check, and both invoke the sink for the same round (archived twice). The new logic CASes `archiveInflight[streamID] = true` under `archiveMu` first; only one in-flight claimant per stream is allowed. The claim is released by a single `defer releaseClaim` on every return path (success, failure, nothing-to-archive), so no explicit release call can accidentally strip a concurrent drainer's freshly acquired claim and re-open the double-archive window.
+- **Per-round event cap (`maxArchiveRoundEvents = 50000`)**: the pre-fix bounded single page (500) and single drain round-count (1000), but had **no cap on the total events accumulated per round** — a long-lived terminal-less stream would materialize the entire stream into memory on first compaction. The new logic returns an error (not a quiet defer) when `roundEvents` reaches 50000; `maybeCompact` receives this error and **defers compaction to the next window** instead of trimming raw events from an un-archived window.
+- **Drain cap exhaustion is a hard error**: `drainPendingRounds` returning past 1000 rounds now returns an error, not `nil`. The pre-fix `nil` told `maybeCompact` the archive was flushed, so it trimmed raw events whose RoundRecord was never written — permanent loss. Under the new logic, compaction is deferred to a later window.
+
+`archiveSink` write failure is best-effort: the boundary does **not** advance, so the next drain re-scans the same window and retries the sink (the pre-fix advanced the boundary *before* the durable write; one I/O error permanently lost the round record).
+
+### 4.7 Per-Stream Bookkeeping TTL Sweep (New)
+
+The four per-stream maps (`lastChecked`, `lastTouched`, `roundCounter`, `lastArchivedVersion`) persist for the life of the process. `serve` mints one event stream per conversation, so in a long-lived process each conversation leaves a permanent set of entries that grow unboundedly.
+
+The new sweep runs opportunistically inside `maybeCompact` (`streamBookkeepingTTL = 24h` idle → clear; `streamBookkeepingSweepInterval = 1min` frequency cap, no dedicated goroutine): removes stale `lastChecked` and `lastTouched` entries, and under `archiveMu` removes the corresponding `roundCounter` and `lastArchivedVersion` entries. Resetting an idle stream's bookkeeping is safe by existing design: `lastChecked` is a pure debounce cache (reset just costs one extra I/O check), and `roundCounter` already restarts at 1 after every process restart (in-memory only).
+
+Lock order is fixed as `mu → archiveMu` (`maybeSweepBookkeepingLocked` is the only path that holds `mu` while taking `archiveMu`); the archive path never holds `mu` while taking `archiveMu`, so inversion is impossible.
+
+### 4.8 `Close()` Safe Shutdown (New)
+
+`CompactableEventStore`'s `lctx` (derived from `context.Background()`, cancelled by `Close`) is the lifecycle context for background compaction workers, decoupled from any `Append` caller's ctx — a per-request ctx is cancelled as soon as that request returns, but `lctx` lets compaction outlive short-lived requests. Each run is still bounded by `compactionTimeout = 30s`.
+
+`Close()` runs a three-step shutdown sequence:
+
+1. Set `closed = true` (under `mu`) and call `lcancel()`;
+2. Wait for in-flight workers (`wg.Wait()`, guarded by a `compactionTimeout + 5s` fallback so the wait never blocks indefinitely);
+3. If the underlying `EventStore` implements `io.Closer`, call its `Close()`.
+
+`Append` checks the `closed` flag under `mu`: if `Close` has already begun, it skips the launch (avoiding a WaitGroup Add-after-Wait); if `Append` wins the race, `Close`'s `wg.Wait` covers that worker.
+
+---
+
+## 5. Task Fabric: Task Lifecycle Events
+
+`internal/fabric/task/events.go` defines an `EventType` enum **separate** from `ares_events`:
 
 ```go
-func (s *CompactableEventStore) Read(ctx context.Context, streamID string, opts ReadOptions) ([]*Event, error) {
-    events, err := s.EventStore.Read(ctx, streamID, opts)
-    if err != nil {
-        return nil, err
-    }
-    if len(events) > 0 {
-        return events, nil
-    }
-
-    summaries, summaryErr := s.compactor.repo.FindByStreamID(ctx, streamID)
-    if summaryErr != nil || len(summaries) == 0 {
-        return events, nil
-    }
-
-    synthetic := make([]*Event, 0, len(summaries))
-    for _, sum := range summaries {
-        synthetic = append(synthetic, &Event{
-            Type: EventType("event.summary"),
-            Payload: map[string]any{
-                "summary_text": sum.SummaryText,
-                "event_count":  sum.EventCount,
-                "outcome":      sum.Outcome,
-            },
-        })
-    }
-    return synthetic, nil
-}
+const (
+    EventTaskCreated      EventType = "task.created"
+    EventTaskReady        EventType = "task.ready"
+    EventTaskAcquired     EventType = "task.acquired"
+    EventTaskStarted      EventType = "task.started"
+    EventTaskYielded      EventType = "task.yielded"
+    EventTaskCheckpointed EventType = "task.checkpointed"
+    EventTaskPreempted    EventType = "task.preempted"
+    EventTaskReleased     EventType = "task.released"
+    EventTaskCompleted    EventType = "task.completed"
+    EventTaskFailed       EventType = "task.failed"
+    EventTaskExpired      EventType = "task.expired"
+    EventTaskStolen       EventType = "task.stolen"
+    EventTaskUpdated      EventType = "task.updated" // observability-only, never persisted
+)
 ```
+
+`TaskEvent` is the immutable record in that **in-memory log**: `{Type, TaskID, AgentID, Origin, State, Checkpoint, At}`. The fabric appends one to the in-memory log (`f.events`, capped by `maxInMemoryEvents`) on every state transition.
+
+### 5.1 State Transition → Event Mapping
+
+```mermaid
+stateDiagram-v2
+    [*] --> Ready: Create -> task.created (persist)
+    Ready --> Leased: Acquire -> task.acquired (obs) + task.ready (obs)
+    Leased --> Running: Start -> task.started (obs)
+    Running --> Suspended: Yield -> task.yielded (obs) / Checkpoint -> task.checkpointed (persist)
+    Suspended --> Leased: Release/Resume -> task.released (obs)
+    Running --> Done: Complete -> task.completed (persist)
+    Running --> Done: Fail -> task.failed (persist)
+    Leased --> Done: Expire -> task.expired (persist)
+    Leased --> Done: Steal -> task.stolen (obs) / Preempt -> task.preempted (obs)
+    Done --> [*]
+```
+
+> This is an **intent-level** "transition → event" sketch, labeled with which events persist. For the exact state set and the functions each transition runs in, defer to the `internal/fabric/task` state machine; this article only asserts the event-side facts (including persist/non-persist).
+
+### 5.2 What Persists vs What's Observability-Only
+
+The fabric records events in the in-memory log, and only writes to the durable store when an `EventStore` is attached (`WithEventStore`) — and not every event. `isMustPersistEvent` decides:
+
+```go
+// must-persist (recovery/replay correctness depends on them)
+TaskCreated, TaskCheckpointed, TaskCompleted, TaskFailed, TaskExpired
+
+// observability-only (enrich the trace, not required for rebuild)
+TaskReady, TaskAcquired, TaskStarted, TaskYielded,
+TaskPreempted, TaskReleased, TaskStolen
+```
+
+Mechanics: `recordLocked` builds the in-memory event + one `pendingAppend` under the lock (no I/O); after unlock, `flushAppends` performs the durable write **off-lock**, using `flushCond` + a monotonic `seq` so concurrent fabric calls flush in record order (N7) without inverting a stream's version sequence. Every persisted event carries `module_name: "taskfabric"` and payload keys `task_id / agent_id / origin / epoch / strategy_id / session_id`; **must-persist** events additionally carry full restore fields (capability / priority / dependencies / deadline / retry / created_at / checkpoint JSON) — this is exactly what `RestoreFromStore` folds back via `foldRestoreEvent`.
+
+On append failure: must-persist events log an `Error` (so durable-vs-memory divergence is detectable); observability events are silent and best-effort. The in-memory state machine stays authoritative — a failed append does not roll back the transition.
+
+### 5.3 EventTaskUpdated: Incremental Rewrites, Never Persisted
+
+When the incremental compiler rewrites one task's scheduling shape (`Dependencies`) or payload, the fabric records an `EventTaskUpdated`. But this event is deliberately **not persisted** (`events.go`: "BY DESIGN"):
+
+- it's absent from `isMustPersistEvent`;
+- it has **no mapping** in `taskEventType` (returns `""`, so the fabric never publishes it).
+
+Reason: these are **in-place rewrites** (`SetDependencies` moves one task instead of recompiling a whole batch). After a restart the topology is rebuilt by recompiling the live DAG, not by replaying these rewrites. Including it in the cross-restart protocol would be a protocol change, not a compiler change. Worth noting: if you expected "the event log is the whole truth," `EventTaskUpdated` breaks that expectation.
 
 ---
 
-## 5. ReplaySession
+## 6. What it Does NOT Do (Honest List)
 
-`internal/ares_flight/replay.go` provides step-by-step event replay for a task:
+1. **Not every lifecycle event lands in the durable store.** Ready/Started/Yielded/Stolen are observability-only; `EventTaskUpdated` never touches the store. Cross-restart rebuild relies on the five must-persist types + recompiling the DAG.
+2. **Postgres subscribe is a 1-second poll**, not a real-time push. Streaming to a Dashboard means layering your own SSE on top — the event layer doesn't provide it.
+3. **It records what happened, not replayable side effects.** Tool side effects (send email, write DB) are recorded after the fact; the store won't undo or replay external effects.
+4. **Read fallback after compaction is a degradation** — you get synthetic `event.summary` events, not the originals. For originals you need the archive/pre-trim copies. The new fallback correctly honours the caller's `ReadOptions` (version window / direction / limit) and drops summaries that overlap the live event version span (`dropOverlappingSummaries`); it's no longer an unbounded ascending list.
+5. **Write path is non-blocking**: compaction and archiving are async best-effort; failures are only logged. The `dropped_events` counter is for monitoring — it does not guarantee no loss. However, drain cap exhaustion in archiving is now a **hard error** (`drainPendingRounds` returns an error, not `nil`), so `maybeCompact` defers compaction rather than trimming raw events whose RoundRecord was never written.
+
+---
+
+## 7. Replay & Recovery
+
+### 7.1 ReplaySession
+
+`NewReplaySession(ctx, eventStore, taskID)` in `internal/runtime/observability/flight/replay.go` reads a task's stream ascending for step-by-step replay. See series #16 (Flight Recorder) for detail; here I only note its existence and its dependency on the event store.
+
+### 7.2 Task Fabric Cross-Restart Rebuild
 
 ```mermaid
 sequenceDiagram
-    participant User as User
-    participant RS as ReplaySession
-    participant Store as EventStore
+    participant F as Fabric
+    participant ES as EventStore (Postgres)
+    participant R as Scheduler
 
-    User->>RS: NewReplaySession(task-42)
-    RS->>Store: Read(task-42, ascending)
-    Store-->>RS: [Event 1, Event 2, ..., Event N]
-
-    loop Step-by-step replay
-        User->>RS: Step()
-        RS->>RS: currentIdx++
-        RS-->>User: ReplayStep{EventType, Payload}
+    Note over F: startup
+    F->>F: WithEventStore(store)
+    F->>ES: ReadAll / read events per stream
+    ES-->>F: task.* events
+    loop each event
+        F->>F: foldRestoreEvent(payload)
+        F->>F: rebuild Task / Lease / scheduling state
     end
-
-    User->>RS: StepTo(5)
-    RS->>RS: currentIdx = 5
-    RS-->>User: ReplayStep at index 5
-
-    User->>RS: Summary()
-    RS-->>User: ReplaySummary{TotalSteps, Duration, Agents}
+    F-->>R: restored ReadyTasks schedulable
 ```
 
-Core methods:
-- `Step()`: advance one event, return that step
-- `StepTo(n)`: jump to a specified step
-- `Summary()`: return an overview (total steps, duration, list of Agent IDs, event type distribution)
-- `Reset()`: return to the starting position
+### 7.3 Relationship to "Agent Resurrection"
+
+Agent resurrection (two-phase recovery, snapshot-first, event-stream fallback) is the subject of **#07** (Runtime / Resurrection): `internal/runtime/recovery.go`'s `RecoverSnapshotOrEvents()` prefers a snapshot then falls back to the event stream, and `event_recovery.go` rebuilds RecoveryState from events. Here the event system is only a **fallback data source** consumed by ares_runtime — a consumer, not a capability of the event system. Don't attribute it to the event layer.
 
 ---
 
-## 6. Store Implementation Comparison
-
-| Feature | MemoryEventStore | PostgresEventStore |
-|---------|-----------------|-------------------|
-| Persistence | None (process-level) | Yes (table storage) |
-| Concurrency control | Mutex lock | `ON CONFLICT DO NOTHING` |
-| Subscription | Buffered channel + subscriber map | LISTEN/NOTIFY or polling |
-| Use cases | Testing, demo, single process | Production, distributed deployment |
-
----
-
-## 7. Integration with Agent Resurrection
-
-The Event System integrates deeply with the Runtime's resurrection pipeline:
-
-```mermaid
-sequenceDiagram
-    participant RT as Runtime
-    participant ES as EventStore
-    participant SA as StatefulAgent
-
-    RT->>RT: NotifyAgentDead(agent-1)
-    RT->>RT: factory() creates new instance
-    RT->>ES: Read(agent-1, ascending)
-    ES-->>RT: [Event 1, ..., Event N]
-
-    Note over RT,SA: Phase A: Rebuild operational state
-
-    RT->>SA: RestoreState({session, tasks, ...})
-    RT->>SA: ReplayEvents([Event 1, ..., Event N])
-
-    Note over RT,SA: Phase B: Rebuild cognitive state
-
-    RT->>MM: GetLatestSessionForLeader()
-    MM-->>RT: session-42
-    RT->>MM: GetMessages(session-42)
-    MM-->>RT: [Message 1, ..., Message M]
-    RT->>SA: Inject cognitive state
-
-    Note over RT,SA: Agent is now fully recovered
-    RT->>RT: StartAgent new instance
-```
-
-Two-phase recovery ensures:
-- **Operational state** (tasks, sessions, execution status) is reconstructed from the event stream
-- **Cognitive state** (conversation history, memories) is restored from MemoryManager
-- **Each phase is independently recoverable** — partial recovery is better than no recovery at all
-
----
-
-## 8. Architectural Summary
-
-### Design Patterns
+## 8. Design Patterns Summary
 
 | Pattern | Location | Purpose |
 |---------|----------|---------|
-| Event Sourcing | `types.go` | Immutable append-only log |
-| Optimistic Concurrency Control | `Append(expectedVersion)` | Conflict detection on concurrent writes |
-| CQRS | EventStore (write) + SummaryRepository (read) | Write-optimized raw store + read-optimized summaries |
-| Observer | `Subscribe(channel)` | Real-time event stream push |
-| Strategy | `Summarizer` function type | Pluggable summary generation (rule-based or LLM) |
-| Decorator | `CompactableEventStore` wraps `EventStore` | Transparent compaction, unchanged API |
-| Debounce | `lastChecked` map | Avoid redundant compaction checks |
+| Append-only event log | `types.go` | Immutable log with per-stream versions |
+| Optimistic concurrency | `Append(expectedVersion)` | `>0` must match current version; conflict → `ErrVersionConflict` |
+| CQRS (degraded) | EventStore (hot) + SummaryRepository | Read falls back to summaries, direction/paging aware (`applyReadOptions`) |
+| Observer / subscribe | `Subscribe(EventFilter)` | Memory: non-blocking broadcast; PG: 1s poll |
+| Strategy | `EventSummarizer` function type | Pluggable summarizer (default rule-based) |
+| Decorator | `CompactableEventStore` wraps `EventStore` | Transparent auto-compaction, unchanged Append API |
+| Debounce + TTL sweep | `lastChecked` + `threshold/4`; `streamBookkeepingTTL` | Fewer redundant compaction checks on hot streams; unbounded growth guard for per-stream bookkeeping maps in long-lived processes |
+| CAS exclusive claim | `archiveInflight` (under `archiveMu`) | Per-stream round-archiving deduplication, prevents double-archive |
+| Two-phase write decoupling | `recordLocked` (locked) + `flushAppends` (off-lock) | Durable writes never block the fabric state machine |
+| Bounded read | `ReadOptions.ToVersion` (`compactStream` candidate window) | Compaction reads only the candidate segment, not the whole stream; prevents OOM on very long streams |
+| Safe shutdown | `CompactableEventStore.Close()` | `lctx` cancel → `wg.Wait` (bounded) → underlying `Close` |
 
 ### Key Data Flow
 
 ```mermaid
 graph TB
     subgraph "Write Path"
-        C[Client] -->|Append| CES[CompactableEventStore]
-        CES -->|1. Write| ES[EventStore]
-        CES -->|2. Background| CP[Compactor]
-        CP -->|3. Summarize| SR[SummaryRepository]
-        CP -->|4. Optionally trim| TS[TrimStore]
+        F[taskfabric\nrecordLocked] -->|pendingAppend| FE[flushAppends off-lock serialized]
+        FE -->|Append| CES[CompactableEventStore]
+        CES -->|write hot store| ES[EventStore]
+        CES -->|async lctx| CP[Compactor]
+        CP -->|bounded read ToVersion| ES
+        CP -->|buildSummary| SR[(SummaryRepository)]
+        CP -->|pruneSummaries oldest beyond cap| SR
+        CP -->|optional trim| TS[TrimBefore]
     end
 
     subgraph "Read Path"
-        RS[ReplaySession] -->|Read| CES
-        CES -->|Has events?| ES
-        CES -->|Empty? Fallback| SR
-    end
-
-    subgraph "Subscription Push"
-        DV[Dashboard] -->|Subscribe| CES
-        CES -->|SSE| DV
+        FL[ReplaySession / describe] -->|Read| CES
+        CES -->|raw events present?| ES
+        CES -->|window reaches trimmed head? fetch summaries| SR
+        CES -->|dropOverlappingSummaries +\nmergeSyntheticWithLive| FL
     end
 ```
-
----
-
-## v0.2.4 Update
-
-**Event.ModuleName**: Every event now carries a `ModuleName` field identifying which module emitted it. The `Emit()` signature changed from:
-
-```go
-// Before: who emitted this event?
-Emit(ctx, store, streamID, eventType, payload)
-
-// After: always traceable
-Emit(ctx, store, streamID, eventType, "runtime", payload)
-```
-
-When you replay an event stream, you can now see:
-```json
-{"type": "step.started", "module_name": "workflow", ...}
-{"type": "tool.call.completed", "module_name": "runtime", ...}
-{"type": "memory.distilled", "module_name": "memory", ...}
-```
-
-This closes the "who did what" gap — previously you had to infer the source from the event type and payload. Now it's explicit.
 
 ---
 
 ## 9. Conclusion
 
-Event Sourcing + CQRS + pluggable stores + auto-compaction — this combination isn't anything new in enterprise systems. But placed within an Agent framework, I think it's a pretty interesting experiment.
+Event Sourcing's real value isn't "running faster" — it's that after something goes wrong you get an **ordered record of who did what, when**, and that record can support replay and cross-restart rebuild. It also has real edges: not every event is persisted, subscriptions are second-granularity polls, and external side effects aren't replayable. I documented those edges faithfully in this article, because those are the potholes you'll actually hit in a real system.
 
-What was the most satisfying experience? An Agent was running a complex multi-step workflow with multiple tool calls and LLM interactions when it crashed halfway through. In the old days, I'd be staring at logs, guessing: was it a prompt problem? An LLM hallucination? Wrong tool parameters? Guess, fix, rerun, repeat — three or four cycles just to pinpoint the issue.
-
-But this time I opened the Dashboard, found the Agent's event stream, and replayed it step by step from the beginning. By event 7 I was already grinning — the Agent's `tool.call:7` had returned an empty result from the search API, and it blindly concatenated that empty result into the next LLM prompt without a null check. The bug itself wasn't complicated — what was new is that I **saw the full causal chain** unfolding event by event. Not guessing — watching.
-
-At that moment, I felt like I wasn't debugging — I was watching a black box flight recorder.
-
-**That's the value of the event system: it doesn't make you run faster. It tells you exactly why things went wrong when they do.**
+**The event system doesn't make you run faster. It tells you where to look and what you'll find after something breaks.**
 
 ---
 
-*Next preview: Arena / Fault Injection — possibly the most unhinged feature in ares. You can click a button on the Dashboard, assassinate a running Agent, and then watch it resurrect from the ashes.*
+*Next preview: Arena / Fault Injection — you may be able to push a button on the Dashboard and "assassinate" a running Agent, then watch it resurrect from ashes. It's the most direct stress test of how completely the state system can actually recover.*
