@@ -83,127 +83,112 @@
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/storage/">#Storage</a></span>
     <div class="post-content">
-        <h1 id="ares-architecture-deep-dive-xix-storage-layer-the-foundation-under-everything">ares Architecture Deep Dive (XIX): Storage Layer — The Foundation Under Everything</h1>
-<p>Every module in ares — Memory, Evolution, Knowledge, Events — eventually hits storage. This is the story of <code>internal/storage/</code>: 14,112 lines across 57 files, the layer that everything else stands on.</p>
+        <h1 id="ares-architecture-deep-dive-xix-storage-layer-the-foundation-under-everything-0-3-x">ares Architecture Deep Dive (XIX): Storage Layer — The Foundation Under Everything (0.3.x)</h1>
+<blockquote>
+<p>Note: This article is based on the real code (<code>internal/storage/</code> as a whole, the DDL in <code>internal/storage/postgres/migrate*.go</code>, <code>internal/storage/postgres/{pool,circuit_breaker,write_buffer,timeout,embedding_queue,base_repository}.go</code>, <code>internal/storage/postgres/embedding/</code> and <code>internal/storage/postgres/repositories/</code>, and <code>internal/ares_events/pg_store.go</code>). Every symbol and every flow was read from the source. Anything I cannot verify or that is configured but not actually wired is marked (待核实) rather than glorified.</p>
+</blockquote>
 <hr />
-<h2 id="the-problem-three-stores-three-bugs">The Problem: Three Stores, Three Bugs</h2>
-<p>Early ares had three separate storage paths:</p>
-<table><thead><tr><th>Module</th><th>Storage</th><th>Problem</th></tr></thead><tbody>
-<tr><td>Memory</td><td>Raw <code>database/sql</code> calls</td><td>Connection leaks under load</td></tr>
-<tr><td>Knowledge</td><td>Hand-rolled pgvector queries</td><td>Vector search timed out at 10K rows</td></tr>
-<tr><td>Evolution</td><td>In-memory map (no persistence)</td><td>Strategies lost on restart</td></tr>
+<h2 id="1-what-the-storage-layer-actually-stores">1. What the storage layer actually stores</h2>
+<p>Memory, Experience, Knowledge, and Events all have to land somewhere — and their home is <code>internal/storage/postgres/</code>. The migration files are the single source of truth. I split what I saw into three groups.</p>
+<p><strong>Group 1 — vectors &amp; experiences (<code>migrate_storage.go</code>; every table has RLS + an IVFFlat vector index)</strong></p>
+<table><thead><tr><th>Table</th><th>Stores</th><th>Key columns / indexes</th></tr></thead><tbody>
+<tr><td><code>knowledge_chunks_1024</code></td><td>RAG knowledge chunks, fixed 1024 dims</td><td><code>embedding VECTOR(1024)</code>, default model <code>intfloat/e5-large</code>, <code>embedding_status</code>(pending/completed), <code>content_hash</code> dedup, <code>tsv TSVECTOR</code> + GIN, <code>document_id/chunk_index</code>, <code>metadata JSONB</code>; vector index <code>ivfflat (embedding vector_cosine_ops) with (lists=100)</code>, <strong>PARTIAL ON <code>embedding IS NOT NULL</code></strong></td></tr>
+<tr><td><code>experiences_1024</code></td><td>Agent experiences (distillation output), 1024 dims</td><td><code>type</code> CHECK <code>success/failure/query/solution/pattern/distilled</code>, <code>score</code>, <code>decay_at</code> (default <code>NOW()+30 days</code>), <code>usage_count</code>, <code>agent_id</code>; same <code>ivfflat vector_cosine_ops lists=100</code> (partial)</td></tr>
+<tr><td><code>tools</code></td><td>Tools with semantic embedding</td><td><code>name</code>+<code>tenant_id</code> unique, <code>tags TEXT[]</code> + GIN, <code>usage_count/success_rate/last_used_at</code>, <code>ivfflat</code></td></tr>
+<tr><td><code>conversations</code></td><td>Conversation history (<strong>no vector</strong>)</td><td><code>session_id/user_id/agent_id/role/content/expires_at</code>, several btree indexes</td></tr>
+<tr><td><code>task_results_1024</code></td><td>Task execution results, 1024 dims</td><td><code>input/output JSONB</code>, <code>status/latency_ms</code>, <code>ivfflat</code></td></tr>
+<tr><td><code>secrets</code></td><td>Encrypted sensitive data</td><td><code>value BYTEA</code> (default <code>aes-gcm</code>), <code>key_version</code>, unique <code>(tenant_id,key)</code></td></tr>
+<tr><td><code>embedding_queue</code> / <code>embedding_dead_letter</code></td><td>Async embedding task queue / dead-letter</td><td>dedupe_key unique idempotency, status index</td></tr>
+<tr><td><code>distilled_memories</code></td><td>Cross-session distilled memory, 1024 dims — <strong>deprecated</strong> (read/write paths removed pre-M5; the DDL stays in migrate_storage.go only for existing-database idempotency)</td><td><code>memory_type</code> CHECK <code>preference/interaction/profile/knowledge</code>, <code>importance</code>, <code>expires_at</code> (default 90 days), <code>content_hash</code> + unique <code>(tenant_id, content_hash)</code>, <code>ivfflat lists=100</code></td></tr>
 </tbody></table>
-<p>Three paths meant three places for bugs. The memory team hit "too many connections" at 50 concurrent agents. The knowledge team watched vector search degrade from 50ms to 8 seconds as the corpus grew. The evolution team just accepted that restarting wiped everything.</p>
-<p><strong>Honest reflection</strong>: We tried wrapping each path in its own retry logic. It worked — until a cascading failure made all three retry simultaneously and took down PostgreSQL. Centralized storage wasn't a design choice; it was survival.</p>
-<hr />
-<h2 id="the-design-pool-breaker-buffer-timeout">The Design: Pool, Breaker, Buffer, Timeout</h2>
-<p><code>internal/storage/postgres/</code> provides four layered protections:</p>
-<h3 id="1-pool-connection-management">1. Pool — Connection Management</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/pool.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Pool</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    cfg</span><span style="color: #94E2D5;">          *</span><span style="color: #F9E2AF;font-style: italic;">Config</span></span>
-<span class="giallo-l"><span>    db</span><span style="color: #94E2D5;">           *</span><span style="color: #F9E2AF;font-style: italic;">sql</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">DB</span></span>
-<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">           sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
-<span class="giallo-l"><span>    waitCount</span><span style="color: #CBA6F7;">    int</span></span>
-<span class="giallo-l"><span>    waitDuration</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>The pool wraps <code>sql.DB</code> with usage tracking. <code>Get() → usage → Release()</code> pattern ensures connections return to the pool even on panic.</p>
-<p><strong>Key insight</strong>: <code>ErrMissingTenantID</code> is enforced at the pool level. Any tenant-aware query without a tenant ID fails fast — preventing silent cross-tenant data leaks (P1-11 security fix).</p>
-<h3 id="2-circuitbreaker-failure-isolation">2. CircuitBreaker — Failure Isolation</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/circuit_breaker.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> CircuitBreaker</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    state</span><span style="color: #F9E2AF;font-style: italic;">            CircuitBreakerState</span><span style="color: #9399B2;font-style: italic;">  // closed | open | half-open</span></span>
-<span class="giallo-l"><span>    failureCount</span><span style="color: #CBA6F7;">     int</span><span style="color: #9399B2;font-style: italic;">                  // consecutive failures in Closed</span></span>
-<span class="giallo-l"><span>    failureThreshold</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;font-style: italic;">                  // open after N consecutive failures</span></span>
-<span class="giallo-l"><span>    openTimeout</span><span style="color: #F9E2AF;font-style: italic;">      time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">        // how long to stay open</span></span>
-<span class="giallo-l"><span>    halfOpenInflight</span><span style="color: #F9E2AF;font-style: italic;"> atomic</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Int32</span><span style="color: #9399B2;font-style: italic;">         // probe limit in half-open</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>Three states:</p>
-<ul>
-<li><strong>Closed</strong> — normal operation, <code>failureCount</code> tracks consecutive failures</li>
-<li><strong>Open</strong> — fail fast, no DB calls, wait <code>openTimeout</code></li>
-<li><strong>Half-Open</strong> — allow one probe, success → Closed, failure → Open</li>
-</ul>
-<p><strong>Honest reflection</strong>: The original breaker tracked <em>cumulative</em> failures. A brief network blip would trip it, and it stayed open for 30 seconds even though the DB was fine. Switching to <em>consecutive</em> failures (reset on each success) made it responsive without being twitchy.</p>
-<h3 id="3-writebuffer-batch-writes">3. WriteBuffer — Batch Writes</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/write_buffer.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> WriteBuffer</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    db</span><span style="color: #94E2D5;">            *</span><span style="color: #F9E2AF;font-style: italic;">Pool</span></span>
-<span class="giallo-l"><span>    buffer</span><span style="color: #CBA6F7;">        chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">WriteItem</span></span>
-<span class="giallo-l"><span>    batchSize</span><span style="color: #CBA6F7;">     int</span></span>
-<span class="giallo-l"><span>    flushInterval</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span></span>
-<span class="giallo-l"><span>    queue</span><span style="color: #94E2D5;">         *</span><span style="color: #F9E2AF;font-style: italic;">EmbeddingQueue</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>Writes go to an in-memory channel. A background goroutine flushes when either <code>batchSize</code> items accumulate or <code>flushInterval</code> elapses.</p>
-<p>This cut embedding API calls by 80% — instead of one embedding request per write, the buffer batches 50 items and sends one embedding request for the batch.</p>
-<h3 id="4-timeout-operation-level-deadlines">4. Timeout — Operation-Level Deadlines</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/timeout.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> DefaultTimeouts</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    Query</span><span style="color: #F9E2AF;font-style: italic;">        time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 30s</span></span>
-<span class="giallo-l"><span>    Insert</span><span style="color: #F9E2AF;font-style: italic;">       time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 20s</span></span>
-<span class="giallo-l"><span>    Update</span><span style="color: #F9E2AF;font-style: italic;">       time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 20s</span></span>
-<span class="giallo-l"><span>    Delete</span><span style="color: #F9E2AF;font-style: italic;">       time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 20s</span></span>
-<span class="giallo-l"><span>    Transaction</span><span style="color: #F9E2AF;font-style: italic;">  time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 60s</span></span>
-<span class="giallo-l"><span>    VectorSearch</span><span style="color: #F9E2AF;font-style: italic;"> time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;">  // 10s</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}{}</span></span></code></pre>
-<p>Each operation type has its own timeout. Vector search gets 10s (fail fast, let the breaker trip). Transactions get 60s (complex operations need room).</p>
-<hr />
-<h2 id="the-embedding-subsystem">The Embedding Subsystem</h2>
-<p><code>internal/storage/postgres/embedding/</code> is the most complex part of storage:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>embedding/</span></span>
-<span class="giallo-l"><span>├── service.go      # EmbeddingClient — implements api/embedding.EmbeddingService</span></span>
-<span class="giallo-l"><span>├── client.go       # HTTP client for embedding API</span></span>
-<span class="giallo-l"><span>├── cache.go        # In-memory embedding cache</span></span>
-<span class="giallo-l"><span>├── fallback.go     # Fallback embedding when primary fails</span></span>
-<span class="giallo-l"><span>├── embedding_queue.go  # Async embedding queue</span></span>
-<span class="giallo-l"><span>└── log.go          # Scoped logger</span></span></code></pre>
-<p>The flow:</p>
+<p><strong>Group 2 — event sourcing &amp; evolution (<code>migrate.go</code>, mostly without RLS)</strong></p>
+<table><thead><tr><th>Table</th><th>Stores</th></tr></thead><tbody>
+<tr><td><code>user_profiles</code> / <code>sessions</code> / <code>recommendations</code></td><td>User profiles / sessions / recommendations (legacy; <code>Seed</code> writes a sample profile here)</td></tr>
+<tr><td><code>embeddings</code></td><td><strong>VECTOR(1536)</strong> — note this table's dimension is 1536, a different vector space from the 1024-dim tables above</td></tr>
+<tr><td><code>agent_checkpoints</code></td><td>Agent recovery points (session/status), renamed from <code>leader_checkpoints</code></td></tr>
+<tr><td><code>events</code></td><td>Event sourcing, <code>payload/metadata JSONB</code> + <code>version BIGINT</code>, unique index <code>(stream_id, version)</code> for optimistic concurrency</td></tr>
+<tr><td><code>event_summaries</code></td><td>Compacted event-window summaries (<code>start_version/end_version</code>, aggregated <code>tools_called/errors/tasks_created</code> JSONB)</td></tr>
+<tr><td><code>evolution_strategies</code> / <code>evolution_rollback_events</code></td><td>Evolution strategy persistence and rollback audit</td></tr>
+</tbody></table>
+<p><strong>Group 3 — the event read path (<code>internal/ares_events/pg_store.go</code>)</strong></p>
+<p><code>PostgresEventStore</code> writes to the <code>events</code> table above with <strong>optimistic concurrency control</strong>: <code>Append</code> first reads the current <code>MAX(version)</code>, and if <code>expectedVersion&gt;0</code> does not match it returns <code>ErrVersionConflict</code> (with a PG unique-conflict 23505 fallback). <code>Subscribe</code> polls <code>events</code> once per second (default read limit 100) and exposes a <code>&lt;-chan *Event</code>.</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
-<span class="giallo-l"><span>    W</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Write</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">WriteBuffer</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> Q</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EmbeddingQueue</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    Q </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">Cache hit?</span><span style="color: #CBA6F7;">}</span></span>
-<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Yes</span><span style="color: #CBA6F7;">|</span><span> R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Return cached</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">No</span><span style="color: #CBA6F7;">|</span><span> H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">HTTP embedding API</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    H </span><span style="color: #CBA6F7;">--&gt;</span><span> F</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">Success?</span><span style="color: #CBA6F7;">}</span></span>
-<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Yes</span><span style="color: #CBA6F7;">|</span><span> C2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Cache + store</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">No</span><span style="color: #CBA6F7;">|</span><span> FB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Fallback embedding</span><span style="color: #CBA6F7;">]</span></span></code></pre>
-<p><strong>Honest reflection</strong>: The embedding cache has a subtle bug we fixed in v0.2.7 — cache keys weren't model-aware. If you switched embedding models, you'd get stale vectors from the old model. The fix: include <code>embedding_model</code> in the cache key. Simple, but it took a production incident to find.</p>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">experience/memory/knowledge writes</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">WriteBuffer batched</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">experiences_1024 / knowledge_chunks_1024</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EmbeddingQueue async</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EmbeddingClient</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;</span><span> F</span><span style="color: #CBA6F7;">[(</span><span style="color: #A6E3A1;">Redis cache</span><span style="color: #CBA6F7;">)]</span></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;</span><span> F2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">embedding HTTP service</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;</span><span> G</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">vector column backfill</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">event stream</span><span style="color: #CBA6F7;">] --&gt;</span><span> I</span><span style="color: #CBA6F7;">[(</span><span style="color: #A6E3A1;">events OCC</span><span style="color: #CBA6F7;">)]</span></span>
+<span class="giallo-l"><span>    I </span><span style="color: #CBA6F7;">--&gt;</span><span> J</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">PostgresEventStore.Subscribe poll</span><span style="color: #CBA6F7;">]</span></span></code></pre>
+<p>In one sentence: <strong>semantic retrieval lives in the 1024-dim IVFFlat tables, events live in the versioned <code>events</code> table, and evolution strategies have their own persistence — all sharing one <code>Pool</code>.</strong></p>
 <hr />
-<h2 id="the-repository-pattern">The Repository Pattern</h2>
-<p>Storage is organized by domain:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>repositories/</span></span>
-<span class="giallo-l"><span>├── conversation_repository.go</span></span>
-<span class="giallo-l"><span>├── distilled_memory_repository.go</span></span>
-<span class="giallo-l"><span>├── experience_repository.go</span></span>
-<span class="giallo-l"><span>├── knowledge_repository.go</span></span>
-<span class="giallo-l"><span>├── secret_repository.go</span></span>
-<span class="giallo-l"><span>├── strategy_repository.go</span></span>
-<span class="giallo-l"><span>├── task_result_repository.go</span></span>
-<span class="giallo-l"><span>└── tool_repository.go</span></span></code></pre>
-<p>Each repository follows the same pattern:</p>
+<h2 id="2-access-safety-pool-connection-management-rls-tenant-isolation">2. Access safety: Pool connection management + RLS tenant isolation</h2>
+<p><code>pool.go</code>'s <code>Pool</code> wraps <code>database/sql</code> around a <code>Get → use → Release</code> cycle (via <code>WithConnection</code>). Two things stand out:</p>
 <ol>
-<li>Interface in <code>repositories/*_interface.go</code></li>
-<li>Implementation in <code>repositories/*_repository.go</code></li>
-<li>Models in <code>models/</code></li>
-<li>Queries in <code>query/</code></li>
+<li><strong><code>ErrMissingTenantID</code></strong> (<code>pool.go</code>): any tenant-aware query without a tenantID fails fast, to prevent silent cross-tenant leakage (comments cite P1-11).</li>
+<li><strong>Connection-level RLS</strong> (0.3.0): <code>QueryWithTenant</code> runs <code>SELECT set_config('app.tenant_id', $1, false)</code> on the connection (<code>is_local=false</code>, surviving the autocommit boundary), and the returned <code>ManagedRows.Close()</code> clears it via <code>clearTenantContext</code> (<code>set_config('app.tenant_id', '', false)</code>) before returning the connection to the pool; <code>ExecWithTenant</code> wraps its work in a transaction (<code>BeginTx → set_config(true) → Commit</code>). The vector tables all carry <code>CREATE POLICY ... USING (tenant_id = current_setting('app.tenant_id', true))</code>, which only actually bites together with this connection-level <code>set_config</code>.</li>
 </ol>
-<p>This separation makes testing trivial — mock the interface, not the implementation.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    Q</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">QueryWithTenant</span><span style="color: #CBA6F7;">] --&gt;</span><span> S1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">set_config tenant</span><span>=</span><span style="color: #A6E3A1;">false</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S1 </span><span style="color: #CBA6F7;">--&gt;</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">execute query</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;</span><span> CL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ManagedRows.Close</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    CL </span><span style="color: #CBA6F7;">--&gt;</span><span> S2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">set_config &#39;&#39; false</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    E2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ExecWithTenant</span><span style="color: #CBA6F7;">] --&gt;</span><span> TX</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">BeginTx</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    TX </span><span style="color: #CBA6F7;">--&gt;</span><span> S3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">set_config tenant</span><span>=</span><span style="color: #A6E3A1;">true</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S3 </span><span style="color: #CBA6F7;">--&gt;</span><span> Q2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">execute in tx</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    Q2 </span><span style="color: #CBA6F7;">--&gt;</span><span> CM</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Commit</span><span style="color: #CBA6F7;">]</span></span></code></pre>
 <hr />
-<h2 id="migration-system">Migration System</h2>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/storage/postgres/migrate.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Migrate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> pool</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Pool</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span></code></pre>
-<p>Migrations are versioned and idempotent:</p>
+<h2 id="3-failure-isolation-circuitbreaker">3. Failure isolation: CircuitBreaker</h2>
+<p><code>circuit_breaker.go</code> implements <code>closed / open / half-open</code>. The semantics I want to call out: <strong><code>failureCount</code> tracks <em>consecutive</em> failures</strong> — every success resets it to zero (<code>RecordSuccess</code> zeroes the count in Closed). So <code>failureThreshold</code> means "open after N <em>consecutive</em> failures", not cumulative. Half-open admits one probe; it needs <code>successThreshold=3</code> successes to close again, and a single failure re-opens instantly. A 5-minute cleanup goroutine exists to prevent <code>halfOpenInflight</code> counter leaks.</p>
+<hr />
+<h2 id="4-writes-async-embedding-writebuffer-embeddingqueue">4. Writes &amp; async embedding: WriteBuffer → EmbeddingQueue</h2>
+<p><code>write_buffer.go</code> queues writes into an in-memory channel and a background loop flushes when <code>batchSize</code> items accumulate or <code>flushInterval</code> elapses. Three details that shape this path:</p>
 <ul>
-<li><code>migrate_storage.go</code> — base schema</li>
-<li><code>migrate_eval.go</code> — evaluation tables</li>
-<li><code>migrate_evolution.go</code> — strategy lineage tables</li>
+<li><strong>What's batched is the <em>database write</em>.</strong> <code>flushBatch</code> bulk-INSERTS into <code>knowledge_chunks_1024</code> / <code>experiences_1024</code> (the only two supported tables — anything else errors) inside a single transaction. Merged writes do save round-trips.</li>
+<li><strong>Embeddings are <em>not</em> batched.</strong> Each item <code>EnqueueTx</code>s one <strong>async embedding task</strong> in the same transaction, and the vector is backfilled later by a worker; until then <code>embedding</code> is <code>NULL</code> (an all-zero vector would be valid and get picked up by the partial ivfflat, returning meaningless distances).</li>
+<li><strong>Failures are not silently dropped</strong>: a failed flush retries with exponential backoff (max 3), then re-queues the whole batch rather than discarding it (a comment points at a historical data-loss bug).</li>
 </ul>
-<p>Each migration checks the current schema version and only applies missing migrations. Safe to run on startup.</p>
+<p><code>embedding_queue.go</code> is the linchpin: queue rows carry a <code>dedupe_key</code> (<code>sha256(table|task_id|tenant_id)</code>) guaranteeing <strong>at most one queue row per source row</strong>; workers claim tasks with <code>FOR UPDATE SKIP LOCKED</code>; <code>MarkFailed</code> moves past <code>MaxRetries</code> (default 3) into the dead-letter table; and <code>Reconcile</code> periodically re-enqueues orphan rows that have no vector yet, for eventual consistency.</p>
+<p>The async embedding client lives in <code>internal/storage/postgres/embedding/</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>embedding/</span></span>
+<span class="giallo-l"><span>├── service.go   # EmbeddingClient satisfies internal/embedding.EmbeddingService (compile-time assertion; api/embedding, the deprecated forward, was removed in 0.3.2)</span></span>
+<span class="giallo-l"><span>├── cache.go     # EmbeddingCache: Redis + in-memory, BLAKE2b-128 keys</span></span>
+<span class="giallo-l"><span>├── client.go    # HTTP client: /embed, /embed_batch, /health</span></span>
+<span class="giallo-l"><span>├── fallback.go  # FallbackClient: fallback strategies (cache-only / trigger keyword / error)</span></span>
+<span class="giallo-l"><span>└── log.go       # scoped logger</span></span></code></pre>
+<p>The cache key is <code>normalizedText|model|method</code> (<code>getCacheKey</code>: BLAKE2b-256 truncated to 128 bits, prefix <code>embed:</code>). That part is real — <strong>the key includes <code>model</code></strong>, so switching embedding models doesn't return stale vectors from the old model.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    W</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">write</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">WriteBuffer batch tx</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> Q</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EmbeddingQueue enqueue</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    Q </span><span style="color: #CBA6F7;">--&gt;</span><span> WK</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">worker FOR UPDATE SKIP LOCKED</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    WK </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">CacheKey hit?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">yes</span><span style="color: #CBA6F7;">|</span><span> R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">use cached vector</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">no</span><span style="color: #CBA6F7;">|</span><span> H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">POST /embed_batch</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    H </span><span style="color: #CBA6F7;">--&gt;</span><span> F</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">failed?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">yes</span><span style="color: #CBA6F7;">|</span><span> FB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">FallbackClient</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">no</span><span style="color: #CBA6F7;">|</span><span> WB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">backfill source row</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    FA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">exceeds MaxRetries</span><span style="color: #CBA6F7;">] --&gt;</span><span> DL</span><span style="color: #CBA6F7;">[(</span><span style="color: #A6E3A1;">embedding_dead_letter</span><span style="color: #CBA6F7;">)]</span></span>
+<span class="giallo-l"><span>    DC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Reconcile orphan scan</span><span style="color: #CBA6F7;">] --&gt;</span><span> RQ</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">re</span><span>-</span><span style="color: #A6E3A1;">enqueue</span><span style="color: #CBA6F7;">]</span></span></code></pre>
 <hr />
-<h2 id="lessons">Lessons</h2>
-<p>Storage is the layer nobody talks about until it breaks. Pool leaks, breaker misconfigurations, missing cache keys — each took a production incident to find.</p>
-<p>The four-layer protection (Pool → Breaker → Buffer → Timeout) seems like overkill until you're at 3 AM trying to figure out why PostgreSQL has 500 idle connections.</p>
-<p><strong>The best storage layer is the one you forget exists.</strong> It works, it's fast, it's safe — and it lets every other module focus on its job instead of worrying about the database.</p>
+<h2 id="5-operation-level-timeouts">5. Operation-level timeouts</h2>
+<p><code>timeout.go</code>'s <code>DefaultTimeouts</code>, as read:</p>
+<table><thead><tr><th>Operation</th><th>Timeout</th></tr></thead><tbody>
+<tr><td>Query</td><td>30s</td></tr>
+<tr><td>Insert / Update / Delete</td><td>20s</td></tr>
+<tr><td>Transaction</td><td>60s</td></tr>
+<tr><td>VectorSearch</td><td>10s</td></tr>
+</tbody></table>
+<p>Each <code>With*Timeout</code> returns the context unchanged when it already has a deadline, so caller intent wins. <code>config.go</code>'s <code>DefaultEmbeddingConfig</code> sets <code>MaxBatchSize=32</code>, <code>MaxRetries=3</code>, <code>MaxVectorSearchLimit=1000</code>, <code>EmbeddingTimeout=30s</code>.</p>
+<hr />
+<h2 id="6-repositories-migrations">6. Repositories &amp; migrations</h2>
+<p><code>repositories/</code> is split by domain: <code>conversation</code> / <code>distilled_memory</code> / <code>experience</code> / <code>knowledge</code> / <code>secret</code> / <code>strategy</code> / <code>task_result</code> / <code>tool</code>, with models centralized in <code>models/</code> (<code>conversation/experience/knowledge/secret/task_result/tool</code>). Note there is <strong>no separate <code>query/</code> package</strong> — the shared SQL helpers (<code>GetByID/DeleteByID/CountByTenant</code> and the dynamic-table whitelist <code>allowedTables</code>) live in <code>postgres/base_repository.go</code> and <code>query_utils.go</code>. Any table substituted into dynamic SQL must pass the <code>allowedTables</code> whitelist first, to block injection.</p>
+<p>The migrations (<code>migrate.go</code> / <code>migrate_storage.go</code> / <code>migrate_eval.go</code> / <code>migrate_evolution.go</code>) are an <strong>ordered set of idempotent DDL statements</strong> run at startup. Note: <strong>there is no schema-version table.</strong> <code>RollbackLast</code> returns <code>ErrRollbackUnsupported</code> — the code's own TODO says a <code>schema_migrations</code> table would be needed for real rollback.</p>
+<hr />
+<h2 id="7-lessons">7. Lessons</h2>
+<p>Storage is the layer nobody talks about until it breaks. But the real point of this code isn't a "four-layer protection" slogan — it's the concrete trade-offs: <strong>connection-level RLS via <code>set_config</code> tenant isolation, a breaker that trips only after <em>consecutive</em> failures, per-row async embedding with orphan reconciliation, and a dynamic table-name whitelist.</strong> Each maps back to an incident or a security fix (the comments say so).</p>
+<p>The best storage layer is the one you forget exists — but it exists, and every line of it was paid for with a lesson.</p>
 
     </div>
             <div class="pagination">
@@ -213,12 +198,12 @@
                 </div>
                 <div class="pagination__buttons">
                         <span class="button previous">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/20-llm-client-layer/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">LLM Client Layer — Failover, DeepSeek, and Multi-Provider Abstraction</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/20-llm-client-layer/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">LLM Client Layer — Client, Failover, and Multi-Provider Abstraction</span></a>
                         </span>
                     
                     
                         <span class="button next">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/18-knowledge-graph-build/"><span class="button__text">Knowledge Graph Build — From Markdown to 27K Edges (AKG)</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/18-knowledge-graph-build/"><span class="button__text">Knowledge Graph Build — From Provider Data to a Queryable Graph</span>&nbsp;<span class="button__icon">&#8594;</span></a>
                         </span>
                     </div>
             </div>

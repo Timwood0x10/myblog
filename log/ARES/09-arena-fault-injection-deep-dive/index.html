@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>Arena / Fault Injection — Break It Deliberately, Watch It Self-Heal | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <title>Arena / Fault Injection — Break It Deliberately, Watch It Rise Again | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
     <meta name="robots" content="noodp"/>
 
@@ -22,13 +22,13 @@
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
-    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Edo Tensei Verification — click a button, assassinate a working agent, and see if it can pick itself back up.">
-    <meta property="og:description" content="Edo Tensei Verification — click a button, assassinate a working agent, and see if it can pick itself back up.">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Chaos breaks, Recovery fixes — two fault-injection surfaces and the recovery semantics behind them.">
+    <meta property="og:description" content="Chaos breaks, Recovery fixes — two fault-injection surfaces and the recovery semantics behind them.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/09-arena-fault-injection-deep-dive/">
 
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:description" content="Edo Tensei Verification — click a button, assassinate a working agent, and see if it can pick itself back up.">
+    <meta name="twitter:description" content="Chaos breaks, Recovery fixes — two fault-injection surfaces and the recovery semantics behind them.">
     <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
     <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/09-arena-fault-injection-deep-dive/">
                 <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
@@ -73,7 +73,7 @@
         
 <div class="article-layout">
   <article class="post">
-    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/09-arena-fault-injection-deep-dive/">Arena / Fault Injection — Break It Deliberately, Watch It Self-Heal</a></h1>
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/09-arena-fault-injection-deep-dive/">Arena / Fault Injection — Break It Deliberately, Watch It Rise Again</a></h1>
     <div class="post-meta-inline">
         <span class="post-date">2026-06-28</span>
     </div>
@@ -83,325 +83,283 @@
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/testing/">#Testing</a></span>
     <div class="post-content">
-        <h1 id="ares-architecture-deep-dive-ix-arena-fault-injection-break-it-deliberately-watch-it-self-heal">ares Architecture Deep Dive (IX): Arena / Fault Injection — Break It Deliberately, Watch It Self-Heal</h1>
+        <h1 id="ares-architecture-deep-dive-ix-arena-fault-injection-deliberately-break-it-then-watch-it-rise-again-0-3-x">ares Architecture Deep Dive (IX): Arena / Fault Injection — Deliberately Break It, Then Watch It Rise Again (0.3.x)</h1>
 <blockquote>
-<p>Other agent frameworks show you how smart the agent is: fluent conversations, strong reasoning, smooth tool usage.
-ares shows you something else: <strong>when you deliberately kill its agents, can it survive?</strong>
-I call this "Edo Tensei Verification" — click a button on the Dashboard, assassinate a working agent, and see if it can pick itself back up.</p>
+<p>Other agent frameworks show you how smart an agent is: fluent dialogue, strong reasoning, slick tool use.
+ares wants to show something else: <strong>break it deliberately, and see whether it gets up on its own.</strong>
+You click a button and kill a working agent to watch whether it recovers.</p>
+<p>0.3.x update: fault injection and recovery verification are now split across <strong>two independent surfaces</strong>.</p>
+<ul>
+<li><strong><code>internal/aresrecovery</code></strong>: targets the new Kernel model (agentfabric + taskfabric). The source comment states it plainly: <strong>"Chaos breaks, Recovery fixes."</strong> This is the surface that is actually wired into the production serve path — with a fail-safe latch.</li>
+<li><strong><code>internal/runtime/arena</code></strong>: targets the old "leader / sub-agent + DAG" model, running as a standalone <code>ares arena serve</code> chaos-drill process. Its <code>Injector</code> comment is equally plain: <strong>"It does NOT implement recovery; the existing resurrection plugin and failover handle that automatically."</strong></li>
+</ul>
+</blockquote>
+<blockquote>
+<p>Boundary of this article: every symbol and flow below is something I actually read in this codebase. Where something is "configured but explicitly not done yet," or needs extra wiring to take effect, I mark it (待核实 / TBD) rather than dressing it up.</p>
 </blockquote>
 <hr />
-<h2 id="1-why-i-built-a-break-things-feature">1. Why I Built a "Break Things" Feature</h2>
-<p>Believe it or not, the Arena module was inspired by a production incident.</p>
-<p>I was testing agent stability and manually killed a process. The agent auto-resurrected and continued working on unfinished tasks. I was excited — but then I thought: <strong>This was just a manual test. Can I automate it?</strong></p>
-<p>So I built Arena — a module whose sole purpose is to break things. Not to show how smart agents are, but to show whether agents survive when they're constantly being attacked.</p>
-<p>Arena's secret is dead simple: <strong>it doesn't implement its own Runtime, DAG, or Recovery logic. It just deliberately calls the existing dangerous APIs (StopAgent, RemoveNode, RemoveEdge), and then waits to see the system fix itself.</strong></p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
-<span class="giallo-l"><span>    subgraph &quot;Arena Console&quot;</span></span>
-<span class="giallo-l"><span>        D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Dashboard\nDAG View + Control Panel</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Arena Engine&quot;</span></span>
-<span class="giallo-l"><span>        I</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Fault Injector</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        S</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Service</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        M</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Metrics Collector</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;ares Runtime&quot;</span></span>
-<span class="giallo-l"><span>        RT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Runtime</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        DAG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">MutableDAG</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        ES</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EventStore</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        FR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Flight Recorder</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Assassinate Leader</span><span style="color: #CBA6F7;">|</span><span> I</span></span>
-<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Kill Agent</span><span style="color: #CBA6F7;">|</span><span> I</span></span>
-<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Remove Node</span><span style="color: #CBA6F7;">|</span><span> I</span></span>
-<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Remove Edge</span><span style="color: #CBA6F7;">|</span><span> I</span></span>
-<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Inject Fault</span><span style="color: #CBA6F7;">|</span><span> I</span></span>
-<span class="giallo-l"><span>    I </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">calls</span><span style="color: #CBA6F7;">|</span><span> RT</span></span>
-<span class="giallo-l"><span>    I </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">calls</span><span style="color: #CBA6F7;">|</span><span> DAG</span></span>
-<span class="giallo-l"><span>    S </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">records</span><span style="color: #CBA6F7;">|</span><span> ES</span></span>
-<span class="giallo-l"><span>    S </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">bridges</span><span style="color: #CBA6F7;">|</span><span> FR</span></span>
-<span class="giallo-l"><span>    M </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">reads</span><span style="color: #CBA6F7;">|</span><span> ES</span></span>
-<span class="giallo-l"><span>    M </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">calculates</span><span style="color: #CBA6F7;">|</span><span> SC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ResilienceScore</span><span style="color: #CBA6F7;">]</span></span></code></pre>
-<p>Core files:</p>
-<table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody>
-<tr><td><code>internal/arena/types.go</code></td><td>ActionType, Action, Result, Stats</td></tr>
-<tr><td><code>internal/arena/injector.go</code></td><td>FaultInjector — wraps Runtime + DAG APIs</td></tr>
-<tr><td><code>internal/arena/service.go</code></td><td>Arena Service — executes actions, records history</td></tr>
-<tr><td><code>internal/arena/http.go</code></td><td>REST API + SSE streaming</td></tr>
-<tr><td><code>internal/arena/scenario.go</code></td><td>Scenario orchestrator</td></tr>
-<tr><td><code>internal/arena/survival.go</code></td><td>Survival mode — continuous random faults</td></tr>
-<tr><td><code>internal/arena/metrics.go</code></td><td>MetricsCollector — recovery timing + counts</td></tr>
-<tr><td><code>internal/arena/score.go</code></td><td>ResilienceScore — 3-dimensional scoring</td></tr>
-<tr><td><code>internal/arena/integration.go</code></td><td>FlightBridge — Arena → Flight Recorder</td></tr>
-<tr><td><code>internal/dashboard/static/app.js</code></td><td>Frontend: DAG visualization, control panel, event log</td></tr>
-<tr><td><code>cmd/arena/main.go</code></td><td>CLI: run / validate / list / survival / inspect / serve</td></tr>
-</tbody></table>
+<h2 id="1-why-build-a-break-things-feature">1. Why build a "break things" feature</h2>
+<p>Killing a running agent by hand and watching it come back and finish what it started is satisfying. But satisfaction alone proves nothing — <strong>you'd only be guessing whether the system can actually take a beating</strong>.</p>
+<p>That's the point of chaos engineering: not one manual click, but <strong>systematic, repeatable fault injection followed by recovery verification</strong>. It is the laboratory for the lifecycle assertion from part 7 of this series — <strong>"agent death ≠ task death."</strong></p>
 <hr />
-<h2 id="2-architecture">2. Architecture</h2>
-<h3 id="2-1-core-design-principle">2.1 Core Design Principle</h3>
-<p>Arena <strong>does not</strong> implement its own Runtime, DAG, or Recovery system. It is a thin layer that calls existing APIs:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">in </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Injector</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> KillAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> id</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> in</span><span style="color: #9399B2;">.</span><span>runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">StopAgent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> id</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Resurrection is handled automatically by the existing Resurrection plugin</span></span>
+<h2 id="2-first-tell-the-two-chaos-surfaces-apart">2. First, tell the two "chaos" surfaces apart</h2>
+<p>The easy trap when reading this code is that there are <strong>two fully independent</strong> fault-injection/recovery surfaces, and they must not be mixed up:</p>
+<table><thead><tr><th>Surface</th><th>Location</th><th>Target model</th><th>Production wiring</th><th>Recovery responsibility</th></tr></thead><tbody>
+<tr><td>Kernel chaos</td><td><code>internal/aresrecovery</code></td><td>agentfabric + taskfabric (new)</td><td><code>cmd/ares</code> <code>wireChaos</code> (live is heavily gated; default shadow)</td><td><code>Recovery</code> implements the full recovery chain itself</td></tr>
+<tr><td>Arena drill</td><td><code>internal/runtime/arena</code></td><td>old leader/sub-agent + DAG</td><td>standalone process <code>ares arena serve</code></td><td><code>Injector</code> does <strong>not</strong> implement recovery — delegated to ares_runtime resurrection/failover</td></tr>
+</tbody></table>
+<p>Both are called "chaos," but one is <strong>production-wired recovery verification with a fail-safe latch</strong>; the other is a <strong>drill process isolated from production</strong>. The rest of this article covers each.</p>
+<hr />
+<h2 id="3-kernel-chaos-chaos-breaks-recovery-fixes">3. Kernel chaos: Chaos breaks, Recovery fixes</h2>
+<p>The comment at the top of <code>internal/aresrecovery/chaos.go</code> is the charter for this module:</p>
+<blockquote>
+<p>"Chaos is the Failure Injection + Recovery Verification harness… it deliberately kills agents to prove the Runtime (Recovery subsystem) can restore their tasks. <strong>Chaos is SEPARATE from Recovery — Chaos breaks, Recovery fixes.</strong>"</p>
+</blockquote>
+<p>Broke into parts:</p>
+<ul>
+<li><code>FailureType</code> has exactly two values:
+<ul>
+<li><code>FailureKill</code> — a hard kill (crash): the agent is removed immediately.</li>
+<li><code>FailureSuspend</code> — a soft pause (simulates a hang/stall, not a crash).</li>
+</ul>
+</li>
+<li><code>Chaos.InjectFailure(ctx, agentID, failure)</code> — destroys only. The comment stresses: <strong>recovery is NOT triggered here</strong>; you must call <code>VerifyRecovery</code> explicitly. That lets a test assert "task is stranded after injection" before "task is recovered after VerifyRecovery." It records <code>injected[agentID] → FailureType</code>.</li>
+<li><code>Chaos.VerifyRecovery(ctx) int</code> — forwards to <code>Recovery.RecoverFromAgentDeath</code>, returns the <strong>number of tasks fully recovered</strong>. This is the "Recovery Verification" half of Chaos.</li>
+</ul>
+<p><code>Recovery</code> (<code>recovery.go</code>) does the actual fixing. The recovery chain is:</p>
+<ol>
+<li><code>RequeueExpiredLeases()</code> → sweeps expired leases and requeues <strong>only tasks whose lease genuinely expired</strong> back to READY. The comment stresses you must never iterate all READY tasks — that would hijack brand-new tasks unrelated to the crash.</li>
+<li><code>RecoverTaskCheckpoint(taskID, replacementID)</code> → finds/spawns a replacement agent, acquires the task for it, and installs the preserved checkpoint as the new agent's cognitive state (resume from the break point).</li>
+<li><code>RestartAgent(deadAgentID, cognitive, capabilities)</code> → revives in place under the same id when a death snapshot exists (continuous provenance), otherwise spawns a fresh identity. The restart budget is <strong>lifetime-cumulative</strong>: default 5 attempts, backoff 1s→30s capped (<code>DefaultRestartPolicy</code>); exhausted returns <code>ErrRecoveryExhausted</code>, so a broken agent cannot cycle forever. A successful revival does <strong>not</strong> reset the counter — only total deaths consume it.</li>
+<li><code>RecoverFromAgentDeath(ctx) int</code> → chains 1–3: sweep expired leases → requeue → checkpoint-resume each requeued task, returning the number fully recovered.</li>
+</ol>
+<blockquote>
+<p>Two honest caveats:</p>
+<ul>
+<li>The comments on <code>RecoverTaskCheckpoint</code> and <code>RecoverFromAgentDeath</code> are labelled <strong>TEST / CHAOS-ONLY</strong>: they install checkpoints via <code>agents.SetCognitiveState</code> and acquire tasks by hand — a separate mechanism from the production scheduler path (<code>runKernelRecoveryLoop</code> → <code>taskfabric.DecodeCheckpoint</code>). <strong>They must not be wired into the production serve path.</strong> Production recovery runs through <code>runKernelRecoveryLoop</code> in <code>cmd/ares</code>.</li>
+<li>So the semantic weight of <code>Chaos</code>/<code>Recovery</code> here is <strong>recovery verification</strong>; the actual event-driven recovery loop in production is <code>runKernelRecoveryLoop</code> in <code>cmd/ares/kernel_loop.go</code>.</li>
+</ul>
+</blockquote>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> CHAOS</span><span>[&quot;Chaos — breaks&quot;]</span></span>
+<span class="giallo-l"><span>        INJ</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Chaos.InjectFailure(ctx, agentID, FailureType)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        K</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;FailureKill = hard kill (immediate removal)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        S</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;FailureSuspend = soft pause (simulate hang)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        INJ </span><span style="color: #CBA6F7;">--&gt;</span><span> K</span></span>
+<span class="giallo-l"><span>        INJ </span><span style="color: #CBA6F7;">--&gt;</span><span> S</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> STATE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;After agent death&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        AD</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;agentfabric: agent killed / suspended&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        EX</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;taskfabric: lease expires → task back to READY&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        AD </span><span style="color: #CBA6F7;">--&gt;</span><span> EX</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> REC</span><span>[&quot;Recovery — fixes&quot;]</span></span>
+<span class="giallo-l"><span>        VR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Chaos.VerifyRecovery(ctx)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        R1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;RequeueExpiredLeases: only truly-expired tasks&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        R2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;RecoverTaskCheckpoint: new agent + install checkpoint&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        R3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;RestartAgent: restart budget 5, backoff 1s→30s&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        VR </span><span style="color: #CBA6F7;">--</span><span style="color: #A6E3A1;">&gt; R1 </span><span style="color: #CBA6F7;">--&gt;</span><span> R2 </span><span style="color: #CBA6F7;">--&gt;</span><span> R3</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    EX </span><span style="color: #CBA6F7;">-.</span><span style="color: #A6E3A1;"> &quot;injected state handed to Recovery&quot; </span><span style="color: #CBA6F7;">.-&gt;</span><span> VR</span></span>
+<span class="giallo-l"><span>    R3 </span><span style="color: #CBA6F7;">--&gt;</span><span> DONE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;return count of fully-recovered tasks&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre><h3 id="production-wiring-wirechaos-shadow-live">Production wiring: wireChaos (shadow / live)</h3>
+<p><code>cmd/ares/serve_chaos.go</code> <code>wireChaos</code> wires Chaos into the serve path. The default and safest posture is <strong>shadow</strong>:</p>
+<ul>
+<li>Default <code>mode=shadow</code> (or disabled, or live-with-unmet-guards) → only <code>shadowSandboxLoop</code> runs: it periodically replays a canonical failure scenario on <strong>independent scratch fabrics</strong> (spawn→create→acquire→kill→lease-expire→recover) — <strong>never touching production agents</strong> — and reports the outcome to the introspect panel.</li>
+<li>To switch to <code>mode=live</code>, <strong>four guards must hold simultaneously</strong>: <code>chaos.enabled=true</code>, <code>allow_live=true</code>, non-empty <code>eligible_capabilities</code> (target whitelist; an empty list refuses to arm), and non-empty <code>stop_token</code> (emergency-stop credential). Any missing guard falls back to shadow.</li>
+<li>The live loop <code>liveChaosLoop</code> enforces <strong>six guardrails</strong> (the source's own words): emergency stop <code>POST /api/chaos/stop</code>, a fail-safe latch, a GA quiet window, a token-bucket rate limit, per-agent cooldown, and the capability whitelist. Each injection is <code>InjectFailure(FailureKill)</code> → <code>runLiveChaosInjection</code> → <code>VerifyRecovery</code>; <strong>if verification returns 0 recovered, the fail-safe latch trips and no further injections run until process restart.</strong></li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> Guards</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;live chaos six guardrails&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        G1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;emergency stop /api/chaos/stop&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        G2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;fail-safe latch: recovered=0 → stop&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        G3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;GA quiet window&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        G4</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;token-bucket rate limit RatePerMin&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        G5</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;per-agent cooldown&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        G6</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;capability whitelist&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span>    LOOP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;liveChaosLoop&quot;</span><span style="color: #CBA6F7;">] --&gt;</span><span> Guards</span></span>
+<span class="giallo-l"><span>    Guards </span><span style="color: #CBA6F7;">--&gt;</span><span> INJ2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;InjectFailure(FailureKill)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    INJ2 </span><span style="color: #CBA6F7;">--&gt;</span><span> VR2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;VerifyRecovery(ctx)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    VR2 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;recovered=0&quot;</span><span style="color: #CBA6F7;">|</span><span> LATCH</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;fail-safe: stop future injections&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    VR2 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">&quot;recovered&gt;0&quot;</span><span style="color: #CBA6F7;">|</span><span> CONT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;continue&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre>
+<hr />
+<h2 id="4-the-arena-drill-process-internal-runtime-arena">4. The arena drill process: <code>internal/runtime/arena</code></h2>
+<p>This is the old, production-isolated chaos-drill layer, launched by <code>ares arena serve</code>. It starts its own demo pool (<code>arena-worker-1..3</code>, type=coder) and a mutable DAG, specifically to demonstrate "inject a fault → watch the system react."</p>
+<p>Core files (real paths):</p>
+<table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>internal/runtime/arena/types.go</code></td><td>ActionType (13 kinds), Action, Result, Stats</td></tr>
+<tr><td><code>internal/runtime/arena/injector.go</code></td><td>Injector — wraps <code>ares_runtime</code> + <code>MutableDAG</code>, <strong>does not implement recovery</strong></td></tr>
+<tr><td><code>internal/runtime/arena/service.go</code></td><td>Service — Execute actions, record metrics, emit events/failure evidence</td></tr>
+<tr><td><code>internal/runtime/arena/scenario.go</code></td><td>Scenario orchestration: YAML → sequential actions → report</td></tr>
+<tr><td><code>internal/runtime/arena/survival.go</code></td><td>Survival mode: random injection on an interval</td></tr>
+<tr><td><code>internal/runtime/arena/metrics.go</code></td><td>MetricsCollector — per-action-type aggregation</td></tr>
+<tr><td><code>internal/runtime/arena/score.go</code></td><td>3-dimensional resilience score</td></tr>
+<tr><td><code>internal/runtime/arena/http.go</code></td><td>REST + SSE + API-key auth</td></tr>
+<tr><td><code>internal/runtime/arena/integration.go</code></td><td>FlightBridge — arena actions → flight recorder</td></tr>
+<tr><td><code>internal/runtime/arena/evolution_bridge.go</code></td><td>EvolutionBridge → evolution UngatedPatcher (TBD back-fill)</td></tr>
+<tr><td><code>cmd/ares/arena.go</code></td><td><code>ares arena</code> CLI: run / validate / list / serve / survival / inspect</td></tr>
+<tr><td><code>cmd/ares/serve_chaos.go</code></td><td>production kernel chaos wiring (<code>wireChaos</code> above)</td></tr>
+</tbody></table>
+<blockquote>
+<p><code>internal/arena/…</code>, <code>internal/dashboard/static/app.js</code> and <code>cmd/arena/main.go</code> <strong>do not exist in this repository</strong>. The real paths are above; arena ships no bundled static frontend — the front-end-observable surface is the REST/SSE endpoints.</p>
+</blockquote>
+<h3 id="4-1-the-injector-a-thin-layer-that-does-not-recover">4.1 The injector: a thin layer that does not recover</h3>
+<p><code>Injector</code> depends on two <strong>interface subsets</strong>: <code>RuntimeProvider</code> (a subset of ares_runtime) and <code>DAGProvider</code> (a subset of mutable-DAG mutations). The interface-based design lets arena avoid importing concrete Runtime/DAG packages and makes mocking easy.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/runtime/arena/injector.go</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Injector wraps existing ares_runtime/DAG APIs to inject chaos.</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// It does NOT implement recovery; the existing resurrection plugin and</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// failover handle that automatically.</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Injector</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>	ares_runtime</span><span style="color: #F9E2AF;font-style: italic;"> RuntimeProvider</span></span>
+<span class="giallo-l"><span>	dag</span><span style="color: #F9E2AF;font-style: italic;">          DAGProvider</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">in </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Injector</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> RemoveNode</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> id</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> in</span><span style="color: #9399B2;">.</span><span>dag</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RemoveNode</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> id</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // MutableDAG rebuilds topology automatically</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h3 id="2-2-thirteen-chaos-actions">2.2 Thirteen Chaos Actions</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
-<span class="giallo-l"><span>    subgraph &quot;Infrastructure Faults&quot;</span></span>
-<span class="giallo-l"><span>        A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Kill Leader</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">triggers</span><span style="color: #CBA6F7;">|</span><span> LF</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Leader Failover</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Kill Agent</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">triggers</span><span style="color: #CBA6F7;">|</span><span> AR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Auto Resurrection</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Kill Orchestrator</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">triggers</span><span style="color: #CBA6F7;">|</span><span> LF</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Topology Faults&quot;</span></span>
-<span class="giallo-l"><span>        D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Remove Node</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">triggers</span><span style="color: #CBA6F7;">|</span><span> DR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">DAG Rebuild</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Remove Edge</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">triggers</span><span style="color: #CBA6F7;">|</span><span> DR</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Runtime Faults&quot;</span></span>
-<span class="giallo-l"><span>        F</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Pause Agent</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">tests</span><span style="color: #CBA6F7;">|</span><span> SS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Slow Start</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        G</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Slow Agent</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">tests</span><span style="color: #CBA6F7;">|</span><span> TO</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Timeout Handling</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Network Partition</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">tests</span><span style="color: #CBA6F7;">|</span><span> NC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Network Resilience</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Component Faults&quot;</span></span>
-<span class="giallo-l"><span>        I</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Tool Timeout</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">tests</span><span style="color: #CBA6F7;">|</span><span> TR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Tool Retry</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        J</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Memory Corrupt</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">tests</span><span style="color: #CBA6F7;">|</span><span> MR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Memory Recovery</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        K</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">MCP Disconnect</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">tests</span><span style="color: #CBA6F7;">|</span><span> MRR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">MCP Reconnect</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        L</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">LLM Failure</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">tests</span><span style="color: #CBA6F7;">|</span><span> LR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">LLM Retry/Fallback</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span></code></pre><h3 id="2-3-three-layer-architecture">2.3 Three-Layer Architecture</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
-<span class="giallo-l"><span>    subgraph &quot;API Layer </span><span style="color: #CBA6F7;">(</span><span style="color: #A6E3A1;">http.go</span><span style="color: #CBA6F7;">)</span><span>&quot;</span></span>
-<span class="giallo-l"><span>        REST</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">REST API\n20+ endpoints</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        SSE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">SSE Stream\n/arena/stream</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Service Layer </span><span style="color: #CBA6F7;">(</span><span style="color: #A6E3A1;">service.go</span><span style="color: #CBA6F7;">)</span><span>&quot;</span></span>
-<span class="giallo-l"><span>        EXEC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Execute action</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        HIST</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">History + Stats</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        SCORE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ResilienceScore</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        SURV</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Survival mode</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        SCEN</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Scenario runner</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Injector Layer </span><span style="color: #CBA6F7;">(</span><span style="color: #A6E3A1;">injector.go</span><span style="color: #CBA6F7;">)</span><span>&quot;</span></span>
-<span class="giallo-l"><span>        KILL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">KillAgent / KillLeader</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        DAG_OPS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">RemoveNode / RemoveEdge</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        FAULT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ToolTimeout / MemCorrupt / ...</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    REST </span><span style="color: #CBA6F7;">--&gt;</span><span> EXEC</span></span>
-<span class="giallo-l"><span>    EXEC </span><span style="color: #CBA6F7;">--&gt;</span><span> KILL</span></span>
-<span class="giallo-l"><span>    EXEC </span><span style="color: #CBA6F7;">--&gt;</span><span> DAG_OPS</span></span>
-<span class="giallo-l"><span>    EXEC </span><span style="color: #CBA6F7;">--&gt;</span><span> FAULT</span></span></code></pre>
-<hr />
-<h2 id="3-fault-injection">3. Fault Injection</h2>
-<h3 id="3-1-injector-design">3.1 Injector Design</h3>
-<p>The <code>Injector</code> depends on two interfaces — <code>RuntimeProvider</code> and <code>DAGProvider</code> — both of which are subsets of the full Runtime/DAG capabilities. This interface-based design means Arena doesn't need to import concrete Runtime or DAG packages, only a small API surface. Any type implementing these interfaces can be used, making Arena easily testable with mocks.</p>
-<h3 id="3-2-kill-leader-the-signature-move">3.2 Kill Leader — The Signature Move</h3>
-<p>Killing the Leader is Arena's most impactful demonstration, proving three capabilities at once:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">in </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Injector</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> KillLeader</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
-<span class="giallo-l"><span>    leaderID</span><span style="color: #94E2D5;"> :=</span><span style="color: #A6E3A1;"> &quot;&quot;</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> info</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> in</span><span style="color: #9399B2;">.</span><span>runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ListAgents</span><span style="color: #9399B2;">() {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> info</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;leader&quot;</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>            leaderID</span><span style="color: #94E2D5;"> =</span><span> info</span><span style="color: #9399B2;">.</span><span>ID</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">            break</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> leaderID</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> ErrLeaderNotFound</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> in</span><span style="color: #9399B2;">.</span><span>runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">StopAgent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> leaderID</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;arena: kill leader %s: %w&quot;</span><span style="color: #9399B2;">,</span><span> leaderID</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> leaderID</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">in </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Injector</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> KillLeader</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>	leaderID</span><span style="color: #94E2D5;"> :=</span><span style="color: #A6E3A1;"> &quot;&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">	for</span><span> _</span><span style="color: #9399B2;">,</span><span> info</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> in</span><span style="color: #9399B2;">.</span><span>ares_runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ListAgents</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">		if</span><span> info</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;leader&quot;</span><span style="color: #9399B2;"> {</span><span> leaderID</span><span style="color: #94E2D5;"> =</span><span> info</span><span style="color: #9399B2;">.</span><span>ID</span><span style="color: #9399B2;">;</span><span style="color: #CBA6F7;"> break</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">	}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">	if</span><span> leaderID</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> ErrLeaderNotFound</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">	if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> in</span><span style="color: #9399B2;">.</span><span>ares_runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">StopAgent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> leaderID</span><span style="color: #9399B2;">);</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">		return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;arena: kill leader %s: %w&quot;</span><span style="color: #9399B2;">,</span><span> leaderID</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">	}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">	return</span><span> leaderID</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>The causal chain:</p>
-<ol>
-<li>Arena calls <code>StopAgent("leader-1")</code></li>
-<li>Runtime marks the agent as stopped</li>
-<li>Agent goroutine exits</li>
-<li><code>NotifyAgentDead</code> is called</li>
-<li>LeaderSupervisor detects leader absence</li>
-<li>Failover triggers: election → checkpoint recovery → event replay</li>
-<li>New leader is promoted and running within seconds</li>
-</ol>
-<hr />
-<h2 id="4-service-layer">4. Service Layer</h2>
-<h3 id="4-1-action-execution">4.1 Action Execution</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Service</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Execute</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> action</span><span style="color: #F9E2AF;font-style: italic;"> Action</span><span style="color: #9399B2;">)</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    start</span><span style="color: #94E2D5;"> :=</span><span> time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Now</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> err</span><span style="color: #CBA6F7;"> error</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> action</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> ActionKillLeader</span><span style="color: #9399B2;">:</span></span>
-<span class="giallo-l"><span>        _</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> =</span><span> s</span><span style="color: #9399B2;">.</span><span>injector</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">KillLeader</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> ActionKillAgent</span><span style="color: #9399B2;">:</span></span>
-<span class="giallo-l"><span>        err</span><span style="color: #94E2D5;"> =</span><span> s</span><span style="color: #9399B2;">.</span><span>injector</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">KillAgent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> action</span><span style="color: #9399B2;">.</span><span>TargetID</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... 13 cases</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    result</span><span style="color: #94E2D5;"> :=</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #9399B2;">{</span><span>Success</span><span style="color: #9399B2;">:</span><span> err</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> Duration</span><span style="color: #9399B2;">:</span><span> time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Since</span><span style="color: #9399B2;">(</span><span>start</span><span style="color: #9399B2;">)}</span></span>
-<span class="giallo-l"><span>    s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">recordMetrics</span><span style="color: #9399B2;">(</span><span>action</span><span style="color: #9399B2;">.</span><span>Type</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #9399B2;">.</span><span>Success</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #9399B2;">.</span><span>Duration</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>    s</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">emitEvent</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> action</span><span style="color: #9399B2;">,</span><span> result</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> result</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>Each action result is emitted as an event in the EventStore and pushed to the Dashboard frontend in real time via SSE streaming.</p>
-<hr />
-<h2 id="5-resilience-score">5. Resilience Score</h2>
-<h3 id="5-1-three-dimensional-scoring-system">5.1 Three-Dimensional Scoring System</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
-<span class="giallo-l"><span>    subgraph &quot;Resilience Score&quot;</span></span>
-<span class="giallo-l"><span>        direction TB</span></span>
-<span class="giallo-l"><span>        A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Availability&lt;br/&gt;40% weight</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Recovery&lt;br/&gt;30% weight</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Consistency&lt;br/&gt;30% weight</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    A </span><span style="color: #CBA6F7;">--&gt;</span><span> A1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Fault success ratio</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    R </span><span style="color: #CBA6F7;">--&gt;</span><span> R1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Recovery rate&lt;br/&gt;70% of dimension</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    R </span><span style="color: #CBA6F7;">--&gt;</span><span> R2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Recovery speed&lt;br/&gt;30% of dimension</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> C1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Data consistency rate</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    A1 </span><span style="color: #CBA6F7;">-.-&gt;|</span><span style="color: #A6E3A1;">Formula</span><span style="color: #CBA6F7;">|</span><span> FINAL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Final Score&lt;br/&gt;0</span><span>-</span><span style="color: #A6E3A1;">100</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    R1 </span><span style="color: #CBA6F7;">-.-&gt;|</span><span style="color: #A6E3A1;">Formula</span><span style="color: #CBA6F7;">|</span><span> FINAL</span></span>
-<span class="giallo-l"><span>    R2 </span><span style="color: #CBA6F7;">-.-&gt;|</span><span style="color: #A6E3A1;">Formula</span><span style="color: #CBA6F7;">|</span><span> FINAL</span></span>
-<span class="giallo-l"><span>    C1 </span><span style="color: #CBA6F7;">-.-&gt;|</span><span style="color: #A6E3A1;">Formula</span><span style="color: #CBA6F7;">|</span><span> FINAL</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    FINAL </span><span style="color: #CBA6F7;">--&gt;</span><span> GRADE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Grade: A+/A/B/C/D/F</span><span style="color: #CBA6F7;">]</span></span></code></pre><table><thead><tr><th>Score Range</th><th>Grade</th></tr></thead><tbody>
-<tr><td>≥ 95</td><td>A+</td></tr>
-<tr><td>≥ 90</td><td>A</td></tr>
-<tr><td>≥ 80</td><td>B</td></tr>
-<tr><td>≥ 70</td><td>C</td></tr>
-<tr><td>≥ 60</td><td>D</td></tr>
-<tr><td>&lt; 60</td><td>F</td></tr>
-</tbody></table>
-<hr />
-<h2 id="6-scenario-runner">6. Scenario Runner</h2>
-<p>YAML defines orchestrated sequences of chaos actions:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="yaml"><span class="giallo-l"><span style="color: #89B4FA;">name</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> leader-failover-storm</span></span>
+<p>It implements no recovery itself. Recovery is <em>delegated/expected</em> from ares_runtime's resurrection and failover. <code>KillLeader</code> just finds a <code>type=="leader"</code> agent and calls <code>StopAgent</code> — "a replacement leader is then elected by failover" is <strong>not</strong> implemented in this process.</p>
+<p><code>internal/runtime/arena/e2e_chaos_recovery_test.go</code> is a real end-to-end check: it drives a genuine <code>ares_runtime.Manager</code>, registers a pool of workers with rebuild factories, calls <code>Manager.NotifyAgentDead(...)</code> to model a batch crash, then polls the factory call count to assert resurrection happens asynchronously and the Manager still tracks a live pool. It scales over 16/64/128.</p>
+<h3 id="4-2-thirteen-actions">4.2 Thirteen actions</h3>
+<p><code>types.go</code> defines 13 <code>ActionType</code>s:</p>
+<p><code>kill_leader</code> <code>kill_agent</code> <code>remove_node</code> <code>remove_edge</code> <code>pause_agent</code> <code>resume_agent</code> <code>slow_agent</code> <code>kill_orchestrator</code> <code>network_partition</code> <code>tool_timeout</code> <code>memory_corrupt</code> <code>mcp_disconnect</code> <code>llm_failure</code></p>
+<p><code>Service.Execute</code> dispatches each action to the matching <code>Injector</code> method via <code>switch action.Type</code>, then: updates <code>Stats</code>, calls <code>MetricsCollector.RecordActionResult</code>, emits an <code>arena.*</code> event to the EventStore, appends a <code>kind=failure</code> evidence record to the unified Evidence Store on failure, and calls any wired <code>FlightBridge</code> / <code>EvolutionBridge</code>.</p>
+<h3 id="4-3-scenario-orchestration">4.3 Scenario orchestration</h3>
+<p><code>scenario.go</code> defines action sequences in YAML. Real examples live in <code>examples/arena/</code> (<code>peer_failure.yaml</code>, <code>cascading_storm.yaml</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="yaml"><span class="giallo-l"><span style="color: #89B4FA;">name</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> peer-failure-and-leaderless-recovery</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">config</span><span style="color: #94E2D5;">:</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  stop_on_error</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  parallel_actions</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> false</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  warmup</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 1s</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">  cooldown</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 1s</span></span>
 <span class="giallo-l"><span style="color: #89B4FA;">actions</span><span style="color: #94E2D5;">:</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">  -</span><span style="color: #89B4FA;"> delay</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 0s</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">    action</span><span style="color: #94E2D5;">:</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">      type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> kill_leader</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">  -</span><span style="color: #89B4FA;"> delay</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 8s</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">    action</span><span style="color: #94E2D5;">:</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">      type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> kill_agent</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">  -</span><span style="color: #89B4FA;"> delay</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 5s</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">    action</span><span style="color: #94E2D5;">:</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">      type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> slow_agent</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">      metadata</span><span style="color: #94E2D5;">:</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">        duration</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 8s</span></span></code></pre>
-<p>Two built-in scenarios:</p>
+<span class="giallo-l"><span style="color: #9399B2;">  -</span><span style="color: #89B4FA;"> delay</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 2s</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    action</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> {</span><span style="color: #89B4FA;"> type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> kill_agent</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;"> target_id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> agent-1</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    label</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> kill-agent-1</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  -</span><span style="color: #89B4FA;"> delay</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 1s</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    action</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> {</span><span style="color: #89B4FA;"> type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> kill_agent</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;"> target_id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> agent-2</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    label</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> kill-agent-2</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  -</span><span style="color: #89B4FA;"> delay</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 3s</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    action</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> {</span><span style="color: #89B4FA;"> type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> network_partition</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;"> target_id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> agent-3</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    label</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> partition-agent-3</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">  -</span><span style="color: #89B4FA;"> delay</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 1s</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    action</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> {</span><span style="color: #89B4FA;"> type</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> slow_agent</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;"> target_id</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> agent-3</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;"> metadata</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> {</span><span style="color: #89B4FA;"> delay</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> 10s</span><span style="color: #9399B2;"> } }</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;">    label</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> slow-agent-3</span></span></code></pre>
+<blockquote>
+<p>The pre-0.3.1 example was "leader assassination" built on a <code>kill_leader</code>
+action. The kernel scheduler is leaderless — no <code>models.AgentType</code> is
+<code>"leader"</code> — so <code>Injector.KillLeader</code> always returned <code>ErrLeaderNotFound</code>
+and the scenario was a silent no-op. It was rewritten as peer failure.</p>
+</blockquote>
+<p><code>ValidateScenario</code> checks the name, at least one action, non-negative delays, per-action validity, and non-negative <code>max_concurrent</code>/<code>timeout</code>. <code>RunScenarioReport</code> supports warmup/cooldown, an overall timeout, and <code>stop_on_error</code>.</p>
+<blockquote>
+<p>Honest caveat: <code>ScenarioConfig.parallel_actions</code> and <code>max_concurrent</code>, plus per-action <code>depends_on</code>, are <strong>explicitly "configured but not yet implemented"</strong> — <code>RunScenarioReport</code> logs a warning and (TBD) always runs actions <strong>sequentially</strong>.</p>
+</blockquote>
+<h3 id="4-4-survival-mode">4.4 Survival mode</h3>
+<p><code>survival.go</code> <code>Service.RunSurvival</code> picks a random action from the 13 and a random target (from listed agents or DAG nodes/edges) on each interval (default 30m / every 10s), recording a <code>Timeline</code>. <code>SurvivalReport</code> carries no hard-coded sample scores — no <code>Score: 100.0 (A+)</code> / <code>97.3</code> output lines exist in this code, so none are reproduced here.</p>
+<hr />
+<h2 id="5-the-3-dimensional-resilience-score">5. The 3-dimensional resilience score</h2>
+<p><code>score.go</code> <code>ResilienceScore</code> is a weighted 3-dimensional score; <code>gradeFromScore</code> maps fixed thresholds to letter grades.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Score</span><span>[&quot;ResilienceScore — weighted 3D </span><span style="color: #CBA6F7;">(</span><span style="color: #A6E3A1;">score.go</span><span style="color: #CBA6F7;">)</span><span>&quot;]</span></span>
+<span class="giallo-l"><span>        A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Availability (weight 40%)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Recovery (weight 30%)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Consistency (weight 30%)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span>    A </span><span style="color: #CBA6F7;">--&gt;</span><span> A1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;base = (total - failed) / total × 100&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    R </span><span style="color: #CBA6F7;">--&gt;</span><span> R1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;recovery rate ×70% + recovery speed ×30%&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    R1 </span><span style="color: #CBA6F7;">--&gt;</span><span> R2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;speed: avg ≤1s→100, ≥10s→0, linear&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> C1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;rate with ≥20 samples, else heuristic&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    A1 </span><span style="color: #CBA6F7;">-.</span><span style="color: #A6E3A1;">weighted sum</span><span style="color: #CBA6F7;">.-&gt;</span><span> FIN</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Final = A×0.4 + R×0.3 + C×0.3&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    R2 </span><span style="color: #CBA6F7;">-.-&gt;</span><span> FIN</span></span>
+<span class="giallo-l"><span>    C1 </span><span style="color: #CBA6F7;">-.-&gt;</span><span> FIN</span></span>
+<span class="giallo-l"><span>    FIN </span><span style="color: #CBA6F7;">--&gt;</span><span> G</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;grade: ≥95 A+ / ≥90 A / ≥80 B / ≥70 C / ≥60 D / else F&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre>
+<p>An honest note on the Consistency dimension (updated 2026-10-20): <code>RecordConsistency</code> is <strong>no longer a
+dead entry point</strong>. In the serve process,
+<code>taskfabric.Fabric.WithConsistencyObserver(arena.NewConsistencyAdapter(kernel.arenaMetrics))</code> records one
+<code>ok bool</code> per <code>Fabric.DecodeCheckpoint</code> read-back. The window is FIFO-capped at 1000, and
+<code>DataConsistencyRate</code> is published only once <code>ConsistencySamples &gt;= 20</code>; below that the rate is 0 and
+<code>Unmeasured</code> contains <code>data_consistency</code>. <code>calcConsistency</code> therefore checks
+<code>metrics.ConsistencySamples &gt;= 20</code>:</p>
 <ul>
-<li><strong><code>leader_assassination.yaml</code></strong>: 4-phase — assassinate Leader → verify new Leader → randomly kill agent → slow agent under load</li>
-<li><strong><code>cascading_storm.yaml</code></strong>: 7-phase — network partition → kill → tool timeout → memory corrupt → MCP disconnect → LLM failure → cascading slowdown</li>
+<li>with enough samples it uses <code>DataConsistencyRate</code>, <strong>including a real 0%</strong> (a window of all-failed
+decodes is no longer mistaken for "no data");</li>
+<li>below the threshold it falls back to the <strong>heuristic</strong>: about half the failures are treated as
+data-related (<code>dataRelated = max(1, failed/2)</code>), deducting 5 points per unit.</li>
+</ul>
+<p>Mind the process boundary: <code>CalculateScore</code> is called only inside <code>arena.Service</code> (<code>ares arena serve</code>),
+which has no task-fabric checkpoint stream, so that process's own <code>data_consistency</code> remains honestly
+unmeasured. The rate measured by the serve process is exposed on the chaos panel through
+<code>recovery_metrics</code> (<code>data_consistency_rate</code> / <code>consistency_samples</code> / <code>consistency_measured</code>), not
+cross-process into the arena scorer. The panel must render <code>consistency_measured=false</code> as
+"not measured" (or hide the number), never as a 0% consistency rate. The recovery-speed thresholds (≤1s → 100, ≥10s → 0) are likewise this
+score's own rubric, not a measured SLA.</p>
+<hr />
+<h2 id="6-http-and-authentication">6. HTTP and authentication</h2>
+<p><code>http.go</code> <code>Handler</code> registers roughly 27 routes: <code>/arena/leader/kill</code>; <code>/arena/agent/{id}/kill|pause|resume|slow|partition|tool-timeout|memory-corrupt|mcp-disconnect|llm-failure</code>; <code>/arena/node/{id}/remove</code>; <code>/arena/edge/remove</code>; <code>/arena/orchestrator/kill</code>; plus <code>stats/history/stream</code> (SSE) / <code>score/metrics</code>, the three survival endpoints, and flight timeline/diagnostics plus scenario run/validate.</p>
+<p>Arena exposes only destructive endpoints (kill leader, remove nodes, corrupt memory), so authentication defaults to <strong>deny</strong>:</p>
+<ul>
+<li>If an API key is set (<code>--api-key</code> or <code>security.arena_api_key</code> in ares.yaml), every request must carry the <code>X-API-Key</code> header (constant-time compare).</li>
+<li>With no key and no explicit <code>--allow-anonymous</code>, <code>APIKeyAuthMiddleware</code> returns 401 for every request — a "just open the dashboard and click" no-auth flow is rejected by default. <code>--allow-anonymous</code> is for local development only, and the comment warns it must never be enabled for a network-reachable deployment.</li>
 </ul>
 <hr />
-<h2 id="7-survival-mode">7. Survival Mode</h2>
-<p>Survival mode continuously injects random faults for a configured duration:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">ares</span><span style="color: #A6E3A1;"> arena survival --addr http://localhost:8080 --duration 30m --interval 10s</span></span></code></pre>
-<p>Live output:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Elapsed: 12s         Actions: 1     Score: 100.0 (A+)</span></span>
-<span class="giallo-l"><span>Elapsed: 22s         Actions: 2     Score: 97.3 (A+)</span></span></code></pre>
-<p>13 fault types randomly select targets. Ctrl+C stops and prints the final report.</p>
-<hr />
-<h2 id="8-dashboard-integration">8. Dashboard Integration</h2>
-<h3 id="8-1-frontend">8.1 Frontend</h3>
-<p>The Arena tab provides:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
-<span class="giallo-l"><span>    subgraph &quot;Arena Dashboard&quot;</span></span>
-<span class="giallo-l"><span>        TOP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Top Bar</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        DAG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">DAG View\nSVG Real</span><span>-</span><span style="color: #A6E3A1;">time</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        SIDE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Side Panel</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Top Bar&quot;</span></span>
-<span class="giallo-l"><span>        SCORE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Score Ring + Grade</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        STATS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Faults / Recovered / Failed / AvgRec</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        FAULTS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Fault Buttons Row</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Side Panel&quot;</span></span>
-<span class="giallo-l"><span>        CARDS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Agent Cards</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        LOG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Event Log / Timeline</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    TOP </span><span style="color: #CBA6F7;">--&gt;</span><span> SCORE</span></span>
-<span class="giallo-l"><span>    TOP </span><span style="color: #CBA6F7;">--&gt;</span><span> STATS</span></span>
-<span class="giallo-l"><span>    TOP </span><span style="color: #CBA6F7;">--&gt;</span><span> FAULTS</span></span>
-<span class="giallo-l"><span>    DAG </span><span style="color: #CBA6F7;">--&gt;</span><span> SIDE</span></span>
-<span class="giallo-l"><span>    SIDE </span><span style="color: #CBA6F7;">--&gt;</span><span> CARDS</span></span>
-<span class="giallo-l"><span>    SIDE </span><span style="color: #CBA6F7;">--&gt;</span><span> LOG</span></span></code></pre>
-<p><strong>13 fault buttons</strong>: ☠Leader / ⚙Orch / Kill / ✕Node / ✕Edge / ⏸Pause / ▶Resume / 🐌Slow / 🗡Partition / ⏰Timeout / 📚MemCorrupt / 📱MCP DC / 🧠LLM Fail</p>
-<p><strong>Event Log</strong> streams real-time recovery narratives:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>10:01:02 ✗ kill_leader → Leader killed</span></span>
-<span class="giallo-l"><span>10:01:04 ✓ kill_leader → New leader elected</span></span>
-<span class="giallo-l"><span>10:01:06 ✓ workflow → Workflow resumed</span></span></code></pre><h3 id="8-2-post-mortem-inspect">8.2 Post-Mortem Inspect</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">ares</span><span style="color: #A6E3A1;"> arena inspect --addr http://localhost:8080</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>═══════════════════════════════════════════════════════</span></span>
-<span class="giallo-l"><span>  Arena Inspection Report</span></span>
-<span class="giallo-l"><span>═══════════════════════════════════════════════════════</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>  Score:          92.4 (A)</span></span>
-<span class="giallo-l"><span>  Recovery Rate:  92.9%</span></span>
-<span class="giallo-l"><span>  Faults:         32 total, 31 recovered, 1 failed</span></span>
-<span class="giallo-l"><span>  Diagnostics:</span></span>
-<span class="giallo-l"><span>    concurrency_error    3  (37.5%)</span></span>
-<span class="giallo-l"><span>    tool_timeout         2  (25.0%)</span></span></code></pre>
-<hr />
-<h2 id="9-cli-command-reference">9. CLI Command Reference</h2>
-<table><thead><tr><th>Command</th><th>Description</th></tr></thead><tbody>
-<tr><td><code>ares arena run &lt;scenario.yaml&gt;</code></td><td>Run a scenario against remote server</td></tr>
-<tr><td><code>ares arena validate &lt;scenario.yaml&gt;</code></td><td>Validate scenario file locally</td></tr>
-<tr><td><code>ares arena list [dir]</code></td><td>List scenario files in directory</td></tr>
-<tr><td><code>ares arena serve [--addr]</code></td><td>Start Arena HTTP server</td></tr>
-<tr><td><code>ares arena survival [--addr] [--duration]</code></td><td>Start survival mode (live progress)</td></tr>
-<tr><td><code>ares arena inspect [--addr]</code></td><td>Post-mortem inspection report</td></tr>
-</tbody></table>
-<hr />
-<h2 id="10-architectural-summary">10. Architectural Summary</h2>
-<h3 id="design-patterns">Design Patterns</h3>
-<table><thead><tr><th>Pattern</th><th>Location</th><th>Purpose</th></tr></thead><tbody>
-<tr><td>Facade</td><td><code>Injector</code></td><td>Wraps Runtime + DAG into unified chaos interface</td></tr>
-<tr><td>Strategy</td><td><code>ActionType</code> → <code>Service.Execute</code></td><td>Dispatch 13 fault types</td></tr>
-<tr><td>Observer</td><td>SSE stream</td><td>Real-time event push to dashboard</td></tr>
-<tr><td>Decorator</td><td><code>FlightBridge</code></td><td>Augment arena actions with flight recording</td></tr>
-<tr><td>Composite</td><td><code>Scenario</code></td><td>Multiple orchestrated actions as one run</td></tr>
-<tr><td>CLI Command</td><td><code>cmd/arena/main.go</code></td><td>6 subcommands</td></tr>
-</tbody></table>
-<h3 id="self-healing-capabilities-arena-proves">Self-Healing Capabilities Arena Proves</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
-<span class="giallo-l"><span>    subgraph &quot;Arena Proves ares is a Self-Healing Runtime&quot;</span></span>
-<span class="giallo-l"><span>        A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Kill Leader</span><span style="color: #CBA6F7;">] --&gt;</span><span> LA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Leader Election </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        A </span><span style="color: #CBA6F7;">--&gt;</span><span> CK</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Checkpoint Recovery </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        A </span><span style="color: #CBA6F7;">--&gt;</span><span> ER</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Event Replay </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>        B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Kill Agent</span><span style="color: #CBA6F7;">] --&gt;</span><span> AR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Auto Resurrection </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        B </span><span style="color: #CBA6F7;">--&gt;</span><span> SR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">State Recovery </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        B </span><span style="color: #CBA6F7;">--&gt;</span><span> CR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Context Preservation </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>        C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Remove Node/Edge</span><span style="color: #CBA6F7;">] --&gt;</span><span> DR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">DAG Rebuild </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        C </span><span style="color: #CBA6F7;">--&gt;</span><span> AP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Alternate Path </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>        D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Tool Timeout</span><span style="color: #CBA6F7;">] --&gt;</span><span> TR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Tool Retry </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        D </span><span style="color: #CBA6F7;">--&gt;</span><span> DG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Degradation </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>        E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Survival Mode</span><span style="color: #CBA6F7;">] --&gt;</span><span> FR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Fault Recovery Rate &gt;97% </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        E </span><span style="color: #CBA6F7;">--&gt;</span><span> RT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Recovery Time &lt;2s </span><span>✓</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span></code></pre>
-<hr />
-<h2 id="11-conclusion">11. Conclusion</h2>
-<p>Arena is the feature I find most interesting in ares. Not because the technology is particularly impressive — but because it shows something most other frameworks don't: <strong>can the system survive when it's being continuously destroyed?</strong></p>
-<p>13 fault types, scenario orchestration, survival mode, real-time Dashboard, Flight Recorder integration, three-dimensional resilience scoring... All of these together turn <code>ares arena run cascading_storm.yaml</code> from a test command into a demo that says: "Look how resilient my system is."</p>
-<p>I once showed a friend: opened the Dashboard, clicked "Assassinate Leader," the agent died... then 1.4 seconds later it auto-resurrected. He said: "Holy shit, it does that?"</p>
-<p>I thought: <strong>Yeah. That's exactly why I spent so much time building this.</strong></p>
+<h2 id="7-flight-recorder-and-evolution-bridging">7. Flight recorder and evolution bridging</h2>
+<p><strong>FlightBridge</strong> (<code>integration.go</code>) writes each arena action as a timeline event in the flight recorder and adds a diagnostic record for failures (calling <code>flight.SuggestFix</code>). This wiring is confirmed effective: <code>service.Execute</code> calls <code>s.bridge.OnActionExecuted</code> after every action.</p>
+<p><strong>EvolutionBridge</strong> (<code>evolution_bridge.go</code>) translates arena failures into <code>PatchProposal</code>s for the evolution <code>UngatedPatcher</code>: <code>ActionRemoveNode → PatchInsertNode</code>, <code>ActionKillAgent/KillLeader → PatchReplaceNode</code>, infrastructure faults → <code>PatchChangeRecoveryStrategy</code>, and grades them via <code>chaosPriority</code>: faults with <strong>priority ≥ 9</strong> (killing leader/orchestrator) go through <code>UngatedPatcher.ApplyEmergency</code> for immediate self-healing; the rest go through <code>UngatedPatcher.Submit</code> for evaluation. (Slow-agent / tool-timeout faults used to map to <code>PatchChangeScheduler</code>; that mapping was removed in 0.3.2, along with the patch's other producer, because the graph applier requires a real <code>Scheduler</code> value that neither producer could supply.)</p>
 <blockquote>
-<p>"Break it deliberately. Watch it self-heal." — This is ares's most impressive demo, and the biggest source of satisfaction I've had in building this framework.</p>
+<p>(TBD): <code>OnActionExecuted</code> does construct a proposal and submit/emergency-apply it on failure. But whether the UngatedPatcher's evaluated proposal ultimately produces a real runtime/scheduling change depends on the UngatedPatcher and its patch applicator. Inside <code>arena serve</code>, this operates on the process's own demo pool and mutable DAG; whether these patches flow back to the real production runtime is something I could not confirm in the code covered here, so I flag it as TBD.</p>
+</blockquote>
+<p>Worth adding is the <strong>execution feedback loop</strong> in <code>cmd/ares/peer_mode.go</code> (from <code>aresrecovery</code>, targeting the Kernel model) that is confirmed live:</p>
+<ul>
+<li><code>ExecutionAttribution.Record / RecordWithMetrics(agentID, capability, success, latency, retries, recovers)</code> collects per-(agent, capability) outcomes.</li>
+<li><code>DeterministicScorer</code> is a <strong>zero-LLM</strong> deterministic scorer: weights <code>success 0.70 / latency 0.15 / retries 0.10 / recovers 0.05</code>, always in [0,1], with a neutral prior of 0.5 for no history. It is the deterministic fitness signal for the GA — no LLM, no randomness.</li>
+<li><code>EvolutionFeedbackAdapter.Apply</code> pushes attribution snapshots back into <code>ConfidenceInjector.SetAgentConfidence / SetCapabilityConfidence</code>, so the next schedule sees the new confidence — failure-heavy agents are downweighted, success-heavy agents preferred.</li>
+<li>Change attribution <code>ChangeAttributor.Attribute</code> apportions the <code>BestScore</code> delta between two adjacent <code>GenerationSnapshot</code>s across each change: explicit Impacts win; the rest split the remaining delta equally.</li>
+</ul>
+<p>Also from <code>chaos.go</code>, <code>EvolutionAdapter</code> (<code>AdaptPopulation(spawn, retire)</code>) is the runtime-adaptation surface: Evolution decides population changes; the Kernel enforces them through the existing spawn/retire primitives ("Agent decides; Kernel enforces"). Its <code>tasks</code> field comment says it is <strong>intentionally unused for now</strong> — scheduling-policy changes will plug into <code>taskfabric.Schedule</code> in a future iteration. So: population adaptation is implemented; scheduler-policy adaptation is declared but not yet wired.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> arena</span><span>[&quot;Arena drill flow </span><span style="color: #CBA6F7;">(</span><span style="color: #A6E3A1;">ares_arena</span><span style="color: #CBA6F7;">)</span><span>&quot;]</span></span>
+<span class="giallo-l"><span>        IN2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Injector: kill / pause / remove / slow / timeout / corrupt …&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        SV</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Service.Execute(action)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        M</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Stats + MetricsCollector&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        EV</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EventStore arena.* events + failure evidence&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        FB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;FlightBridge → flight recorder&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        EB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EvolutionBridge → UngatedPatcher (TBD back-fill)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        IN2 </span><span style="color: #CBA6F7;">--</span><span style="color: #A6E3A1;">&gt; SV </span><span style="color: #CBA6F7;">--&gt;</span><span> M</span></span>
+<span class="giallo-l"><span>        SV </span><span style="color: #CBA6F7;">--</span><span style="color: #A6E3A1;">&gt; EV </span><span style="color: #CBA6F7;">--&gt;</span><span> FB</span></span>
+<span class="giallo-l"><span>        SV </span><span style="color: #CBA6F7;">--&gt;</span><span> EB</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span>    EV </span><span style="color: #CBA6F7;">--&gt;</span><span> SSE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;/arena/stream SSE&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre>
+<hr />
+<h2 id="8-cli-quick-reference">8. CLI quick reference</h2>
+<table><thead><tr><th>Command</th><th>Purpose</th></tr></thead><tbody>
+<tr><td><code>ares arena run &lt;scenario.yaml&gt;</code></td><td>Run a scenario against a server and print the report</td></tr>
+<tr><td><code>ares arena validate &lt;scenario.yaml&gt;</code></td><td>Validate locally (or <code>--remote</code>)</td></tr>
+<tr><td><code>ares arena list [dir]</code></td><td>List scenario files in a directory</td></tr>
+<tr><td><code>ares arena serve [--addr] [--api-key]</code></td><td>Start the arena drill server (deny auth by default)</td></tr>
+<tr><td><code>ares arena survival [--addr] [--duration] [--interval]</code></td><td>Run survival mode and poll status every second</td></tr>
+<tr><td><code>ares arena inspect [--addr] [--timeline] [--diagnostics]</code></td><td>Read score/metrics/timeline/diagnostics reports</td></tr>
+</tbody></table>
+<hr />
+<h2 id="9-closing">9. Closing</h2>
+<p>After walking through all of this, I want you to remember not a score but the <strong>two boundaries written into the comments</strong>:</p>
+<ol>
+<li>In <code>internal/aresrecovery</code>: <strong>"Chaos breaks, Recovery fixes."</strong> Breaking and fixing are two independent responsibilities, welded together by an explicit <code>VerifyRecovery()</code> call. In production, live chaos is locked behind six guardrails, and the default posture never touches production agents (shadow sandbox).</li>
+<li>In <code>internal/runtime/arena</code>: <strong>"It does NOT implement recovery."</strong> It only injects faults; recovery belongs to ares_runtime's existing mechanisms, and this is an isolated drill field.</li>
+</ol>
+<p>No evidence in this repository supports numbers such as "Score 100.0 (A+)", "revived in 1.4s", or "97.3% recovery rate", so none of them appear above. The Consistency dimension defaults to a heuristic, <code>parallel_actions</code> / <code>depends_on</code> are not yet implemented, and the EvolutionBridge back-fill effect is marked TBD.</p>
+<blockquote>
+<p>Making "deliberately break it, then watch it rise again" repeatable, verifiable, and — by default — isolated from production is the genuinely hard part of this.</p>
 </blockquote>
 
     </div>
@@ -412,12 +370,12 @@ I call this "Edo Tensei Verification" — click a button on the Dashboard, assas
                 </div>
                 <div class="pagination__buttons">
                         <span class="button previous">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/10-retrieval-system-deep-dive/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Retrieval System — Hybrid Search and Scoring Pipeline</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/10-retrieval-system-deep-dive/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Retrieval System — Vector, Keyword, and FTS in Practice</span></a>
                         </span>
                     
                     
                         <span class="button next">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/08-event-system-deep-dive/"><span class="button__text">Event System — Event Sourcing Foundation for State Recovery and Audit Trails</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/08-event-system-deep-dive/"><span class="button__text">Event System — Append-Only Event Log and Task Lifecycle</span>&nbsp;<span class="button__icon">&#8594;</span></a>
                         </span>
                     </div>
             </div>

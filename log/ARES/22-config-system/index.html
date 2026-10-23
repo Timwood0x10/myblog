@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>Config System — One YAML, Twelve Modules | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <title>Config System — One YAML, Seventeen Sections | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
     <meta name="robots" content="noodp"/>
 
@@ -22,13 +22,13 @@
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
-    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Twelve modules, one config file — how ares keeps configuration coherent across the stack.">
-    <meta property="og:description" content="Twelve modules, one config file — how ares keeps configuration coherent across the stack.">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Seventeen modules, one config file — how ares keeps configuration coherent across the stack.">
+    <meta property="og:description" content="Seventeen modules, one config file — how ares keeps configuration coherent across the stack.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/22-config-system/">
 
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:description" content="Twelve modules, one config file — how ares keeps configuration coherent across the stack.">
+    <meta name="twitter:description" content="Seventeen modules, one config file — how ares keeps configuration coherent across the stack.">
     <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
     <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/22-config-system/">
                 <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
@@ -73,7 +73,7 @@
         
 <div class="article-layout">
   <article class="post">
-    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/22-config-system/">Config System — One YAML, Twelve Modules</a></h1>
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/22-config-system/">Config System — One YAML, Seventeen Sections</a></h1>
     <div class="post-meta-inline">
         <span class="post-date">2026-06-28</span>
     </div>
@@ -83,178 +83,188 @@
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/config/">#Config</a>&nbsp;
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a></span>
     <div class="post-content">
-        <h1 id="ares-architecture-deep-dive-xxii-config-system-one-yaml-twelve-modules">ares Architecture Deep Dive (XXII): Config System — One YAML, Twelve Modules</h1>
-<p>Every module needs configuration. LLM needs provider and model. Memory needs history size. Evolution needs population size. Storage needs host and port. When you have twelve modules, you have twelve config files — unless you have a config system.</p>
-<p><code>internal/ares_config/config.go</code> (844 lines) and <code>sdk/config.go</code> (165 lines) are that system. One YAML file, validated at load time, drives every module.</p>
+        <h1 id="ares-architecture-deep-dive-xxii-config-system-one-yaml-seventeen-sections-0-3-x">ares Architecture Deep Dive (XXII): Config System — One YAML, Seventeen Sections (0.3.x)</h1>
+<p>Every module needs configuration. LLM needs provider and model. Memory needs history size. Evolution needs population size. Storage needs host and port. Too many modules, and configs scatter everywhere — unless you have a config system.</p>
+<p><code>internal/ares_config/config.go</code> (1,084 lines) + <code>config_defaults.go</code> + <code>config_validate.go</code> are that system, bridged on the SDK side by <code>sdk/config.go</code> (430 lines).</p>
+<blockquote>
+<p>The top-level <code>Config</code> currently has <strong>17</strong> sections (listed below).</p>
+</blockquote>
 <hr />
-<h2 id="the-problem-twelve-config-sources">The Problem: Twelve Config Sources</h2>
-<p>v0.2.4 had configuration chaos:</p>
+<h2 id="the-problem-scattered-config-sources">The Problem: Scattered Config Sources</h2>
+<p>Early config was fragmented and lightly validated.</p>
 <table><thead><tr><th>Module</th><th>Source</th><th>Format</th></tr></thead><tbody>
-<tr><td>LLM</td><td>Environment variables</td><td><code>OPENAI_API_KEY=...</code></td></tr>
-<tr><td>Memory</td><td>Hardcoded in <code>main.go</code></td><td>Go struct literals</td></tr>
-<tr><td>Evolution</td><td>Separate <code>evolution.yaml</code></td><td>YAML</td></tr>
-<tr><td>Storage</td><td><code>DATABASE_URL</code> env var</td><td>Connection string</td></tr>
-<tr><td>MCP</td><td>Command-line flags</td><td><code>--mcp-command=...</code></td></tr>
+<tr><td>LLM</td><td>Environment variables</td><td><code>LLM_MODEL=...</code> and friends</td></tr>
+<tr><td>Some components</td><td>Struct literals / flags</td><td>Go / CLI</td></tr>
+<tr><td>Some components</td><td>Separate YAML</td><td>YAML</td></tr>
+<tr><td>Storage</td><td>Environment variables</td><td><code>DB_HOST</code>/<code>DB_PORT</code>/<code>DB_USERNAME</code>…</td></tr>
 </tbody></table>
-<p>Five sources, three formats, zero validation. A typo in <code>evolution.yaml</code>? Silent failure at runtime. A missing <code>DATABASE_URL</code>? Cryptic panic in <code>sql.Open</code>.</p>
-<p><strong>Honest reflection</strong>: We tried using Viper. It's powerful, but the magic (env binding, remote config, file watching) kept surprising us. A team member spent two hours debugging why his config wasn't loading — Viper was reading a cached copy from a different directory. We went back to <code>yaml.v3</code> and explicit loading.</p>
+<p>Many sources, mixed formats, sparse validation. A missing env var or a misspelled YAML key usually exploded at runtime.</p>
+<p><strong>Honest reflection</strong>: We evaluated Viper. It's powerful, but the "auto-magic" (env binding, remote config, file watching) kept surprising us. We went back to <code>gopkg.in/yaml.v3</code> + explicit loading. One fewer magic source means one fewer "why didn't it apply" debugging session at 3 AM.</p>
 <hr />
 <h2 id="the-design-one-config-typed-validated">The Design: One Config, Typed, Validated</h2>
 <h3 id="the-root-config">The Root Config</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_config/config.go</span></span>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_config/config.go (fields and YAML keys)</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Config</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    Server</span><span style="color: #F9E2AF;font-style: italic;">     ServerConfig</span><span style="color: #A6E3A1;">       `yaml:&quot;server&quot;`</span></span>
-<span class="giallo-l"><span>    LLM</span><span style="color: #F9E2AF;font-style: italic;">        LLMConfig</span><span style="color: #A6E3A1;">          `yaml:&quot;llm&quot;`</span></span>
-<span class="giallo-l"><span>    Agents</span><span style="color: #F9E2AF;font-style: italic;">     AgentsConfig</span><span style="color: #A6E3A1;">       `yaml:&quot;agents&quot;`</span></span>
-<span class="giallo-l"><span>    Tools</span><span style="color: #F9E2AF;font-style: italic;">      ToolsConfig</span><span style="color: #A6E3A1;">        `yaml:&quot;tools&quot;`</span></span>
-<span class="giallo-l"><span>    Prompts</span><span style="color: #F9E2AF;font-style: italic;">    PromptsConfig</span><span style="color: #A6E3A1;">      `yaml:&quot;prompts&quot;`</span></span>
-<span class="giallo-l"><span>    Output</span><span style="color: #F9E2AF;font-style: italic;">     OutputConfig</span><span style="color: #A6E3A1;">       `yaml:&quot;output&quot;`</span></span>
-<span class="giallo-l"><span>    Validation</span><span style="color: #F9E2AF;font-style: italic;"> ValidationConfig</span><span style="color: #A6E3A1;">   `yaml:&quot;validation&quot;`</span></span>
-<span class="giallo-l"><span>    Workflow</span><span style="color: #F9E2AF;font-style: italic;">   WorkflowConfig</span><span style="color: #A6E3A1;">     `yaml:&quot;workflow&quot;`</span></span>
-<span class="giallo-l"><span>    Storage</span><span style="color: #F9E2AF;font-style: italic;">    StorageConfig</span><span style="color: #A6E3A1;">      `yaml:&quot;storage&quot;`</span></span>
-<span class="giallo-l"><span>    Memory</span><span style="color: #F9E2AF;font-style: italic;">     MemoryConfig</span><span style="color: #A6E3A1;">       `yaml:&quot;memory&quot;`</span></span>
-<span class="giallo-l"><span>    MCP</span><span style="color: #F9E2AF;font-style: italic;">        MCPConfig</span><span style="color: #A6E3A1;">          `yaml:&quot;mcp&quot;`</span></span>
-<span class="giallo-l"><span>    Dashboard</span><span style="color: #F9E2AF;font-style: italic;">  DashboardAppConfig</span><span style="color: #A6E3A1;"> `yaml:&quot;dashboard&quot;`</span></span>
-<span class="giallo-l"><span>    Evolution</span><span style="color: #F9E2AF;font-style: italic;">  EvolutionConfig</span><span style="color: #A6E3A1;">    `yaml:&quot;evolution&quot;`</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>One struct, twelve sections. Each section is a typed struct with <code>yaml</code> tags.</p>
-<h3 id="loading-with-path-traversal-protection">Loading with Path Traversal Protection</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_config/config.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Load</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">path</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Security: validate path is within allowed directory</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> allowedConfigDir</span><span style="color: #94E2D5;"> !=</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>        absPath</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> filepath</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Abs</span><span style="color: #9399B2;">(</span><span>path</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;failed to get absolute path: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
-<span class="giallo-l"><span>        absDir</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> filepath</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Abs</span><span style="color: #9399B2;">(</span><span>allowedConfigDir</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;failed to get absolute directory: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span>strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">HasPrefix</span><span style="color: #9399B2;">(</span><span>absPath</span><span style="color: #9399B2;">,</span><span> absDir</span><span style="color: #94E2D5;">+</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">(</span><span>filepath</span><span style="color: #9399B2;">.</span><span>Separator</span><span style="color: #9399B2;">)) {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;config path %q outside allowed directory&quot;</span><span style="color: #9399B2;">,</span><span> path</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... load and parse YAML ...</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p><code>SetAllowedConfigDir()</code> restricts where config files can be loaded from. This prevents path traversal attacks — a malicious <code>../secret.yaml</code> is rejected before parsing.</p>
-<p><strong>Honest reflection</strong>: We initially used <code>filepath.Rel</code> to detect traversal. It worked on macOS but failed on Windows because of path separator differences. The <code>strings.HasPrefix</code> check is simpler and cross-platform.</p>
-<h3 id="typed-validation">Typed Validation</h3>
-<p>Each section has its own validation:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_config/config.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Validate</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>LLM</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Validate</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;llm: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>Storage</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Validate</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;storage: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span>MCP</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Validate</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;mcp: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... validate all sections ...</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>Validation fails fast. A missing <code>command</code> field in an MCP server config produces:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>mcp: server &quot;filesystem&quot;: command is required</span></span></code></pre>
-<p>Not a runtime panic. Not a silent failure. A clear, actionable error message.</p>
-<hr />
-<h2 id="the-distillation-threshold-v0-2-8">The Distillation Threshold (v0.2.8)</h2>
-<p>The <code>DistillConfig</code> gained a <code>Threshold</code> field in v0.2.8:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_config/config.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> DistillConfig</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    Enabled</span><span style="color: #CBA6F7;">     bool</span><span style="color: #A6E3A1;">   `yaml:&quot;enabled&quot;`</span></span>
-<span class="giallo-l"><span>    Storage</span><span style="color: #CBA6F7;">     string</span><span style="color: #A6E3A1;"> `yaml:&quot;storage&quot;`</span></span>
-<span class="giallo-l"><span>    VectorStore</span><span style="color: #CBA6F7;"> bool</span><span style="color: #A6E3A1;">   `yaml:&quot;vector_store&quot;`</span></span>
-<span class="giallo-l"><span>    Prompt</span><span style="color: #CBA6F7;">      string</span><span style="color: #A6E3A1;"> `yaml:&quot;prompt&quot;`</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Threshold is the number of conversation rounds that accumulate before</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // distillation fires. 0 preserves legacy ungated behaviour.</span></span>
-<span class="giallo-l"><span>    Threshold</span><span style="color: #CBA6F7;"> int</span><span style="color: #A6E3A1;"> `yaml:&quot;threshold&quot;`</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>In <code>ares.yaml</code>:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="yaml"><span class="giallo-l"><span style="color: #89B4FA;">memory</span><span style="color: #94E2D5;">:</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">  enabled</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">  task_distillation</span><span style="color: #94E2D5;">:</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">    enabled</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">    threshold</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 3</span><span style="color: #9399B2;font-style: italic;">  # fire distillation every 3 conversation rounds</span></span></code></pre>
-<p>Semantics:</p>
-<ul>
-<li><code>0</code> = ungated (fire every event) — legacy behavior</li>
-<li><code>N</code> = fire every N conversation rounds — throttles distillation</li>
-</ul>
-<p>This mirrors the v0.2.4 <code>examples/knowledge-base/config.yaml</code> convention. The threshold prevents the distiller from firing on every single conversation event, which would overwhelm the embedding pipeline under load.</p>
-<p><strong>Honest reflection</strong>: The threshold was originally a hardcoded constant (<code>const distillationThreshold = 3</code>). Making it YAML-driven was a 10-line change, but it unlocked per-deployment tuning. The lesson: every hardcoded constant is a future config option.</p>
-<hr />
-<h2 id="the-sdk-config-layer">The SDK Config Layer</h2>
-<p><code>sdk/config.go</code> (165 lines) bridges the raw YAML config to SDK options:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// sdk/config.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Config</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Server</span><span style="color: #F9E2AF;font-style: italic;">     ServerConfig</span><span style="color: #A6E3A1;">     `yaml:&quot;server&quot;`</span></span>
+<span class="giallo-l"><span>    Tasks</span><span style="color: #F9E2AF;font-style: italic;">      TasksConfig</span><span style="color: #A6E3A1;">      `yaml:&quot;tasks&quot;`</span></span>
 <span class="giallo-l"><span>    LLM</span><span style="color: #F9E2AF;font-style: italic;">        LLMConfig</span><span style="color: #A6E3A1;">        `yaml:&quot;llm&quot;`</span></span>
+<span class="giallo-l"><span>    Agents</span><span style="color: #F9E2AF;font-style: italic;">     AgentsConfig</span><span style="color: #A6E3A1;">     `yaml:&quot;agents&quot;`</span></span>
+<span class="giallo-l"><span>    Tools</span><span style="color: #F9E2AF;font-style: italic;">      ToolsConfig</span><span style="color: #A6E3A1;">      `yaml:&quot;tools&quot;`</span></span>
+<span class="giallo-l"><span>    Storage</span><span style="color: #F9E2AF;font-style: italic;">    StorageConfig</span><span style="color: #A6E3A1;">    `yaml:&quot;storage&quot;`</span></span>
 <span class="giallo-l"><span>    Memory</span><span style="color: #F9E2AF;font-style: italic;">     MemoryConfig</span><span style="color: #A6E3A1;">     `yaml:&quot;memory&quot;`</span></span>
-<span class="giallo-l"><span>    Evolution</span><span style="color: #F9E2AF;font-style: italic;">  EvolutionConfig</span><span style="color: #A6E3A1;">  `yaml:&quot;evolution&quot;`</span></span>
 <span class="giallo-l"><span>    Knowledge</span><span style="color: #F9E2AF;font-style: italic;">  KnowledgeConfig</span><span style="color: #A6E3A1;">  `yaml:&quot;knowledge&quot;`</span></span>
 <span class="giallo-l"><span>    MCP</span><span style="color: #F9E2AF;font-style: italic;">        MCPConfig</span><span style="color: #A6E3A1;">        `yaml:&quot;mcp&quot;`</span></span>
-<span class="giallo-l"><span>    Tools</span><span style="color: #F9E2AF;font-style: italic;">      ToolsConfig</span><span style="color: #A6E3A1;">      `yaml:&quot;tools&quot;`</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> LoadConfigFile</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">path</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> ToOptions</span><span style="color: #9399B2;">() ([]</span><span style="color: #F9E2AF;font-style: italic;">Option</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span></code></pre>
-<p><code>ToOptions()</code> converts the YAML config to a slice of SDK <code>Option</code> functions:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// sdk/config.go (simplified)</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> ToOptions</span><span style="color: #9399B2;">() ([]</span><span style="color: #F9E2AF;font-style: italic;">Option</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> opts</span><span style="color: #9399B2;"> []</span><span style="color: #F9E2AF;font-style: italic;">Option</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // LLM</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> c</span><span style="color: #9399B2;">.</span><span>LLM</span><span style="color: #9399B2;">.</span><span>Provider</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;openai&quot;</span><span style="color: #9399B2;">:</span></span>
-<span class="giallo-l"><span>        opts</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>opts</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> WithOpenAI</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>LLM</span><span style="color: #9399B2;">.</span><span>Model</span><span style="color: #9399B2;">))</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;ollama&quot;</span><span style="color: #9399B2;">:</span></span>
-<span class="giallo-l"><span>        opts</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>opts</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> WithOllama</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>LLM</span><span style="color: #9399B2;">.</span><span>Model</span><span style="color: #9399B2;">))</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span style="color: #A6E3A1;"> &quot;anthropic&quot;</span><span style="color: #9399B2;">:</span></span>
-<span class="giallo-l"><span>        opts</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>opts</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> WithAnthropic</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>LLM</span><span style="color: #9399B2;">.</span><span>Model</span><span style="color: #9399B2;">))</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Memory</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> c</span><span style="color: #9399B2;">.</span><span>Memory</span><span style="color: #9399B2;">.</span><span>Enabled</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>        opts</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>opts</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> WithDefaultMemory</span><span style="color: #9399B2;">())</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> c</span><span style="color: #9399B2;">.</span><span>Memory</span><span style="color: #9399B2;">.</span><span>MaxHistory</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;"> ||</span><span> c</span><span style="color: #9399B2;">.</span><span>Memory</span><span style="color: #9399B2;">.</span><span>MaxSessions</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>            opts</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>opts</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> WithMemoryConfig</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>Memory</span><span style="color: #9399B2;">.</span><span>MaxHistory</span><span style="color: #9399B2;">,</span><span> c</span><span style="color: #9399B2;">.</span><span>Memory</span><span style="color: #9399B2;">.</span><span>MaxSessions</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span>    Evolution</span><span style="color: #F9E2AF;font-style: italic;">  EvolutionConfig</span><span style="color: #A6E3A1;">  `yaml:&quot;evolution&quot;`</span></span>
+<span class="giallo-l"><span>    Embedding</span><span style="color: #F9E2AF;font-style: italic;">  EmbeddingConfig</span><span style="color: #A6E3A1;">  `yaml:&quot;embedding&quot;`</span></span>
+<span class="giallo-l"><span>    Discovery</span><span style="color: #F9E2AF;font-style: italic;">  DiscoveryConfig</span><span style="color: #A6E3A1;">  `yaml:&quot;discovery&quot;`</span></span>
+<span class="giallo-l"><span>    Kernel</span><span style="color: #F9E2AF;font-style: italic;">     KernelConfig</span><span style="color: #A6E3A1;">     `yaml:&quot;kernel&quot;`</span></span>
+<span class="giallo-l"><span>    Security</span><span style="color: #F9E2AF;font-style: italic;">   SecurityConfig</span><span style="color: #A6E3A1;">   `yaml:&quot;security&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>One struct, <strong>17</strong> sections, each a typed struct with <code>yaml</code> tags. Omitted fields get defaults from <code>setDefaults()</code>, then pass through <code>Validate()</code>.</p>
+<h3 id="loading-with-path-traversal-protection">Loading with Path-Traversal Protection</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_config/config.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Load</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">path</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    allowedConfigDirMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RLock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>    dir</span><span style="color: #94E2D5;"> :=</span><span> allowedConfigDir</span></span>
+<span class="giallo-l"><span>    allowedConfigDirMu</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RUnlock</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> dir</span><span style="color: #94E2D5;"> !=</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        absPath</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> filepath</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Abs</span><span style="color: #9399B2;">(</span><span>path</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        absDir</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> filepath</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Abs</span><span style="color: #9399B2;">(</span><span>dir</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>        rel</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> filepath</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Rel</span><span style="color: #9399B2;">(</span><span>absDir</span><span style="color: #9399B2;">,</span><span> absPath</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #9399B2;font-style: italic;"> /* ... */</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // reject paths that escape the allowed directory via &quot;..&quot;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> rel</span><span style="color: #94E2D5;"> ==</span><span style="color: #A6E3A1;"> &quot;..&quot;</span><span style="color: #94E2D5;"> ||</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">HasPrefix</span><span style="color: #9399B2;">(</span><span>rel</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;..&quot;</span><span style="color: #94E2D5;">+</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">(</span><span>filepath</span><span style="color: #9399B2;">.</span><span>Separator</span><span style="color: #9399B2;">)) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;config path %s is outside allowed directory %s&quot;</span><span style="color: #9399B2;">,</span><span> path</span><span style="color: #9399B2;">,</span><span> dir</span><span style="color: #9399B2;">)</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // Distillation</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> c</span><span style="color: #9399B2;">.</span><span>Memory</span><span style="color: #9399B2;">.</span><span>Distillation</span><span style="color: #9399B2;">.</span><span>Enabled</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>        opts</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>opts</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> WithDistillation</span><span style="color: #9399B2;">(</span><span>c</span><span style="color: #9399B2;">.</span><span>Memory</span><span style="color: #9399B2;">.</span><span>Distillation</span><span style="color: #9399B2;">.</span><span>Threshold</span><span style="color: #9399B2;">))</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ... evolution, knowledge, mcp, tools ...</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> opts</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span>    data</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> os</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ReadFile</span><span style="color: #9399B2;">(</span><span>path</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    var</span><span> cfg</span><span style="color: #F9E2AF;font-style: italic;"> Config</span></span>
+<span class="giallo-l"><span>    yaml</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Unmarshal</span><span style="color: #9399B2;">(</span><span>data</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>cfg</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    cfg</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">setDefaults</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>    cfg</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Validate</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span>cfg</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>This lets users do:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>cfg</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> ares</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">LoadConfigFile</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;ares.yaml&quot;</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>opts</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> cfg</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ToOptions</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span>rt</span><span style="color: #94E2D5;"> :=</span><span> ares</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">MustNew</span><span style="color: #9399B2;">(</span><span>opts</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">)</span></span></code></pre>
-<p>One YAML file drives the entire SDK.</p>
+<p><code>SetAllowedConfigDir()</code> restricts where config files load from. The check is a <strong><code>filepath.Rel</code> + <code>".."</code>-prefix rejection</strong> (guarded by <code>allowedConfigDirMu</code>, so <code>SetAllowedConfigDir</code> races safely with concurrent <code>Load</code>/hot-reload watchers).</p>
+<h3 id="typed-validation">Typed Validation</h3>
+<p><code>Validate()</code> walks section validators and fails fast:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_config/config_validate.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Validate</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateServer</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateLLM</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateAgents</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateOutput</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateStorage</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateMemory</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateKnowledge</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateMCP</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateEvolution</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateDiscovery</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">validateKernel</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> err</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Not a runtime panic, not a silent failure — an actionable error. An invalid LLM provider:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>invalid LLM provider: foo, must be &#39;openai&#39;, &#39;ollama&#39;, &#39;openrouter&#39;, or &#39;anthropic&#39;</span></span></code></pre>
+<p>MCP validation requires <code>stdio</code> to carry a <code>command</code> and <code>sse</code> to carry a <code>url</code>, refusing to boot with a broken transport rather than limping along.</p>
+<h3 id="the-env-var-layer-removed-in-0-3-1">The Env-Var Layer (removed in 0.3.1)</h3>
+<p>The former <code>LoadFromEnv</code> override layer is gone: <code>ares.yaml</code> is the single configuration entry point, so behavior can never diverge between "works via export on my machine" and the checked-in config. Formerly-env knobs (<code>SERVER_HOST</code>/<code>SERVER_PORT</code>, <code>LLM_*</code>, <code>DB_*</code>, <code>ARES_JWT_SECRET</code>/<code>ARES_AUTH_ENABLED</code>) live in their YAML sections; the SDK's <code>OPENAI_API_KEY</code>/<code>ANTHROPIC_API_KEY</code>/<code>OPENROUTER_API_KEY</code> fallbacks and <code>WithConfigFromEnv</code> went with them.</p>
 <hr />
 <h2 id="the-zero-value-philosophy">The Zero-Value Philosophy</h2>
-<p>ares has a config philosophy: <strong>zero means "use the component default."</strong></p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="yaml"><span class="giallo-l"><span style="color: #89B4FA;">memory</span><span style="color: #94E2D5;">:</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">  enabled</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> true</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">  max_history</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;font-style: italic;">       # 0 → use memory component default</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">  max_sessions</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;font-style: italic;">      # 0 → use memory component default</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;">  distillation_threshold</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;font-style: italic;">  # 0 → ungated (legacy behavior)</span></span></code></pre>
-<p>This means:</p>
+<p>ares has a config philosophy: <strong>zero means "use the component default."</strong> Three consequences:</p>
 <ol>
-<li>You only configure what you want to tune</li>
-<li>Defaults live in the component, not the config</li>
-<li>Adding a new config option doesn't break existing configs</li>
+<li>You only configure what you want to tune.</li>
+<li>Defaults live in <code>setDefaults</code>/components, not callers.</li>
+<li>Adding a new option doesn't break existing configs.</li>
 </ol>
-<p><strong>Honest reflection</strong>: The zero-value philosophy has a downside — you can't tell if a user set <code>max_history: 0</code> intentionally or just didn't configure it. We considered using <code>*int</code> (nil = unset, 0 = explicit zero), but the added complexity wasn't worth it. In practice, "unset" and "zero" mean the same thing: use the default.</p>
+<p>For "default-on" switches, a <strong><code>*bool</code></strong> expresses a <strong>tri-state</strong> (<code>nil</code>=default, <code>false</code>=explicit off). Memory is the canonical example:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_config/config.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MemoryConfig</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Enabled</span><span style="color: #94E2D5;">          *</span><span style="color: #CBA6F7;">bool</span><span style="color: #A6E3A1;">         `yaml:&quot;enabled&quot;`</span><span style="color: #9399B2;font-style: italic;">             // nil/true = on by default; false = off</span></span>
+<span class="giallo-l"><span>    SessionMemory</span><span style="color: #F9E2AF;font-style: italic;">    SessionConfig</span><span style="color: #A6E3A1;"> `yaml:&quot;session&quot;`</span></span>
+<span class="giallo-l"><span>    MaxHistory</span><span style="color: #CBA6F7;">       int</span><span style="color: #A6E3A1;">           `yaml:&quot;max_history&quot;`</span><span style="color: #9399B2;font-style: italic;">         // default 10</span></span>
+<span class="giallo-l"><span>    EnableDistillation</span><span style="color: #94E2D5;"> *</span><span style="color: #CBA6F7;">bool</span><span style="color: #A6E3A1;">       `yaml:&quot;enable_distillation&quot;`</span><span style="color: #9399B2;font-style: italic;"> // nil = on by default</span></span>
+<span class="giallo-l"><span>    DistillationThreshold</span><span style="color: #CBA6F7;"> int</span><span style="color: #A6E3A1;">      `yaml:&quot;distillation_threshold&quot;`</span><span style="color: #9399B2;font-style: italic;"> // default 3</span></span>
+<span class="giallo-l"><span>    EnableRAG</span><span style="color: #CBA6F7;">        bool</span><span style="color: #A6E3A1;">          `yaml:&quot;enable_rag&quot;`</span></span>
+<span class="giallo-l"><span>    RAGTopK</span><span style="color: #CBA6F7;">          int</span><span style="color: #A6E3A1;">           `yaml:&quot;rag_top_k&quot;`</span></span>
+<span class="giallo-l"><span>    RAGMinScore</span><span style="color: #CBA6F7;">      float64</span><span style="color: #A6E3A1;">       `yaml:&quot;rag_min_score&quot;`</span></span>
+<span class="giallo-l"><span>    Archive</span><span style="color: #F9E2AF;font-style: italic;">          ArchiveConfig</span><span style="color: #A6E3A1;"> `yaml:&quot;archive&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #F9E2AF;font-style: italic;">MemoryConfig</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> IsEnabled</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> m</span><span style="color: #9399B2;">.</span><span>Enabled</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #94E2D5;"> || *</span><span>m</span><span style="color: #9399B2;">.</span><span>Enabled</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">m </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MemoryConfig</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> DistillationEnabled</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> bool</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> m</span><span style="color: #9399B2;">.</span><span>EnableDistillation</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #94E2D5;"> || *</span><span>m</span><span style="color: #9399B2;">.</span><span>EnableDistillation</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><strong>Honest reflection</strong>: The zero-value philosophy has a cost — you can't tell whether a user set 0 on purpose or didn't configure it. <code>*bool</code> narrows that cost to tri-state switches but adds dereferencing. For numeric fields, "unset" and "0" effectively mean the same thing: use the default. We considered <code>*int</code> (nil=unset, 0=explicit zero); the added complexity wasn't worth it.</p>
+<h3 id="the-distillation-threshold-only-memory-distillation-threshold">The Distillation Threshold: Only <code>memory.distillation_threshold</code></h3>
+<p><code>memory.distillation_threshold</code> (<code>MemoryConfig.DistillationThreshold</code>, default <code>3</code>) is the <strong>only</strong> live distillation throttle — the closed-loop gate wired through <code>bootstrap.go</code>; <code>0</code> = ungated, fire every event; negatives rejected by <code>validateMemory</code>.</p>
+<p>The v0.2.4 leftover <code>memory.task_distillation.threshold</code> (<code>DistillConfig.Threshold</code>) never had a runtime reader, and the whole <code>memory.task_distillation</code> / <code>memory.user_profile</code> subtrees have now been <strong>removed outright</strong> — no longer dead-but-whitelisted keys, simply absent from the config struct. Writing them is silently ignored (<code>ares_config</code> uses non-strict <code>yaml.Unmarshal</code>).</p>
+<hr />
+<h2 id="key-defaults-setdefaults">Key Defaults (setDefaults)</h2>
+<p><code>config_defaults.go</code> fills defaults so a "LLM-only" minimal config can still run. Verified defaults:</p>
+<table><thead><tr><th>section</th><th>default</th></tr></thead><tbody>
+<tr><td>server.host / port</td><td><code>localhost</code> / <code>8080</code></td></tr>
+<tr><td>llm.provider / model</td><td><code>ollama</code> / <code>llama3.2</code></td></tr>
+<tr><td>llm.timeout / max_tokens</td><td><code>60</code> / <code>4096</code></td></tr>
+<tr><td>llm.scorer_api_rate / burst</td><td><code>10</code> / <code>20</code></td></tr>
+<tr><td>storage.type / port</td><td><code>postgres</code> / <code>5432</code></td></tr>
+<tr><td>memory.max_history / session.max_history</td><td><code>10</code> / <code>50</code></td></tr>
+<tr><td>memory.enable_distillation</td><td>on by default (<code>*bool</code> nil→true)</td></tr>
+<tr><td>memory.distillation_threshold</td><td><code>3</code></td></tr>
+<tr><td>memory.archive.dir / max_rounds</td><td><code>.context/rounds</code> / <code>200</code></td></tr>
+<tr><td>evolution (whole set)</td><td>population 20 · elite 2 · survival 0.6 · mutation 0.2 · min 0.05 · max 0.5 · generations 15 · breeding 0.5 · min_interval <code>5m</code> · selection <code>tournament</code> · tournament_size 3 · crossover <code>uniform</code>; llm_scoring.max_calls_per_generation 100</td></tr>
+<tr><td>tool projection worker</td><td>interval <code>10m</code> · min_samples <code>3</code></td></tr>
+</tbody></table>
+<blockquote>
+<p><code>setDefaults</code> exposes <code>DefaultEvolution*</code> exported constants — bootstrap uses them to tell "operator tuned this" apart from "setDefaults filled it in." Note the config-layer evolution defaults are deliberately different from the GA engine's own defaults (e.g. EliteCount 2 vs 3, BreedingPoolRatio 0.5 vs 0.6); fields the operator didn't tune must keep the engine values.</p>
+</blockquote>
+<p><code>NewMinimalConfig(baseURL, apiKey, model)</code> is the same default entry point: a non-empty apiKey infers openai, otherwise ollama, and it assembles a default sub-agent team (coder-a / reviewer-1 / researcher-1). It's what lets the runtime start with zero YAML.</p>
+<hr />
+<h2 id="the-sdk-config-layer">The SDK Config Layer</h2>
+<p><code>sdk/config.go</code> (430 lines) bridges raw YAML to SDK <code>Option</code>s. <code>ConfigFile</code>'s shape is smaller than serve-side: LLM / Database / Embedding / Memory / Knowledge / Tools(builtin+mcp) / Reflection / Evolution.</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// sdk/config.go (signatures and core fields)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ConfigFile</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    LLM</span><span style="color: #F9E2AF;font-style: italic;">       LLMFileConfig</span><span style="color: #A6E3A1;">       `yaml:&quot;llm&quot;`</span></span>
+<span class="giallo-l"><span>    Database</span><span style="color: #F9E2AF;font-style: italic;">  DatabaseFileConfig</span><span style="color: #A6E3A1;">  `yaml:&quot;database&quot;`</span></span>
+<span class="giallo-l"><span>    Embedding</span><span style="color: #F9E2AF;font-style: italic;"> EmbeddingFileConfig</span><span style="color: #A6E3A1;"> `yaml:&quot;embedding&quot;`</span></span>
+<span class="giallo-l"><span>    Memory</span><span style="color: #F9E2AF;font-style: italic;">    MemoryFileConfig</span><span style="color: #A6E3A1;">    `yaml:&quot;memory&quot;`</span></span>
+<span class="giallo-l"><span>    Knowledge</span><span style="color: #F9E2AF;font-style: italic;"> KnowledgeFileConfig</span><span style="color: #A6E3A1;"> `yaml:&quot;knowledge&quot;`</span></span>
+<span class="giallo-l"><span>    Tools</span><span style="color: #CBA6F7;">     struct</span><span style="color: #9399B2;">{</span><span> Builtin</span><span style="color: #CBA6F7;"> bool</span><span style="color: #A6E3A1;"> `yaml:&quot;builtin&quot;`</span><span style="color: #9399B2;">;</span><span> MCP</span><span style="color: #9399B2;"> []</span><span style="color: #CBA6F7;">string</span><span style="color: #A6E3A1;"> `yaml:&quot;mcp&quot;`</span><span style="color: #9399B2;"> }</span><span style="color: #A6E3A1;"> `yaml:&quot;tools&quot;`</span></span>
+<span class="giallo-l"><span>    Reflection</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;">{</span><span> Enabled</span><span style="color: #CBA6F7;"> bool</span><span style="color: #A6E3A1;"> `yaml:&quot;enabled&quot;`</span><span style="color: #9399B2;"> }</span><span style="color: #A6E3A1;"> `yaml:&quot;reflection&quot;`</span></span>
+<span class="giallo-l"><span>    Evolution</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;">{</span><span> Enabled</span><span style="color: #CBA6F7;"> bool</span><span style="color: #A6E3A1;"> `yaml:&quot;enabled&quot;`</span><span style="color: #9399B2;"> }</span><span style="color: #A6E3A1;"> `yaml:&quot;evolution&quot;`</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> LoadConfigFile</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">path</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ConfigFile</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ConfigFile</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Validate</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ConfigFile</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> ToOptions</span><span style="color: #9399B2;">() ([]</span><span style="color: #F9E2AF;font-style: italic;">Option</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p><code>ToOptions()</code> maps each provider to <code>WithOpenAI</code>/<code>WithOllama</code>/<code>WithAnthropic</code>/<code>WithOpenRouter</code> with distinct default models (ollama→<code>llama3.2</code>, openai→<code>gpt-4o-mini</code>, anthropic→<code>claude-3-haiku</code>, openrouter→<code>openai/gpt-4o-mini</code>); <code>llm.max_prompt_length</code> is bridged into <code>cfg.llmCfg.MaxPromptLength</code> via an inline Option (the old code silently dropped the field, so long agent runs died at the 8192 provider default — the source comment's own words); Database only calls <code>WithPostgres</code> when host is set; memory enabled → <code>WithMemoryConfig</code>/<code>WithDistillation</code>/<code>WithRAG</code>, else <code>WithoutMemory()</code>; knowledge requires <code>chunk_size</code>; evolution only <code>WithEvolution()</code> when enabled. API keys come from the config file only (the <code>resolveAPIKey</code> env fallback was removed in 0.3.1).</p>
+<p>That lets users write:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>cfg</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> ares</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">LoadConfigFile</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;ares.yaml&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>opts</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> cfg</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ToOptions</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span>rt</span><span style="color: #94E2D5;"> :=</span><span> ares</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewRuntime</span><span style="color: #9399B2;">(</span><span>opts</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>One YAML file drives the entire SDK.</p>
+<hr />
+<h2 id="skill-source-configuration-skill-sources-ares-config-toml">Skill Source Configuration (skill_sources, ~/.ares/config.toml)</h2>
+<p>The Capability Fabric's registered sources are declared in <strong><code>~/.ares/config.toml</code></strong> (not <code>ares.yaml</code>), parsed by <code>internal/runtime/protocol/skills</code>'s <code>LoadSkillSources</code>/<code>LoadRegisteredSkillDirs</code> (<code>~</code> expansion + dedup + unknown types skipped as extension points):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="toml"><span class="giallo-l"><span style="color: #9399B2;">[[</span><span>skill_sources</span><span style="color: #9399B2;">]]</span></span>
+<span class="giallo-l"><span>type</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;directory&quot;</span><span style="color: #9399B2;font-style: italic;">          # extra directory source</span></span>
+<span class="giallo-l"><span>path</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;~/my-company/ares-skills&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;">[[</span><span>skill_sources</span><span style="color: #9399B2;">]]</span></span>
+<span class="giallo-l"><span>type</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;git&quot;</span><span style="color: #9399B2;font-style: italic;">                # git source: shallow-cloned into a local cache, then indexed</span></span>
+<span class="giallo-l"><span>url</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;https://example.com/skills.git&quot;</span></span>
+<span class="giallo-l"><span>local_dir</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;~/.ares/cache/skills&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># type = &quot;http&quot; / &quot;oci&quot;: ManifestURL is field-reserved, but the source comment</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># marks http/oci as a future capability (待核实 whether currently active)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># [[skill_sources]]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># type = &quot;http&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;"># manifest_url = &quot;https://example.com/manifest.json&quot;</span></span></code></pre>
+<p>Key points: project (<code>.ares/skills</code>) and user (<code>~/.ares/skills</code>) sources are conventional directories that need <strong>no configuration</strong>; this file only declares extra sources — honoring "only declared sources are scanned, zero full-disk scanning." Consistent with the zero-value philosophy: no configuration means no extra sources.</p>
+<p>The backing struct (<code>internal/runtime/protocol/skills/config.go</code>): <code>SkillSourceEntry{Type, Path, URL, LocalDir, ManifestURL}</code>, parsed with <code>pelletier/go-toml/v2</code>. Confirmed directory types are <code>directory</code> and <code>git</code>.</p>
 <hr />
 <h2 id="lessons">Lessons</h2>
 <p>Configuration is a layer nobody celebrates. You can't demo <code>Config.Validate()</code> to investors. But it's the difference between "works on my machine" and "works in production."</p>
-<p>The config system is the first thing new users touch (via <code>ares.yaml</code>), and the last thing they think about (until something breaks). Making it typed, validated, and zero-value-friendly means users spend less time configuring and more time building.</p>
+<p>The config system is the first thing new users touch (via <code>ares.yaml</code>) and the last thing they think about (until something breaks). Making it typed, validated, zero-value-friendly, and path-safe means users spend less time configuring and more time building.</p>
 <p><strong>The best config system is the one you forget exists.</strong> You write <code>ares.yaml</code>, it just works.</p>
 
     </div>
@@ -265,7 +275,7 @@
                 </div>
                 <div class="pagination__buttons">
                         <span class="button previous">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/23-quant-trading/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Quant Trading Module — The Experiment We Keep Honest About</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/23-quant-trading/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">The Quant Trading Module — An Honest Statement</span></a>
                         </span>
                     
                     

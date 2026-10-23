@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Context Management — Three-Layer Context and Checkpointable Cognitive State | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Task Shared, Agent Private, and IPC context layers, versioned checkpoints, and the prompt-length gate.">
+    <meta property="og:description" content="Task Shared, Agent Private, and IPC context layers, versioned checkpoints, and the prompt-length gate.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/27-context-management/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Task Shared, Agent Private, and IPC context layers, versioned checkpoints, and the prompt-length gate.">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/27-context-management/">
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <nav class="menu">
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/27-context-management/">Context Management — Three-Layer Context and Checkpointable Cognitive State</a></h1>
+    <div class="post-meta-inline">
+        <span class="post-date">2026-10-23</span>
+    </div>
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/context/">#Context</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/llm/">#LLM</a></span>
+    <div class="post-content">
+        <h1 id="ares-architecture-deep-dive-xxvii-context-management-three-layer-context-checkpointable-cognitive-state-and-the-prompt-gate-0-3-x">ares Architecture Deep Dive (XXVII): Context Management — Three-Layer Context, Checkpointable Cognitive State, and the Prompt Gate (0.3.x)</h1>
+<blockquote>
+<p>Note: This article is grounded in the actual code (<code>internal/fabric/agent/context.go</code> + <code>agent.go</code> for the three-layer context and <code>CognitiveState</code>, <code>internal/llm</code> for the <code>maxPromptLength</code> prompt-length gate, <code>internal/runtime/memory</code> for session memory), the dedicated context-management article in the docs series.</p>
+</blockquote>
+<h2 id="1-why-context-management-is-the-agent-s-lifeline">1. Why Context Management Is the Agent's Lifeline</h2>
+<p>The LLM context window is a hard constraint: agents accumulate history every turn, and tool results can run hundreds or thousands of tokens — a few dozen turns easily blow through the window. ARES doesn't treat "cram everything into the window" as a strategy. Instead it holds the budget with several <strong>independent, each-manages-its-own-slice</strong> mechanisms, spread across four layers:</p>
+<table><thead><tr><th>Layer</th><th>Real mechanism</th><th>Location</th><th>What it controls</th></tr></thead><tbody>
+<tr><td>1. Cognitive state</td><td>Three-layer context isolation (Task Shared / Agent Private / IPC)</td><td><code>internal/fabric/agent/context.go</code></td><td>Who can see what; private never leaks</td></tr>
+<tr><td>2. Persistence</td><td>Versioned <code>CognitiveState</code> + checkpointing</td><td><code>internal/fabric/agent/agent.go</code> / <code>context.go</code></td><td>Persist only the checkpointable state; no hidden CoT</td></tr>
+<tr><td>3. Session</td><td>Session memory (TTL / LRU / structured messages)</td><td><code>internal/runtime/memory</code></td><td>How history is organized, retained, and reclaimed</td></tr>
+<tr><td>4. Call</td><td><code>maxPromptLength</code> hard gate</td><td><code>internal/llm</code></td><td>Over-long prompts rejected before the LLM call</td></tr>
+</tbody></table>
+<h2 id="2-the-three-layer-context-task-shared-agent-private-ipc">2. The Three-Layer Context: Task Shared / Agent Private / IPC</h2>
+<p><code>internal/fabric/agent/context.go</code> hard-codes the isolation requirement (design Section 13: Context three layers — don't share one brain): the <code>ContextLayer</code> enum defines three tiers:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ContextLayer</span><span style="color: #CBA6F7;"> int</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ContextTaskShared</span><span style="color: #F9E2AF;font-style: italic;"> ContextLayer</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> iota</span><span style="color: #9399B2;font-style: italic;"> // shared task state: goal/constraints/artifacts/decisions/deps/checkpoints; all agents must see it</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ContextAgentPrivate</span><span style="color: #9399B2;font-style: italic;">                    // agent private state: reasoning/observations/hypotheses/scratchpad; never leaks</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ContextIPC</span><span style="color: #9399B2;font-style: italic;">                             // inter-agent message channel; carried by the IPC pillar (P4); this layer is the storage surface</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p>The Fabric exposes read/write entry points and enforces isolation <strong>by deep copy</strong>:</p>
+<ul>
+<li><code>SetTaskContext</code> / <code>TaskContext</code>: binds a copy of the task's Task Shared State to an agent; the agent can never mutate the caller's map.</li>
+<li><code>SetPrivate</code> / <code>Private</code>: private scratchpad layer — <strong>never leaks into Task Shared State or other agents</strong> (Section 13 invariants #5/6).</li>
+<li><code>ContextView</code>: a read-only snapshot pulling <code>TaskShared</code> and <code>Private</code> together, precisely so you can verify "private never bleeds into task".</li>
+</ul>
+<p>Note <strong>what the Fabric stores</strong>: the <code>Agent</code> (in <code>agent.go</code>) holds only <code>taskContext</code> and <code>privateContext</code>; the IPC layer does not live in the Fabric — it is carried by <code>internal/agentipc</code>'s <code>Message</code> / <code>Bus</code> (the peer message bus from the previous article).</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Agent A</span></span>
+<span class="giallo-l"><span>        TA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Task Shared state</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        PA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Private A scratchpad</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Agent B</span></span>
+<span class="giallo-l"><span>        TB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Task Shared state</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        PB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Private B scratchpad</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span>    IPC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">IPC Messages channel</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    TA </span><span style="color: #CBA6F7;">-.-|</span><span style="color: #A6E3A1;">shared under one task</span><span style="color: #CBA6F7;">|</span><span> TB</span></span>
+<span class="giallo-l"><span>    TA </span><span style="color: #CBA6F7;">-.-&gt;|</span><span style="color: #A6E3A1;">task</span><span>-</span><span style="color: #A6E3A1;">context copy</span><span style="color: #CBA6F7;">|</span><span> IPC</span></span>
+<span class="giallo-l"><span>    IPC </span><span style="color: #CBA6F7;">-.-&gt;|</span><span style="color: #A6E3A1;">collaboration messages</span><span style="color: #CBA6F7;">|</span><span> TB</span></span>
+<span class="giallo-l"><span>    PA </span><span style="color: #CBA6F7;">-.-&gt;|</span><span style="color: #A6E3A1;">never leaks</span><span style="color: #CBA6F7;">|</span><span> X</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Agent A only</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    PB </span><span style="color: #CBA6F7;">-.-&gt;|</span><span style="color: #A6E3A1;">never leaks</span><span style="color: #CBA6F7;">|</span><span> Y</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Agent B only</span><span style="color: #CBA6F7;">]</span></span></code></pre><h2 id="3-cognitivestate-versioned-and-checkpointable">3. CognitiveState: Versioned and Checkpointable</h2>
+<p>An agent's "cognitive content" is explicitly modeled as <code>CognitiveState</code> in <code>internal/fabric/agent/agent.go</code> — state that is <strong>independently persistable</strong>: the Runtime does NOT depend on hidden chain-of-thought, only on this durable state (Section 13 invariant #5):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #FAB387;"> CognitiveStateSchemaVersion</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 1</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> CognitiveState</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    SchemaVersion</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;font-style: italic;">   // struct version; 0 = legacy (pre-A2), accepted as compatible by DecodeCognitiveState</span></span>
+<span class="giallo-l"><span>    Context</span><span style="color: #F9E2AF;font-style: italic;">       any</span><span style="color: #9399B2;font-style: italic;">   // active reasoning context (task goal + constraints)</span></span>
+<span class="giallo-l"><span>    Observation</span><span style="color: #F9E2AF;font-style: italic;">   any</span><span style="color: #9399B2;font-style: italic;">   // latest observation from environment/tools</span></span>
+<span class="giallo-l"><span>    WorkingMemory</span><span style="color: #F9E2AF;font-style: italic;"> any</span><span style="color: #9399B2;font-style: italic;">   // intermediate reasoning scratchpad</span></span>
+<span class="giallo-l"><span>    Decision</span><span style="color: #F9E2AF;font-style: italic;">      any</span><span style="color: #9399B2;font-style: italic;">   // current decision/hypothesis</span></span>
+<span class="giallo-l"><span>    ToolState</span><span style="color: #F9E2AF;font-style: italic;">     any</span><span style="color: #9399B2;font-style: italic;">   // state of active tools (open files, connections…)</span></span>
+<span class="giallo-l"><span>    Checkpoint</span><span style="color: #F9E2AF;font-style: italic;">    any</span><span style="color: #9399B2;font-style: italic;">   // durable progress pointer (links to taskfabric Checkpoint when executing a Task)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The paired versioned encode/decode and persistence (<code>context.go</code>):</p>
+<ul>
+<li><code>SetCognitiveState</code>: writes state; a legacy state with <code>SchemaVersion==0</code> is upgraded to the current version at the boundary, so every stored state carries a version.</li>
+<li><code>DecodeCognitiveState</code>: single-path decoding. Handles the native struct, <code>map[string]any</code> (after a JSON round-trip), and nil; <strong>a future version returns <code>ErrCognitiveStateSchemaVersion</code></strong> — refusing silent misinterpretation, so the caller must migrate or reject the recovery.</li>
+<li><code>CheckpointCognitive</code>: returns a snapshot for durable storage — a copy, so mutating it does not affect the live agent.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Agent runs, produces cognition</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">SetCognitiveState</span><span style="color: #CBA6F7;">|</span><span> S</span><span style="color: #CBA6F7;">[(</span><span style="color: #A6E3A1;">Fabric cognition + three</span><span>-</span><span style="color: #A6E3A1;">layer state</span><span style="color: #CBA6F7;">)]</span></span>
+<span class="giallo-l"><span>    S </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">CheckpointCognitive snapshot copy</span><span style="color: #CBA6F7;">|</span><span> P</span><span style="color: #CBA6F7;">[(</span><span style="color: #A6E3A1;">persistent store schema_version</span><span>=</span><span style="color: #A6E3A1;">1</span><span style="color: #CBA6F7;">)]</span></span>
+<span class="giallo-l"><span>    P </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">DecodeCognitiveState</span><span style="color: #CBA6F7;">|</span><span> R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Recover / restore</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    R </span><span style="color: #CBA6F7;">-.-&gt;|</span><span style="color: #A6E3A1;">future version rejected</span><span style="color: #CBA6F7;">|</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ErrCognitiveStateSchemaVersion</span><span style="color: #CBA6F7;">]</span></span></code></pre><h2 id="4-session-memory-how-history-is-retained-and-reclaimed">4. Session Memory: How History Is Retained and Reclaimed</h2>
+<p>The history fed to the LLM comes from the session memory in <code>internal/runtime/memory</code>. The core implementation is <code>SessionMemory</code> in <code>internal/runtime/memory/context/session.go</code>:</p>
+<ul>
+<li><strong>Bounded + TTL</strong>: <code>NewSessionMemory(maxSize, ttl)</code>; beyond <code>maxSize</code> it <code>evictOldest</code> (LRU by <code>AccessedAt</code>, evicting the stalest session); a background <code>Cleanup</code> task runs on a half-TTL tick, removing sessions idle longer than <code>ttl</code> (<code>now - AccessedAt &gt; ttl</code>).</li>
+<li><strong>Deep-copy returns</strong>: <code>Get</code> / <code>GetMessages</code> return copies, so callers can't mutate internal session state.</li>
+<li><strong>Native message structure</strong>: <code>Message</code> carries <code>TurnID</code>, <code>ToolCallID</code>, <code>ToolCalls</code>, <code>EventKind</code>, <code>ParentID</code>, <code>ArtifactRefs</code> — the structural metadata of one turn is preserved for turn-aware consumers.</li>
+</ul>
+<p>The unified outer interface <code>MemoryManager</code> (<code>manager.go</code>) exposes <code>CreateSession</code> / <code>AddMessage</code> / <code>AddStructuredMessage</code> (with TurnID etc. metadata) / <code>GetMessages</code> / <code>BuildPromptMessages</code> / <code>DeleteSession</code>, plus <code>GetLatestSessionForAgent</code> (resolve an agent's latest session from checkpoint; backends that don't persist checkpoints return <code>ErrAgentCheckpointNotSupported</code>). The config surface is aligned by <code>MemoryConfig</code>: <code>MaxHistory</code> (max turns retained), <code>SessionTTL</code>, <code>MaxSessions</code>, with defaults in <code>DefaultMemoryConfig()</code>.</p>
+<blockquote>
+<p>Note: session memory governs <em>how</em> history is kept, <em>how much</em> is kept, and <em>when it's evicted</em> — but it itself does no token trimming. The real hard gate lives in the prompt-length check in the next section. The two are independent defense lines.</p>
+</blockquote>
+<h2 id="5-maxpromptlength-the-last-hard-gate-before-an-llm-call">5. maxPromptLength: The Last Hard Gate Before an LLM Call</h2>
+<p><code>internal/llm</code> performs an <strong>explicit length check</strong> on the prompt before submitting it to a provider (<code>generate.go</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Default cap: 8192 (internal/llm/client.go)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #FAB387;"> maxPromptLength</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 8192</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Config surface: config.MaxPromptLength (yaml: max_prompt_length; 0 = use default)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Client</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> promptMaxLength</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> c</span><span style="color: #9399B2;">.</span><span>config</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #94E2D5;"> &amp;&amp;</span><span> c</span><span style="color: #9399B2;">.</span><span>config</span><span style="color: #9399B2;">.</span><span>MaxPromptLength</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> c</span><span style="color: #9399B2;">.</span><span>config</span><span style="color: #9399B2;">.</span><span>MaxPromptLength</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> maxPromptLength</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// The count is in runes (utf8.RuneCountInString), not bytes — multi-byte</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// characters like CJK are not wrongly rejected against a byte limit (M8).</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> utf8</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RuneCountInString</span><span style="color: #9399B2;">(</span><span>prompt</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">promptMaxLength</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;prompt exceeds maximum length of %d characters&quot;</span><span style="color: #9399B2;">,</span><span> c</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">promptMaxLength</span><span style="color: #9399B2;">())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The key point: this is a <strong>front gate</strong> — an over-limit prompt is rejected before it reaches the provider, rather than being shoved into the window and truncated implicitly by the provider. It is not "compression"; real control of history size comes from Section 2, Section 3, and Section 4 (three-layer isolation limits what's visible, checkpointable state is naturally the leanest mental model, and session whitespace is bounded by TTL/turn count).</p>
+<h2 id="6-summary">6. Summary</h2>
+<table><thead><tr><th>Defense line</th><th>Mechanism</th><th>Metric / guarantee</th></tr></thead><tbody>
+<tr><td>Three-layer isolation</td><td><code>ContextLayer</code> Task Shared / Agent Private / IPC</td><td>Private never leaks (verifiable via <code>ContextView</code>)</td></tr>
+<tr><td>Checkpointable cognition</td><td><code>CognitiveState</code> + <code>SchemaVersion</code></td><td>Persist only checkpointable state; future versions rejected</td></tr>
+<tr><td>Session memory</td><td><code>SessionMemory</code> (TTL + LRU + structured <code>Message</code>)</td><td>Bounded history, reclamation, whole-session access</td></tr>
+<tr><td>Prompt gate</td><td><code>maxPromptLength</code> (default 8192, by runes)</td><td>Over-limit prompts rejected before the LLM call</td></tr>
+</tbody></table>
+<p><strong>Design line: context management is not a "universal trimmer" but four independent, orthogonal defenses, each individually verifiable — isolation decides who sees what, checkpointing decides the minimal persistent set, session memory decides the shape of history, and the prompt gate backstops the length boundary.</strong> Together they make an agent's "history + tool round-trips + per-agent visible state" explicitly budget-managed within a finite window, instead of leaving truncation to the provider implicitly.</p>
+
+    </div>
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/28-skills-discovery/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Skills Discovery — A Capability Catalog That Never Scans the Disk</span></a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/26-agent-communication/"><span class="button__text">Agent Communication — Agent IPC Primitives and the Syscall Tool Layer</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                        </span>
+                    </div>
+            </div>
+        </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 2026 Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

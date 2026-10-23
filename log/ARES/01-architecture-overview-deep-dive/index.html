@@ -82,161 +82,238 @@
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/architecture/">#Architecture</a>&nbsp;
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a></span>
     <div class="post-content">
-        <h1 id="ares-architecture-deep-dive-i-the-big-picture-why-another-agent-framework">ares Architecture Deep Dive (I): The Big Picture — Why Another Agent Framework?</h1>
+        <h1 id="ares-architecture-deep-dive-i-the-big-picture-why-another-agent-framework-current-trunk-m0-m1-5">ares Architecture Deep Dive (I): The Big Picture — Why Another Agent Framework? (current trunk M0–M1.5)</h1>
 <p>I didn't set out to build a framework. I set out to solve a problem: <strong>Agents kept dying, and I couldn't figure out why.</strong></p>
 <p>It started with a simple chatbot. One Leader, two Subs, a handful of tools. Worked fine in dev. In production, the Leader would silently stop responding after 20 minutes. No error, no panic, no crash log. Just... silence.</p>
 <p>After three days of debugging, I found it: a goroutine leak in the LLM client. One leaked goroutine per request, eventually hitting the OS thread limit. The fix was one line. But finding it took 72 hours because I had <strong>zero visibility</strong> into what the Agent was doing.</p>
-<p>That's when I realized: the problem isn't "how to build an Agent." The problem is "how to keep an Agent alive in production."</p>
+<p>That's when I realized: the problem isn't "how to make an Agent call an LLM." The problem is "how to keep an Agent alive in production."</p>
 <hr />
 <h2 id="the-three-questions">The Three Questions</h2>
 <p>Every Agent framework answers one question: "How do I make an Agent call an LLM?" That's the easy part. The hard questions are:</p>
 <ol>
 <li><strong>What happens when the Agent dies?</strong> (Resurrection)</li>
-<li><strong>How does it remember what it was doing?</strong> (State Recovery)</li>
+<li><strong>How does it remember what it was doing?</strong> (Memory distillation / state recovery)</li>
 <li><strong>How do I know what went wrong?</strong> (Observability)</li>
 </ol>
-<p>ares is built around these three questions. Everything else — the DAG engine, the memory system, the evolution engine — exists because answering these questions properly requires a lot of infrastructure.</p>
+<p>ares is built around these three questions. The core stance has stayed constant: <strong>Agents are not orchestrated. They are scheduled.</strong> This article uses the <strong>current real code</strong> (the tool-DAG trunk, M0/M1/M1.5 landed): the whole system has exactly <strong>one graph type</strong> <code>engine.MutableDAG</code>, and ReAct's <code>for round</code> loop is unfolded into nodes grown on the graph — a node = one tool execution.</p>
 <hr />
-<h2 id="the-architecture-five-layers">The Architecture: Five Layers</h2>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> API </span><span>[&quot;Layer 1: API Contract&quot;]</span></span>
-<span class="giallo-l"><span>        Bootstrap</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Bootstrap Factory&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Interfaces</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;AgentService / Runtime / Evolution / Arena / MemoryService / LLMService&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<h2 id="the-architecture-current-code">The Architecture: current code</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> Entry</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Entry / wiring&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        CLI</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;cmd/ares: serve · peer_mode · live_dag&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        BSP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ares_bootstrap: Components + provide_distillation / provide_new_evolution&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        CFG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ares_config + detector env detection&quot;</span><span style="color: #CBA6F7;">]</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Runtime </span><span>[&quot;Layer 2: Runtime&quot;]</span></span>
-<span class="giallo-l"><span>        RT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Runtime Manager&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Leader</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Leader Agent&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Sub</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Sub Agents&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        PluginBus</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;PluginBus&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Strategy</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Active Strategy&lt;br/&gt;evolved params&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> Plugin</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Execution core&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        AG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;agentfabric: Agent/Fabric + Cognition + L2Graph + DAGExecution gate&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        SCH</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;kernelscheduler: Scheduler/Run/drain + fabricAgentExecutor + buildQuantumStep&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        TF</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;taskfabric: Task/Fabric + CompileNode + checkpoint envelope&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        WF</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;workflow/engine: MutableDAG + Step + GraphEventHub + DAGPatchExecutor&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        PP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;planprojection: CompileCoordinator (events → incremental compile/reconcile)&quot;</span><span style="color: #CBA6F7;">]</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Workflow </span><span>[&quot;Layer 3: Workflow&quot;]</span></span>
-<span class="giallo-l"><span>        DAG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;MutableDAG&lt;br/&gt;evolvable topology&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Exec</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;DynamicExecutor&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Checkpoint</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Checkpoint Resume&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        GraphPatch</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;GraphPatchExecutor&lt;br/&gt;insert/remove/replace nodes&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> Cognition</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Cognition &amp; support&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        LLM</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;llm + llmservice: Ollama /api/chat tool-calling&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        TOOLS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;tools/toolsource: discover/selector + resources + ares_mcp&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        MEM</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ares_experience + ares_memory + ares_skills: distillation / long-term memory / confidence prior&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        REC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;aresrecovery + kernelscheduler recovery path + peer restart policy&quot;</span><span style="color: #CBA6F7;">]</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Memory </span><span>[&quot;Layer 4: Memory&quot;]</span></span>
-<span class="giallo-l"><span>        Session</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Session Memory&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Distilled</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Distilled Memory&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Retrieval</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Vector Retrieval&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        MemConfig</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Memory Config&lt;br/&gt;max_history, session_ttl...&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        MemPatch</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;MemoryPatchExecutor&lt;br/&gt;runtime config evolution&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> EvolutionL</span><span>[&quot;Evolution </span><span style="color: #CBA6F7;">(</span><span style="color: #A6E3A1;">L1 only</span><span style="color: #CBA6F7;">)</span><span>&quot;]</span></span>
+<span class="giallo-l"><span>        EV2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;evolution v2: GAGenerator + WorkflowGenome + Deployment&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        EV1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ares_evolution v1 (coexists): fitness/guardrails/gate&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        ARENA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ares_arena/ares_eval + evidence + feedback&quot;</span><span style="color: #CBA6F7;">]</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Evolution </span><span>[&quot;Layer 5: Evolution Engine&quot;]</span></span>
-<span class="giallo-l"><span>        GA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;GA Population&lt;br/&gt;N individuals, 7 selectors&lt;br/&gt;3 crossover, 6 mutation&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Tick</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Background Ticker&lt;br/&gt;5min interval&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Sched</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Scheduler&lt;br/&gt;OnAgentEnd callback&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Adapter</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;GenomePopulationAdapter&lt;br/&gt;Run()&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Genomes</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;6 Genomes&lt;br/&gt;Workflow / Scheduler / Knowledge&lt;br/&gt;Recovery / Planner / Memory&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Diff</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Diff Engine&lt;br/&gt;4 Differs&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Coord</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Coordinator&lt;br/&gt;Apply / Reject / Delay&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Execs</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;5 Executors&lt;br/&gt;Graph / Recovery / Knowledge&lt;br/&gt;Memory + StrategyStore&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span> Platform</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Events / storage / cross-cutting&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        EVS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ares_events: EventStore + compactor + archive&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        STORE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;storage/postgres + services/embedding&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        OBS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ares_observability + introspect + ares_security + ares_ratelimit + logger/errors&quot;</span><span style="color: #CBA6F7;">]</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Infra </span><span>[&quot;Layer 6: Infrastructure&quot;]</span></span>
-<span class="giallo-l"><span>        Events</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EventStore&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Storage</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;VectorStore&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        LLM</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;LLM Adapters&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Tools</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Tool Registry&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        Evidence</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Evidence Store&quot;</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Bootstrap </span><span style="color: #CBA6F7;">--&gt;</span><span> RT</span></span>
-<span class="giallo-l"><span>    RT </span><span style="color: #CBA6F7;">--&gt;</span><span> Leader</span></span>
-<span class="giallo-l"><span>    Leader </span><span style="color: #CBA6F7;">--&gt;</span><span> Sub</span></span>
-<span class="giallo-l"><span>    Leader </span><span style="color: #CBA6F7;">--&gt;</span><span> DAG</span></span>
-<span class="giallo-l"><span>    DAG </span><span style="color: #CBA6F7;">--&gt;</span><span> Exec</span></span>
-<span class="giallo-l"><span>    Exec </span><span style="color: #CBA6F7;">--&gt;</span><span> PluginBus</span></span>
-<span class="giallo-l"><span>    Exec </span><span style="color: #CBA6F7;">--&gt;</span><span> GraphPatch</span></span>
-<span class="giallo-l"><span>    Session </span><span style="color: #CBA6F7;">--&gt;</span><span> Distilled</span></span>
-<span class="giallo-l"><span>    Distilled </span><span style="color: #CBA6F7;">--&gt;</span><span> Retrieval</span></span>
-<span class="giallo-l"><span>    RT </span><span style="color: #CBA6F7;">--&gt;</span><span> Events</span></span>
-<span class="giallo-l"><span>    DAG </span><span style="color: #CBA6F7;">--&gt;</span><span> Events</span></span>
-<span class="giallo-l"><span>    Leader </span><span style="color: #CBA6F7;">--&gt;</span><span> LLM</span></span>
-<span class="giallo-l"><span>    Sub </span><span style="color: #CBA6F7;">--&gt;</span><span> Tools</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    Tick </span><span style="color: #CBA6F7;">--&gt;</span><span> Adapter</span></span>
-<span class="giallo-l"><span>    Sched </span><span style="color: #CBA6F7;">--&gt;</span><span> Adapter</span></span>
-<span class="giallo-l"><span>    Adapter </span><span style="color: #CBA6F7;">--&gt;</span><span> GA</span></span>
-<span class="giallo-l"><span>    GA </span><span style="color: #CBA6F7;">--&gt;</span><span> Genomes</span></span>
-<span class="giallo-l"><span>    Genomes </span><span style="color: #CBA6F7;">--&gt;</span><span> Diff</span></span>
-<span class="giallo-l"><span>    Diff </span><span style="color: #CBA6F7;">--&gt;</span><span> Coord</span></span>
-<span class="giallo-l"><span>    Coord </span><span style="color: #CBA6F7;">--&gt;</span><span> Execs</span></span>
-<span class="giallo-l"><span>    Execs </span><span style="color: #CBA6F7;">--&gt;</span><span> DAG</span></span>
-<span class="giallo-l"><span>    Execs </span><span style="color: #CBA6F7;">--&gt;</span><span> MemConfig</span></span>
-<span class="giallo-l"><span>    Adapter </span><span style="color: #CBA6F7;">--&gt;</span><span> Strategy</span></span>
-<span class="giallo-l"><span>    Strategy </span><span style="color: #CBA6F7;">--&gt;</span><span> RT</span></span>
-<span class="giallo-l"><span>    DAG </span><span style="color: #CBA6F7;">--&gt;</span><span> Events</span></span>
-<span class="giallo-l"><span>    Exec </span><span style="color: #CBA6F7;">--&gt;</span><span> Events</span></span></code></pre>
-<p><strong>Layer 1: API Contract</strong> — What the outside world sees. Interfaces only, no implementations. The Bootstrap factory wires everything together. You call <code>bootstrap.New()</code> and get a fully connected system.</p>
-<p><strong>Layer 2: Runtime</strong> — Who does the work. The Runtime Manager owns agent lifecycles: birth, death, resurrection. The Leader plans and delegates. Sub Agents execute. The PluginBus connects everything. The <strong>Active Strategy</strong> carries evolved parameters (tool selection, search depth, scheduler strategy) that the GA engine produces.</p>
-<p><strong>Layer 3: Workflow</strong> — How work flows. The MutableDAG defines task dependencies. The DynamicExecutor runs them in topological order. The <strong>GraphPatchExecutor</strong> can insert, remove, or replace nodes at runtime — this is how DAG topology evolution works. Checkpoint Resume lets you pick up where you left off after a crash.</p>
-<p><strong>Layer 4: Memory</strong> — What agents remember. Session memory is short-term. Distilled memory is long-term compressed knowledge. Retrieval finds relevant memories via vector search. The <strong>MemoryPatchExecutor</strong> adjusts memory configuration (max_history, session_ttl, etc.) at runtime via coordinator patches.</p>
-<p><strong>Layer 5: Evolution Engine</strong> — How agents improve themselves. The GA Population holds N individuals with different strategy parameters. A background ticker (5-minute interval) and an agent-completion scheduler both trigger evolution cycles. The adapter runs selection → crossover → mutation → scoring, then submits the best strategies to <strong>6 Genomes</strong> (Workflow, Scheduler, Knowledge, Recovery, Planner, Memory). The Diff Engine compares old vs new snapshots, producing patches. The Coordinator decides Apply/Reject/Delay. <strong>5 Executors</strong> apply the approved patches to the live system, and the <strong>Strategy Store</strong> makes the evolved strategy available to running agents.</p>
-<p><strong>Layer 6: Infrastructure</strong> — What holds it all up. EventStore records everything. VectorStore indexes memories. LLM Adapters talk to providers. Tool Registry manages capabilities. Evidence Store feeds evolution decisions.</p>
+<span class="giallo-l"><span>    BSP </span><span style="color: #CBA6F7;">--&gt;</span><span> Plugin &amp; Cognition &amp; EvolutionL &amp; Platform</span></span>
+<span class="giallo-l"><span>    AG </span><span style="color: #CBA6F7;">--&gt;</span><span> LLM &amp; TOOLS &amp; MEM</span></span>
+<span class="giallo-l"><span>    SCH </span><span style="color: #CBA6F7;">--&gt;</span><span> REC</span></span>
+<span class="giallo-l"><span>    TF </span><span style="color: #CBA6F7;">--</span><span style="color: #A6E3A1;">&gt; EVS </span><span style="color: #CBA6F7;">--&gt;</span><span> STORE</span></span>
+<span class="giallo-l"><span>    WF </span><span style="color: #CBA6F7;">-.</span><span style="color: #A6E3A1;">L1 evolution surface</span><span style="color: #CBA6F7;">.-&gt;</span><span> EV2</span></span>
+<span class="giallo-l"><span>    EV2 </span><span style="color: #CBA6F7;">-.</span><span style="color: #A6E3A1;">patch constrains L1</span><span style="color: #CBA6F7;">.-&gt;</span><span> WF</span></span>
+<span class="giallo-l"><span>    RUN2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;L2 execution graph&quot;</span><span style="color: #CBA6F7;">] -</span><span>.execution stats </span><span style="color: #CBA6F7;">(</span><span style="color: #A6E3A1;">M6</span><span style="color: #CBA6F7;">).-&gt;</span><span> EV2</span></span></code></pre>
+<p><strong>One spine threading every module.</strong> The seven layers of 0.3.x didn't vanish; they settled onto a handful of real packages: <code>agentfabric</code> = "how an Agent lives", <code>kernelscheduler</code> = "who runs", <code>taskfabric</code> = "the task's durable intent", <code>workflow/engine</code> = "the one graph", <code>planprojection</code> = "graph → tasks". Module by module below, using real components.</p>
 <hr />
-<h2 id="the-design-principles">The Design Principles</h2>
-<p><strong>1. Agents are disposable.</strong></p>
-<p>This is the most important principle. An Agent is not a precious snowflake — it's a goroutine with a heartbeat. If it dies, the Runtime creates a new one and restores its state from the EventStore. This sounds wasteful until you realize it's the only way to guarantee recovery.</p>
-<p><strong>Honest reflection</strong>: We considered making Agents long-lived and resilient. Tried circuit breakers, retry loops, graceful degradation. It worked — until it didn't. The problem is that you can't predict every failure mode. A goroutine leak, a deadlock, an OOM kill — no amount of defensive coding covers all of them. Making Agents disposable means any failure is recoverable, because you always have a fresh start point.</p>
-<p><strong>2. Record everything, replay anything.</strong></p>
-<p>Every action — LLM call, tool invocation, task assignment, memory query — is an event in the EventStore. Want to know what happened? Replay the events. Want to restore state? Replay the events. Want to debug? Replay the events.</p>
-<p><strong>3. Plugins, not hardcoding.</strong></p>
-<p>The PluginBus lets you extend behavior without modifying core code. Checkpoint snapshots, route decisions, tool invocations — all handled by plugins. The Runtime doesn't know or care which plugins are active.</p>
+<h3 id="two-isomorphic-layers-l1-capability-graph-l2-execution-graph">Two isomorphic layers: L1 capability graph ↔ L2 execution graph</h3>
+<p>The whole system has <strong>one graph type</strong> <code>engine.MutableDAG</code>; evolution operators, patch executors, the event bus and the compiler all operate on it regardless of what a node holds. The only new concept is <strong>layering</strong>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L1</span><span>[&quot;L1 capability graph </span><span style="color: #CBA6F7;">(</span><span style="color: #A6E3A1;">durable </span><span>·</span><span style="color: #A6E3A1;"> evolution surface</span><span style="color: #CBA6F7;">)</span><span>&quot;]</span></span>
+<span class="giallo-l"><span>        L1N</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;node = ToolClass (toolName#argShape)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L1M</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Metadata = enabled/budget/prior&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L1P</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;evolution → DAGPatchExecutor → L1&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> L2</span><span>[&quot;L2 execution graph </span><span style="color: #CBA6F7;">(</span><span style="color: #A6E3A1;">per</span><span>-</span><span style="color: #A6E3A1;">session </span><span>·</span><span style="color: #A6E3A1;"> runtime</span><span>-</span><span style="color: #A6E3A1;">grown</span><span style="color: #CBA6F7;">)</span><span>&quot;]</span></span>
+<span class="giallo-l"><span>        L2N</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;node = ToolInstance (one tool execution)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L2M</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;root = ares/root session admission&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        L2C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;compile: planprojection → taskfabric → kernelscheduler&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span>    L1 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">constrains growth</span><span style="color: #CBA6F7;">|</span><span> L2</span></span>
+<span class="giallo-l"><span>    L2 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">stats </span><span>→</span><span style="color: #A6E3A1;"> fitness</span><span style="color: #CBA6F7;">|</span><span> L1</span></span></code></pre>
+<p><strong>Every step maps to real source:</strong> <code>MutableDAG</code> (<code>workflow/engine/mutable_dag.go</code>), <code>GraphEventHub</code> with monotonic <code>seq</code> + per-subscriber drop counters (<code>graph_events.go</code>), <code>DAGPatchExecutor</code> (<code>dag_patcher.go</code>), the nine <code>WorkflowGenome</code> operators (<code>evolution/genome/</code>), <code>UpdateLiveDAG</code> (re-points the genome, <code>ares_bootstrap/provide_new_evolution.go</code>).</p>
+<hr />
+<h3 id="the-execution-chain-event-driven-the-graph-is-the-plan-the-fabric-holds-the-facts">The execution chain: event-driven, the graph is the plan, the fabric holds the facts</h3>
+<p>A ReAct round unfolds into "one node per tool execution." Execution is <strong>not</strong> in the graph — it is in the scheduler: each node compiles into a <code>taskfabric</code> task, drained by <code>kernelscheduler</code>, run as one quantum through the agent's Cognition, and the result lands in the task's checkpoint envelope:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    GROW</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;L2Graph.AddToolNode (single AddNode with DependsOn)&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>EVT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;GraphEventHub&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    EVT</span><span style="color: #CBA6F7;">--&gt;</span><span>COORD</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;CompileCoordinator.SubscribeGraphEvents ApplyChange / Reconcile (seq gap / drop)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    COORD</span><span style="color: #CBA6F7;">--&gt;</span><span>CT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;taskfabric.CompileNode&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    CT</span><span style="color: #CBA6F7;">--&gt;</span><span>DR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;kernelscheduler.Scheduler.Run/drain&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    DR</span><span style="color: #CBA6F7;">--&gt;</span><span>SEL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;capability scoring picks winner&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    SEL</span><span style="color: #CBA6F7;">--&gt;</span><span>EXEC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;fabricAgentExecutor.ExecuteStep&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    EXEC</span><span style="color: #CBA6F7;">--&gt;</span><span>COG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;agent.Cognition (router→tool/answer/root)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    COG</span><span style="color: #CBA6F7;">--&gt;</span><span>Q</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;buildQuantumStep: Done/Yield/Fail + envelope rewrap&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    Q</span><span style="color: #CBA6F7;">--&gt;</span><span>ENV</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;checkpoint envelope (Output lives in fabric)&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre>
+<p>Behind this are three real, landed chunks:</p>
+<ul>
+<li><strong>M0 incremental compiler:</strong> <code>CompileCoordinator.ApplyChange</code> dispatches by <code>ChangeType</code>; <code>SetDependencies</code> / <code>UpdatePayload</code> / <code>CompileNode</code> / cross-batch dependency resolution (<code>taskfabric/workflow_plan.go</code>) — no more full-batch recompiles.</li>
+<li><strong>M1 execution bodies:</strong> <code>toolCognition</code> / <code>answerCognition</code> / <code>rootCognition</code> all implement the same <code>Cognition</code> interface; <code>routerCognition</code> dispatches by <code>Task.AgentType</code>.</li>
+<li><strong>M1.5 event path:</strong> <code>Reconcile</code> compensates dropped events, the <code>arg.</code> namespace isolates tool args from envelope plumbing, and the <code>DAGExecution</code> gate (default off = legacy ReAct) selects the session graph when open.</li>
+</ul>
+<p><strong>The <code>DAGExecution</code> gate</strong> is the transition guardrail: production defaults to <code>chatCognition</code>; opening it requires full capability advertisement + a session registry first — I won't force it before the prereqs are real.</p>
+<hr />
+<h2 id="module-deep-dives-one-component-diagram-per-core-package">Module deep-dives: one component diagram per core package</h2>
+<h3 id="agentfabric-disposable-agents-injected-execution-bodies">agentfabric — disposable agents + injected execution bodies</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    SP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;SpawnSpec.CognitionFactory (inject at spawn)&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>AG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Agent State: IDLE/RUNNING/SUSPENDED/RETIRED&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    KILL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Kill / Retire (reclaim in-flight)&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>AG</span></span>
+<span class="giallo-l"><span>    GATE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;DAGExecution.Enabled true→router / false→chat&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>ROUTER</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;routerCognition&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    GATE</span><span style="color: #CBA6F7;">--&gt;</span><span>CHAT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;chatCognition (legacy ReAct)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    ROUTER</span><span style="color: #CBA6F7;">--&gt;</span><span>PLAN</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;planner(ares/plan)&quot;</span><span style="color: #CBA6F7;">]</span><span> &amp; TOOL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;tool(tool/*)&quot;</span><span style="color: #CBA6F7;">]</span><span> &amp; ANS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;answer&quot;</span><span style="color: #CBA6F7;">]</span><span> &amp; ROOT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;root admission&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    AG</span><span style="color: #CBA6F7;">--&gt;</span><span>GATE</span></span>
+<span class="giallo-l"><span>    L2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;L2Graph = engine.MutableDAG&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>AG</span></span></code></pre><h3 id="kernelscheduler-the-scheduling-pipeline">kernelscheduler — the scheduling pipeline</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ReadyTasks()&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>SC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Schedule: capability score (overlap×load×confidence)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    SC</span><span style="color: #CBA6F7;">--&gt;</span><span>AQ</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Acquire (lease + epoch)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    AQ</span><span style="color: #CBA6F7;">--&gt;</span><span>FE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;fabricAgentExecutor.ExecuteStep&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    FE</span><span style="color: #CBA6F7;">--&gt;</span><span>BQ</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;buildQuantumStep: Done/Yield/Fail&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    BQ</span><span style="color: #CBA6F7;">--&gt;</span><span>ENV</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;checkpoint envelope&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    LT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;LoadTracker (load/confidence)&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>SC</span></span>
+<span class="giallo-l"><span>    RCV</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;recovery-bound executor (W1) + reconcileFabricDeaths&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>FE</span></span></code></pre><h3 id="taskfabric-the-task-state-machine">taskfabric — the task state machine</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">stateDiagram-v2</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    [*]--&gt;</span><span>READY</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Create/CompileNode/CompilePlan</span></span>
+<span class="giallo-l"><span>    READY</span><span style="color: #CBA6F7;">--&gt;</span><span>LEASED</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Schedule+Acquire</span></span>
+<span class="giallo-l"><span>    LEASED</span><span style="color: #CBA6F7;">--&gt;</span><span>RUNNING</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> RunQuantum</span></span>
+<span class="giallo-l"><span>    RUNNING</span><span style="color: #CBA6F7;">--&gt;</span><span>SUSPENDED</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Yield (checkpoint)</span></span>
+<span class="giallo-l"><span>    SUSPENDED</span><span style="color: #CBA6F7;">--&gt;</span><span>READY</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> requeue / re-acquire</span></span>
+<span class="giallo-l"><span>    RUNNING</span><span style="color: #CBA6F7;">--&gt;</span><span>COMPLETED</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Done</span></span>
+<span class="giallo-l"><span>    RUNNING</span><span style="color: #CBA6F7;">--&gt;</span><span>FAILED</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> retries exhausted (RetryPolicy)</span></span></code></pre><h3 id="workflow-engine-the-graph-engine">workflow/engine — the graph engine</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;MutableDAG: AddNode/AddEdge/RemoveNode/ReplaceNode/SetNodeMetadata&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>S</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Step: ID/AgentType/Input/Metadata/DependsOn&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    D</span><span style="color: #CBA6F7;">--&gt;</span><span>H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;GraphEventHub: seq + drop + ChangeType&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    P</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;DAGPatchExecutor: Snapshot/Restore/CanApply/Apply&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>D</span></span></code></pre><h3 id="planprojection-graph-task-compiler">planprojection — graph → task compiler</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    SUB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;SubscribeGraphEvents&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>GA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;seq gap / drop → reconcile&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    GA</span><span style="color: #CBA6F7;">--&gt;</span><span>AC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ApplyChange (dispatch by ChangeType)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    GA</span><span style="color: #CBA6F7;">--&gt;</span><span>RC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Reconcile (create missing / delete stale / adopt pre-existing)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    AC</span><span style="color: #CBA6F7;">--&gt;</span><span>P</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ProjectStep → PlanStep&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    RC</span><span style="color: #CBA6F7;">--&gt;</span><span>P</span></span>
+<span class="giallo-l"><span>    P</span><span style="color: #CBA6F7;">--&gt;</span><span>T</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;taskfabric.CompileNode/CompilePlan&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre><h3 id="evolution-v2-the-evolution-pipeline">evolution (v2) — the evolution pipeline</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    GA</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;GAGenerator&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>CP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;CandidatePipeline&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    CP</span><span style="color: #CBA6F7;">--&gt;</span><span>WG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;WorkflowGenome nine operators&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    WG</span><span style="color: #CBA6F7;">--&gt;</span><span>V</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;CandidateVerifier / RegressionChecker&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    V</span><span style="color: #CBA6F7;">--&gt;</span><span>DEP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Deployment: Evaluate+Promote+Rollback lever&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    WG</span><span style="color: #CBA6F7;">--&gt;</span><span>DP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;DAGPatchExecutor → L1 MutableDAG&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    CP</span><span style="color: #CBA6F7;">--&gt;</span><span>CS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;CandidateStore&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre><h3 id="ares-experience-memory-distillation">ares_experience — memory distillation</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    TR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;TaskResult&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>DS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;DistillationService.Distill&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    DS</span><span style="color: #CBA6F7;">--&gt;</span><span>EX</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ExtractedExperience&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    EX</span><span style="color: #CBA6F7;">--&gt;</span><span>EMB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EmbeddingEnqueuer → services/embedding&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    EX</span><span style="color: #CBA6F7;">--&gt;</span><span>RANK</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;RankingService → RankedExperience&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    EX</span><span style="color: #CBA6F7;">--&gt;</span><span>CR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ConflictResolver&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    FB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;FeedbackService (bandit)&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>RANK</span></span>
+<span class="giallo-l"><span>    RANK</span><span style="color: #CBA6F7;">--&gt;</span><span>STORE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;experience store&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    STORE</span><span style="color: #CBA6F7;">-.</span><span style="color: #A6E3A1;">ExperiencePrior on spawn</span><span style="color: #CBA6F7;">.-&gt;</span><span>AGENT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;agentfabric.Agent&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre><h3 id="ares-memory-the-memory-pipeline">ares_memory — the memory pipeline</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    SRC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ConversationSource/SessionData&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>PIPE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Pipeline&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    PIPE</span><span style="color: #CBA6F7;">--&gt;</span><span>DIST</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Distiller&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    PIPE</span><span style="color: #CBA6F7;">--&gt;</span><span>EV</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EvidenceCollector&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    PIPE</span><span style="color: #CBA6F7;">--&gt;</span><span>MGR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;MemoryManager/ProductionMemoryManager&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    MGR</span><span style="color: #CBA6F7;">--&gt;</span><span>PATCH</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;MemoryPatchExecutor&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    PATCH</span><span style="color: #CBA6F7;">--&gt;</span><span>C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;MemoryConfigStore/storage&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre><h3 id="tools-toolsource-tool-discovery-retrieval">tools/toolsource — tool discovery &amp; retrieval</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    SRC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ToolSource: StaticSource/RegistrySource/MultiSource&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>DISCO</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;discoverToolsTool (meta-tool: runtime search + expand)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    DISCO</span><span style="color: #CBA6F7;">--&gt;</span><span>SEL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ToolSelector: All/Tag/CapabilitySelector&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    SEL</span><span style="color: #CBA6F7;">--&gt;</span><span>CAP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;CapabilityExtractor&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    CAP</span><span style="color: #CBA6F7;">--&gt;</span><span>BIND</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;agentsyscall.BindTools → ToolBinder&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    MCP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ares_mcp&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>SRC</span></span>
+<span class="giallo-l"><span>    RES</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;tools/resources builtin tools&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>SRC</span></span></code></pre><h3 id="aresrecovery-agent-resurrection-recovery">aresrecovery — agent resurrection / recovery</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    CH</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Chaos: random kill fault injection&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>RC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Recovery: restore killed agent&#39;s in-flight tasks&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    RC</span><span style="color: #CBA6F7;">--&gt;</span><span>AT</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ExecutionAttribution/ChangeAttributor&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    AT</span><span style="color: #CBA6F7;">--&gt;</span><span>EVO</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EvolutionFeedbackAdapter/EvolutionAwareIPC&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    EVO</span><span style="color: #CBA6F7;">--&gt;</span><span>SC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;DeterministicScorer + ConfidenceInjector&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre><h3 id="ares-events-the-event-bus">ares_events — the event bus</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">flowchart</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    APP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EventAppender&quot;</span><span style="color: #CBA6F7;">]--&gt;</span><span>ST</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EventStore/MemoryEventStore&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    ST</span><span style="color: #CBA6F7;">--&gt;</span><span>COMP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Compactor (compress/trim)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    ST</span><span style="color: #CBA6F7;">--&gt;</span><span>SUM</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EventSummarizer → EventSummary&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    ST</span><span style="color: #CBA6F7;">--&gt;</span><span>ARCH</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;ArchiveSink (archive)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    ST</span><span style="color: #CBA6F7;">--&gt;</span><span>FEED</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;feedback / evolution evidence persistence&quot;</span><span style="color: #CBA6F7;">]</span></span></code></pre>
+<hr />
+<h2 id="design-principles">Design Principles</h2>
+<p><strong>1. Agents are disposable; tasks are durable.</strong></p>
+<p>The most important rule: <strong>agent death ≠ task death.</strong> <code>aresrecovery.Recovery</code> restores a killed agent's in-flight tasks, and <code>kernelscheduler</code>'s recovery-bound executor (W1) binds the replacement to exactly one task — it can never hijack another READY task. Every Execution Quantum yields at the boundary; the checkpoint is on disk, so the next quantum resumes from it.</p>
+<p><strong>2. Record everything, replay everything.</strong></p>
+<p>Every action — LLM call, tool call, task assignment, memory query — is an event in <code>ares_events.EventStore</code>. <code>introspect</code> shows the live Scheduling Observatory (decisions, winners, why). Want to restore state? Replay the events.</p>
+<p><strong>3. The graph is the plan; the fabric holds the facts.</strong></p>
+<p>L2 graph nodes do <strong>not</strong> carry Output. Results live in the fabric task's checkpoint envelope; you read the side effects by joining <code>nodeID = taskID</code>. A writer-back that copies results onto graph nodes? That's <code>toolprojection</code>'s ghost. Two sources of truth equals zero.</p>
 <p><strong>4. The API layer is a contract, not an implementation.</strong></p>
-<p><code>api/core/</code> defines interfaces. <code>internal/</code> implements them. <code>api/bootstrap/</code> wires them together. You can swap implementations without changing the contract. This matters when you want to test with mocks, or switch from in-memory to PostgreSQL.</p>
+<p><code>internal/llmcore</code> defines the types; <code>api/core</code> was a deprecated forwarding alias (M5 internalization) — the whole <code>api/</code> subtree was removed in 0.3.2; <code>ares_bootstrap</code> assembles them. Swap <code>storage</code> from in-memory to PostgreSQL without touching the contract.</p>
 <hr />
-<h2 id="what-makes-this-different">What Makes This Different</h2>
-<p>Most Agent frameworks are "LLM orchestration engines" — they focus on prompt chains and tool calling. ares is an <strong>Agent operating system</strong> — it focuses on keeping Agents alive in production.</p>
-<table><thead><tr><th>Capability</th><th>Typical Framework</th><th>ares</th></tr></thead><tbody>
-<tr><td>Agent lifecycle</td><td>Start and hope</td><td>Birth → Death → Resurrection</td></tr>
-<tr><td>State management</td><td>In-memory struct</td><td>Event Sourcing + Checkpoint</td></tr>
-<tr><td>Failure handling</td><td>Try/catch</td><td>Automatic resurrection with state recovery</td></tr>
-<tr><td>Observability</td><td>Logs</td><td>Logs + Events + Metrics + Traces</td></tr>
-<tr><td>Extensibility</td><td>Subclass</td><td>Plugin system with capability discovery</td></tr>
-<tr><td>Self-improvement</td><td>None</td><td>GA engine with 7 selectors, 3 crossover, 6 mutation operators, 6 evolvable genomes (Workflow/Scheduler/Knowledge/Recovery/Planner/Memory), multi-objective scoring, and background ticker-driven evolution cycles</td></tr>
+<h2 id="what-s-different">What's Different</h2>
+<p>Most Agent frameworks are "LLM orchestration engines" — focused on prompt chains and tool calls. ares is an <strong>Agent runtime</strong>: it unfolds the ReAct loop into a graph and makes each tool execution a first-class scheduling entity. That buys the fabric's retry, preemption, lease, crash-recovery and dependency-readiness — things a tool call inside the ReAct loop never had.</p>
+<table><thead><tr><th>Capability</th><th>Typical framework</th><th>ares (current)</th></tr></thead><tbody>
+<tr><td>Agent lifecycle</td><td>launch and pray</td><td>Agent Fabric: spawn → idle → running → suspend → retire; <code>aresrecovery</code> resurrects killed agents</td></tr>
+<tr><td>Scheduling</td><td>leader dispatch</td><td><strong>Agents are not orchestrated, they are scheduled.</strong> capability-aware kernel scheduler</td></tr>
+<tr><td>Tool execution</td><td>inside the ReAct loop</td><td>one tool execution = one graph node = one schedulable task (free retry/recovery/dependency-readiness)</td></tr>
+<tr><td>Execution structure</td><td>linear messages</td><td>two isomorphic <code>engine.MutableDAG</code>s: L1 capability (evolution) / L2 execution (session)</td></tr>
+<tr><td>Memory</td><td>hard-stuffed message history</td><td><code>ares_experience</code> distillation + <code>ares_memory</code> + <code>ares_skills</code> prior, injected as ExperiencePrior at spawn</td></tr>
+<tr><td>Resurrection</td><td>none</td><td><code>aresrecovery.Recovery</code> + recovery-bound executor (W1) + <code>Chaos</code> fault-injection verification</td></tr>
+<tr><td>Observability</td><td>logs</td><td><code>ares_events</code> event sourcing + <code>introspect</code> decision panel + metrics</td></tr>
+<tr><td>Self-improvement</td><td>none</td><td><code>evolution</code> Candidate → verify → Deployment (patches L1 only)</td></tr>
+<tr><td>Tool discovery</td><td>hardcoded registry</td><td><code>tools/toolsource</code> discover_tool meta-tool + selector + <code>ares_mcp</code></td></tr>
 </tbody></table>
 <hr />
-<h2 id="the-honest-truth">The Honest Truth</h2>
-<p>This project started as a chatbot and grew into something I didn't plan. The evolution engine wasn't in any roadmap — it emerged from the question "what if Agents could optimize their own prompts?" The chaos engineering arena came from "what if I could kill an Agent and watch it recover?" The plugin system came from "what if I could add checkpoint support without touching the executor?"</p>
-<p>Each feature was born from a real problem, not a feature checklist. That's why the architecture looks the way it does — it's not designed top-down, it's evolved bottom-up.</p>
-<p><strong>Honest reflection</strong>: The codebase is bigger than it needs to be. The quant trading module, the interview demo, the MCP dashboard — these are experiments that should probably live in separate repos. The core (Runtime + Workflow + Memory + Events) is solid. The periphery is still finding its shape.</p>
-<p>But that's how real projects work. You don't design the perfect architecture on day one. You solve problems, accumulate code, and occasionally stop to refactor. The refactoring we did in v0.2.4 — unified naming, API layer thinning, module logging — was one of those "stop and clean up" moments.</p>
+<h2 id="honest-talk">Honest Talk</h2>
+<p>This project started as a chatbot and grew into something I didn't plan. The evolution engine came from "what if an Agent could optimize its own prompt?" The chaos arena came from "what if I could kill an Agent and watch it recover?"</p>
+<p><strong>The honest edges right now:</strong></p>
+<ul>
+<li><strong>The tool-DAG trunk is still behind the <code>DAGExecution</code> gate, closed.</strong> M0/M1/M1.5 are landed and green, but production peers still run <code>chatCognition</code>. Opening needs M2 session registry + M3 full capability advertisement; I won't force it early.</li>
+<li><strong>Evolution has v1 and v2</strong> (<code>ares_evolution</code> vs <code>evolution</code>) coexisting. The trunk only guarantees "new code targets v2 + <code>MutableDAG</code>"; the ~30 legacy v1 files are untouched — cleaning them is a separate refactor.</li>
+<li><strong><code>toolprojection</code> is dead code awaiting deletion.</strong> The graph is the truth; post-hoc projection is pure redundancy. "Delete means delete" lands at M4.</li>
+<li><strong><code>taskfabric</code> is in-memory.</strong> Crash recovery requires the L2 graph to be rebuildable — <code>TestL2Graph_RecompilesIdempotentAfterRestart</code> pins exactly that as a regression test.</li>
+<li><strong><code>M6</code> feedback (L2 results → L1 fitness) is not wired yet.</strong> That's the last link of the evolution loop.</li>
+</ul>
+<p>Every feature came from a real problem, not a feature checklist. That's why the architecture looks like this — not top-down designed, bottom-up evolved.</p>
 <hr />
-<h2 id="what-s-next">What's Next</h2>
-<p>This series walks through each layer in detail:</p>
-<table><thead><tr><th>#</th><th>Topic</th><th>What You'll Learn</th></tr></thead><tbody>
-<tr><td>I</td><td><strong>This article</strong></td><td>The big picture</td></tr>
-<tr><td>II</td><td>Agent Harmony Protocol</td><td>How agents communicate</td></tr>
-<tr><td>III</td><td>Memory Distillation</td><td>How agents remember and forget</td></tr>
-<tr><td>IV</td><td>Workflow Engine</td><td>How tasks flow through a DAG</td></tr>
-<tr><td>V</td><td>Tool Invocation Layer</td><td>How agents use tools</td></tr>
-<tr><td>VI</td><td>Security &amp; Observability</td><td>How to see what's happening</td></tr>
-<tr><td>VII</td><td>Runtime &amp; Lifecycle</td><td>How agents live and die</td></tr>
-<tr><td>VIII</td><td>Event System</td><td>How state is recorded and recovered</td></tr>
-<tr><td>IX</td><td>Arena / Fault Injection</td><td>How to break things deliberately</td></tr>
-<tr><td>X</td><td>Retrieval System</td><td>How to find relevant memories</td></tr>
-<tr><td>XI</td><td>Autonomous Evolution</td><td>How agents improve themselves</td></tr>
-<tr><td>XII</td><td>Security Hardening</td><td>How to defend against threats</td></tr>
-<tr><td>XIII</td><td>Bootstrap &amp; API Layer</td><td>How to wire without pain</td></tr>
-<tr><td>XIV</td><td>Plugin System</td><td>How to extend without touching</td></tr>
-<tr><td>XV</td><td>MCP Integration</td><td>How to teach agents to use tools</td></tr>
-<tr><td>XVI</td><td>Flight Recorder</td><td>How to record and replay execution</td></tr>
-<tr><td>00</td><td>SDK Layer</td><td>One line of code to start an agent</td></tr>
-<tr><td>00</td><td>Knowledge Graph Build</td><td>From markdown to 27K edges (AKG)</td></tr>
-<tr><td>00</td><td>Storage Layer</td><td>postgres/embedding/models/query/repositories/services</td></tr>
-<tr><td>00</td><td>LLM Client Layer</td><td>Failover, DeepSeek Reasoning, multi-provider abstraction</td></tr>
-<tr><td>00</td><td>Evaluation Framework</td><td>EvaluatorRegistry, LLMJudge, Bench</td></tr>
-<tr><td>00</td><td>Config System</td><td>ares.yaml schema, YAML-driven flags</td></tr>
-<tr><td>00</td><td>Quant Trading Module</td><td>The experiment we keep honest about</td></tr>
+<h2 id="the-series">The Series</h2>
+<table><thead><tr><th>#</th><th>Topic</th><th>What you'll learn</th></tr></thead><tbody>
+<tr><td>I</td><td><strong>This article</strong></td><td>Big picture + two isomorphic MutableDAGs + all-module breakdown</td></tr>
+<tr><td>II</td><td>Agent Harmony Protocol</td><td>how agents communicate</td></tr>
+<tr><td>III</td><td>Memory Distillation</td><td>how <code>ares_experience</code>/<code>ares_memory</code> remember and forget</td></tr>
+<tr><td>IV</td><td>Workflow Engine</td><td><code>workflow/engine.MutableDAG</code>: how tasks flow and evolve in the DAG</td></tr>
+<tr><td>V</td><td>Tool Layer</td><td>how <code>tools/toolsource</code> discovers, retrieves and binds tools</td></tr>
+<tr><td>VI</td><td>Security &amp; Observability</td><td>how <code>ares_events</code>/<code>introspect</code> show what happened</td></tr>
+<tr><td>VII</td><td>Runtime &amp; Lifecycle</td><td>how an Agent lives, dies, and is resurrected</td></tr>
+<tr><td>VIII</td><td>Event System</td><td>how state is recorded and recovered</td></tr>
+<tr><td>IX</td><td>Arena / Fault Injection</td><td>how <code>aresrecovery.Chaos</code> breaks things then verifies recovery</td></tr>
+<tr><td>X</td><td>Retrieval</td><td>how relevant memory is found</td></tr>
+<tr><td>XI</td><td>Autonomous Evolution</td><td>how <code>evolution</code> patches L1 and ships</td></tr>
+<tr><td>XIII</td><td>Bootstrap &amp; API</td><td>how <code>ares_bootstrap</code> wires without pain</td></tr>
+<tr><td>XV</td><td>MCP Integration</td><td>how <code>ares_mcp</code> teaches an Agent to use tools</td></tr>
+<tr><td>19</td><td>Storage layer</td><td><code>storage/postgres</code> + <code>services/embedding</code></td></tr>
+<tr><td>20</td><td>LLM client layer</td><td><code>llm</code> failover, multi-provider abstraction</td></tr>
+<tr><td>21</td><td>Evaluation framework</td><td><code>ares_eval</code> EvaluatorRegistry / LLMJudge</td></tr>
 </tbody></table>
-<p>Each article follows the same pattern: <strong>the problem → the design journey → the trade-offs → the honest reflection.</strong></p>
-<p>No marketing. No "10x faster than X." Just engineers talking about engineering.</p>
+<p>Every article follows the same pattern: <strong>Problem → Design Journey → Trade-offs → Honest Reflection.</strong></p>
+<p>No marketing. No "10x faster than X." Just engineers talking engineering.</p>
 
     </div>
             <div class="pagination">
@@ -246,7 +323,7 @@
                 </div>
                 <div class="pagination__buttons">
                         <span class="button previous">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/02-agent-harmony-protocol/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Agent Harmony Protocol — The Communication Foundation for Multi-Agent Systems</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/02-agent-harmony-protocol/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Agent IPC — Peer-Mesh Communication Primitives</span></a>
                         </span>
                     
                     

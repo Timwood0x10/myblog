@@ -82,7 +82,7 @@
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a></span>
     <div class="post-content">
-        <h1 id="ares-series-building-your-own-agent-framework-when-you-re-bored">ares Series: Building Your Own Agent Framework When You're Bored</h1>
+        <h1 id="ares-series-building-your-own-agent-framework-when-you-re-bored-0-3-1">ares Series: Building Your Own Agent Framework When You're Bored (0.3.1)</h1>
 <blockquote>
 <p>I've always believed the best way to learn is to build your own wheel.
 Not because the wheels out there aren't good enough — but because once you've built one, you'll never get stuck by one again.</p>
@@ -127,28 +127,109 @@ Not because the wheels out there aren't good enough — but because once you've 
 <li><strong>Strong types + clean interfaces</strong> — designed clearer abstractions from day one</li>
 <li><strong>Channels and Context</strong> — reliable workflow orchestration and cancellation</li>
 </ul>
-<h2 id="key-features">Key Features</h2>
-<p>As the project matured, I added the features I always wanted:</p>
-<table><thead><tr><th>Feature</th><th>Description</th></tr></thead><tbody>
-<tr><td><strong>Dynamic DAG Workflows</strong></td><td>Execution graphs built and modified at runtime — no more hardcoding</td></tr>
-<tr><td><strong>Memory Distillation</strong></td><td>Long-term memory auto-summarized and compressed — agents don't drown in context</td></tr>
-<tr><td><strong>AHP (Agent Hierarchical Protocol)</strong></td><td>Clear communication, delegation, and collaboration between agents</td></tr>
-<tr><td><strong>Leader + Sub-Agent with Failover</strong></td><td>If the Leader dies, sub-agents pick up seamlessly</td></tr>
-<tr><td><strong>Pluggable Vector Stores</strong></td><td>PostgreSQL pgvector, Qdrant, etc. Core ops &lt;1µs with zero-alloc hot paths</td></tr>
-<tr><td><strong>MCP Protocol</strong></td><td>Native Model Context Protocol support for dynamic tool discovery</td></tr>
-<tr><td><strong>Event System &amp; Flight Recorder</strong></td><td>Every agent action becomes an immutable record — state recovery, audit trails</td></tr>
-<tr><td><strong>Chaos Engineering</strong></td><td>14 chaos actions (kill_leader, network_partition, tool_timeout, etc.) randomly injected into production agents to validate anti-fragility; support for survival mode (30 min sustained random failures) and scenario orchestration (YAML-defined multi-step chaos experiments); 3D weighted scoring (Availability 40%, Recovery 30%, Consistency 30%) with Welch's t-test regression</td></tr>
-<tr><td><strong>Autonomous Evolution</strong></td><td>Agent strategies self-evolve via a dual-path design: the DreamCycle path evaluates mutated candidates through Arena regression testing (two-stage: Quick Reject 5 rounds → Full Eval 50 rounds) to select optimal strategies; the Genome GA path operates at zero token cost on pre-computed scores — selection (truncation/tournament/roulette), crossover (uniform/multi-point/half-split), and mutation (70% parameter / 15% prompt / 15% tool), with automatic score degradation triggering (15% threshold)</td></tr>
+<h2 id="ares-kernel-agents-are-disposable-tasks-are-durable">ARES Kernel: Agents Are Disposable, Tasks Are Durable</h2>
+<p>As the project matured, the architecture settled on one core idea: <strong>Tasks are durable, Agents are disposable (Agent death ≠ Task death).</strong> That capability lives in several real Go modules. Here's how they fit together:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Durable </span><span>[&quot;internal/taskfabric — durable layer&quot;]</span></span>
+<span class="giallo-l"><span>        T1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Task (intent / DAG deps / Checkpoint / Lease)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Fleet </span><span>[&quot;internal/agentfabric — disposable agents&quot;]</span></span>
+<span class="giallo-l"><span>        A1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Agent (spawn/suspend/resume/retire/kill/recover)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        A2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Three-layer Context (Task Shared / Agent Private / IPC)&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Sched </span><span>[&quot;internal/kernelscheduler — leaderless scheduling&quot;]</span></span>
+<span class="giallo-l"><span>        S1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Schedule → Acquire → RunQuantum → finalize&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Rec </span><span>[&quot;internal/aresrecovery — recovery subsystem&quot;]</span></span>
+<span class="giallo-l"><span>        R1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;Lease-expiry requeue / Checkpoint resume / Agent restart&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    subgraph</span><span style="color: #89B4FA;font-style: italic;"> Ev </span><span>[&quot;internal/ares_events — event stream&quot;]</span></span>
+<span class="giallo-l"><span>        E1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">&quot;EventStore / EventType lifecycle&quot;</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    S1 </span><span style="color: #CBA6F7;">--</span><span style="color: #A6E3A1;"> &quot;drains ReadyTasks / SUSPENDED&quot; </span><span style="color: #CBA6F7;">--&gt;</span><span> T1</span></span>
+<span class="giallo-l"><span>    S1 </span><span style="color: #CBA6F7;">--</span><span style="color: #A6E3A1;"> &quot;capability-aware picks Agent&quot; </span><span style="color: #CBA6F7;">--&gt;</span><span> A1</span></span>
+<span class="giallo-l"><span>    A1 </span><span style="color: #CBA6F7;">--&gt;</span><span> T1</span></span>
+<span class="giallo-l"><span>    R1 </span><span style="color: #CBA6F7;">-.</span><span style="color: #A6E3A1;"> &quot;on death: requeue + resume + swap body&quot; </span><span style="color: #CBA6F7;">.-&gt;</span><span> T1</span></span>
+<span class="giallo-l"><span>    R1 </span><span style="color: #CBA6F7;">-.</span><span style="color: #A6E3A1;"> &quot;Chaos injection as verification&quot; </span><span style="color: #CBA6F7;">.-&gt;</span><span> A1</span></span>
+<span class="giallo-l"><span>    T1 </span><span style="color: #CBA6F7;">-.</span><span style="color: #A6E3A1;"> &quot;publishes task.* events&quot; </span><span style="color: #CBA6F7;">.-&gt;</span><span> E1</span></span>
+<span class="giallo-l"><span>    S1 </span><span style="color: #CBA6F7;">-.</span><span style="color: #A6E3A1;"> &quot;subscribes to deps, event-driven drain&quot; </span><span style="color: #CBA6F7;">.-&gt;</span><span> E1</span></span></code></pre>
+<p>The division of labor (the module names ARE the real <code>internal/</code> directories):</p>
+<table><thead><tr><th>internal package</th><th>Responsibility</th><th>Key symbols (verified only)</th></tr></thead><tbody>
+<tr><td><code>internal/fabric/task</code></td><td>Durable task intent + state machine + leases + checkpoints</td><td><code>Task</code>, <code>TaskState</code> (READY/LEASED/RUNNING/SUSPENDED/COMPLETED/FAILED), <code>Fabric.Create/Acquire/Start/Yield/Complete/Fail/Renew/Release/Preempt/Schedule</code>, lease <code>Epoch</code> (fencing token), <code>RetryPolicy</code>, <code>ErrEpochMismatch</code></td></tr>
+<tr><td><code>internal/fabric/agent</code></td><td>Disposable agent lifecycle + process tree + three-layer Context; <strong>does NOT schedule</strong></td><td><code>Fabric</code>, <code>spawn/suspend/resume/retire/kill/recover</code>, <code>AgentType</code>, <code>Cognition</code>, <code>SpawnSpec</code></td></tr>
+<tr><td><code>internal/kernel</code></td><td>"Agents are not orchestrated. They are scheduled."</td><td><code>Scheduler</code>, <code>New</code>, <code>Run</code>, <code>Schedule→Acquire→RunQuantum→finalize</code>, <code>RegisterExecutor/UnregisterExecutor</code>, <code>PreemptLowerPriority</code> (cooperative preemption), <code>EventStore</code> event-driven drain</td></tr>
+<tr><td><code>internal/aresrecovery</code></td><td>Recovery subsystem — proves the Runtime survives agent death</td><td><code>Recovery</code>, <code>RestartPolicy</code>, <code>EvolutionAwareSpawner</code> (evolution-aware spawn gate), Chaos (failure-injection verification)</td></tr>
+<tr><td><code>internal/runtime/memory/experience</code></td><td>Experience distillation</td><td><code>DistillationService</code>, <code>Distill</code>, <code>TaskResult → Experience</code> (success / failure)</td></tr>
+<tr><td><code>internal/ares_events</code></td><td>Event stream / flight-recorder substrate</td><td><code>Event</code>, <code>EventType</code> (task.created/ready/acquired/started/yielded/checkpointed/preempted/released/completed/failed/expired/stolen), <code>EventStore</code> (Append/Read/Subscribe/StreamVersion)</td></tr>
+<tr><td><code>internal/runtime/ares_evolution</code></td><td>Evolution (strategy state machine)</td><td><code>StrategyLifecycle</code>: <code>CANDIDATE→SHADOW→ACTIVE→DEGRADED</code>, verification gates + <code>Submit</code>, rollback policy</td></tr>
+<tr><td><code>internal/agentipc</code></td><td>Peer-mesh communication</td><td><code>Bus</code>, <code>Send/Request/Reply/Delegate/Handoff/Subscribe</code>, broadcast <code>Broadcast/Unsubscribe</code>, <code>Message</code>, <code>DeadLetterStore</code> (bounded FIFO)</td></tr>
+<tr><td><code>internal/ares_bootstrap</code> + <code>sdk</code></td><td>Component assembly + unified entry</td><td><code>ares_bootstrap.Bootstrap</code>, <code>sdk.NewRuntime</code></td></tr>
+</tbody></table>
+<h2 id="key-mechanisms">Key Mechanisms</h2>
+<h3 id="task-state-machine-internal-fabric-task">Task State Machine (<code>internal/fabric/task</code>)</h3>
+<p>A Task survives its owner. <code>TaskState</code> machine:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">stateDiagram-v2</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    [*] --&gt;</span><span> READY</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Fabric.Create</span></span>
+<span class="giallo-l"><span>    READY</span><span style="color: #CBA6F7;"> --&gt;</span><span> LEASED</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Acquire (lease + epoch)</span></span>
+<span class="giallo-l"><span>    LEASED</span><span style="color: #CBA6F7;"> --&gt;</span><span> RUNNING</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Start</span></span>
+<span class="giallo-l"><span>    RUNNING</span><span style="color: #CBA6F7;"> --&gt;</span><span> SUSPENDED</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Yield (quantum boundary, keeps Checkpoint)</span></span>
+<span class="giallo-l"><span>    RUNNING</span><span style="color: #CBA6F7;"> --&gt;</span><span> READY</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Preempt / Release (epoch-checked)</span></span>
+<span class="giallo-l"><span>    RUNNING</span><span style="color: #CBA6F7;"> --&gt;</span><span> FAILED</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Fail (and RetryPolicy is exhausted)</span></span>
+<span class="giallo-l"><span>    RUNNING</span><span style="color: #CBA6F7;"> --&gt;</span><span> COMPLETED</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Complete / CompleteWithCheckpoint</span></span>
+<span class="giallo-l"><span>    SUSPENDED</span><span style="color: #CBA6F7;"> --&gt;</span><span> LEASED</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> re-Acquire (resume with Checkpoint)</span></span></code></pre>
+<p>Every ownership-carrying operation carries an <code>Epoch</code> (fencing token). That's the guard against the classic bug: <strong>"A's lease expired → B acquire → A's late Release" cannot kill B</strong> — A's epoch is stale, so its Release returns <code>ErrEpochMismatch</code>.</p>
+<h3 id="execution-quantum-switching-only-at-boundaries">Execution Quantum: switching only at boundaries</h3>
+<p>An LLM agent can't be interrupted at an arbitrary instruction — it only hands control back at quantum boundaries. A task's full path is <strong>Schedule → Acquire → RunQuantum → finalize (COMPLETED / FAILED / SUSPENDED)</strong>. The <code>kernelscheduler.Scheduler</code> decides at the boundary whether to continue / suspend / preempt, using <code>PreemptLowerPriority</code> for <strong>cooperative</strong> preemption — not OS-style hard preemption.</p>
+<h3 id="recovery-agent-death-task-death">Recovery: Agent death ≠ Task death</h3>
+<p><code>internal/aresrecovery.Recovery</code> wires the Task Fabric (durable tasks + lease expiry + checkpoints) to the Agent Fabric (disposable agents + cognitive state), covering three failure paths:</p>
+<ol>
+<li><strong>Lease expiry → requeue</strong>: the dead agent's lease expires; the task returns to READY and another agent can acquire it (<code>Fabric.CheckExpiredLeases</code>)</li>
+<li><strong>Checkpoint recovery</strong>: a fresh agent resumes the preserved checkpoint (the <code>SUSPENDED → LEASED</code> edge above)</li>
+<li><strong>Agent restart</strong>: a crashed agent is replaced by a new one that picks up the dead agent's cognitive state</li>
+</ol>
+<p>Chaos in <code>aresrecovery</code> is a <strong>verification</strong> harness: it injects failures on purpose, then invokes Recovery to prove the Runtime restores the tasks — "Chaos breaks things on purpose; Recovery proves the Runtime survives."</p>
+<h3 id="experience-distillation-internal-runtime-memory-experience">Experience Distillation (<code>internal/runtime/memory/experience</code>)</h3>
+<p>A task's outcome is distilled into a reusable experience. <code>DistillationService.Distill</code> takes a <code>TaskResult</code>, uses an LLM to extract Problem / Solution / Constraints, and produces a <code>success</code> or <code>failure</code> <code>Experience</code> (<code>ExperienceTypeSuccess</code> / <code>ExperienceTypeFailure</code>).</p>
+<h3 id="evolution-internal-runtime-ares-evolution">Evolution (<code>internal/runtime/ares_evolution</code>)</h3>
+<p>Evolution isn't hand-waving — it's a <code>StrategyLifecycle</code> state machine:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>CANDIDATE → SHADOW → ACTIVE → DEGRADED → (rollback to previous)</span></span></code></pre>
+<p>Only <code>Submit(candidate)</code> can change the active strategy; verification gates run before promotion, and a background watch loop feeds live runtime samples into the rollback policy — degrade and it rolls back. (The exact number of gates and their details are marked as pending verification — 待核实.)</p>
+<h3 id="event-stream-internal-ares-events">Event Stream (<code>internal/ares_events</code>)</h3>
+<p>The Task Fabric appends <code>task.*</code> events (<code>EventTaskCreated</code>, etc.) to an <code>EventStore</code> on every state transition, and the Scheduler can subscribe to dependency-relevant events for <strong>event-driven draining</strong> (instead of waiting on the poll tick — though polling remains as the fallback). Appends use <code>expectedVersion</code> optimistic concurrency, and each stream has a <code>StreamHash</code> for integrity checking.</p>
+<h2 id="feature-overview">Feature Overview</h2>
+<p>As the project grew I added the following capabilities (all in real code, not slides):</p>
+<table><thead><tr><th>Feature</th><th>Home (real module)</th><th>Notes</th></tr></thead><tbody>
+<tr><td><strong>ARES Kernel</strong></td><td>taskfabric + agentfabric + kernelscheduler</td><td>Durable tasks, disposable agents, platform-independent. <strong>Agent death ≠ Task death</strong>; the Kernel doesn't think — "Agent decides; Kernel enforces"</td></tr>
+<tr><td><strong>Execution Quantum</strong></td><td>taskfabric (<code>Yield</code>) + kernelscheduler</td><td>A task = several quanta; control returns at the boundary, the Scheduler decides continue/suspend/preempt</td></tr>
+<tr><td><strong>Fencing Token (epoch)</strong></td><td>taskfabric (<code>Lease.Epoch</code> / <code>Acquire</code>)</td><td>Gate against "late Release"; stale operations return <code>ErrEpochMismatch</code></td></tr>
+<tr><td><strong>Event System</strong></td><td>ares_events</td><td><code>EventStore</code> stream, full <code>task.*</code> coverage; Scheduler event-driven drain</td></tr>
+<tr><td><strong>Agent IPC</strong></td><td>internal/agentipc</td><td>Peer-mesh bus: <code>Send/Request/Reply/Delegate/Handoff/Subscribe</code> + broadcast; <code>DeadLetterStore</code> bounded FIFO</td></tr>
+<tr><td><strong>Experience Distillation</strong></td><td>ares_experience</td><td><code>Distill</code> turns TaskResult into success/failure Experiences</td></tr>
+<tr><td><strong>Evolution State Machine</strong></td><td>ares_evolution</td><td><code>StrategyLifecycle</code>: CANDIDATE→SHADOW→ACTIVE→DEGRADED, with gates + rollback</td></tr>
+<tr><td><strong>Recovery Subsystem</strong></td><td>aresrecovery</td><td>Lease-expiry requeue + checkpoint resume + agent restart; Chaos as verification</td></tr>
+<tr><td><strong>Pluggable stores / MCP / skills</strong></td><td>(related internal packages)</td><td>The capability surface exists; item-level detail is out of scope here (待核实)</td></tr>
 </tbody></table>
 <h2 id="the-craziest-feature-agent-assassination">The Craziest Feature: Agent Assassination</h2>
-<p>I built something a little unhinged — <strong>a feature that randomly assassinates a running agent to see if it can truly resurrect</strong>.</p>
+<p>I built something a little unhinged — <strong>a feature that randomly assassinates a running agent to see if it can truly resurrect</strong>. This isn't magic; it's the chain assembled above: <code>CheckExpiredLeases</code> (lease-expiry requeue) + Agent Fabric lifecycle + Recovery swapping in a new execution body. The real log output looks roughly like this (sample output, not a verbatim match for this version):</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>2026/06/14 19:46:29 INFO arena: killed agent id=agent-1</span></span>
 <span class="giallo-l"><span>2026/06/14 19:46:29 INFO orchestrator: agent killed, resurrecting id=agent-1 name=&quot;Architecture Review&quot;</span></span>
 <span class="giallo-l"><span>2026/06/14 19:46:29 INFO orchestrator: agent started id=agent-6 name=&quot;Architecture Review&quot;</span></span>
 <span class="giallo-l"><span>2026/06/14 19:46:29 INFO orchestrator: resuming agent from step id=agent-6 resume_from=agent-1 start_step=4 total_steps=3</span></span></code></pre>
-<p>Five agents running in parallel. Randomly kill a few of them. The Orchestrator automatically resurrects them and resumes progress — MCP data, conversation context, execution steps all seamlessly restored. This is still Beta (not merged to master), but the results are already impressive.</p>
+<blockquote>
+<p>The <code>arena</code>/<code>orchestrator</code> identifiers shown above are from older/evolved text; don't treat them as the current modules' exact API. For verification, rely on <code>internal/runtime/arena</code> and <code>internal/runtime</code> (待核实).</p>
+</blockquote>
 <h2 id="final-thoughts">Final Thoughts</h2>
 <p>If you're going through a rough patch, I hope this story encourages you. <strong>Be kind to yourself, keep shipping, embrace change.</strong></p>
+<hr />
+<h2 id="0-3-1-update-notes">0.3.1 Update Notes</h2>
+<ul>
+<li><strong>Version</strong>: the repo's <code>VERSION</code> file is currently <code>0.3.1</code></li>
+<li><strong>Leader/Sub is not the main path</strong>: there is no central orchestrator in the Kernel; scheduling is done by the <code>kernelScheduler</code> (<code>PolicyLegacy</code> / <code>PolicyFlag</code> and the other dual-track policy constants were deleted in v0.3.3; <code>agentipc</code> keeps no dispatch abstraction)</li>
+<li><strong>Communication is peer-mesh</strong>: <code>internal/agentipc.Bus</code> six primitives — see the second article of the series</li>
+<li><strong>Recovery and evolution are real modules</strong>: <code>aresrecovery</code> + <code>ares_evolution</code>, not concepts</li>
+</ul>
+<p>The core philosophy hasn't changed: <strong>Agents are disposable, Tasks are durable. Agent death ≠ Task death.</strong></p>
 
     </div>
             <div class="pagination">

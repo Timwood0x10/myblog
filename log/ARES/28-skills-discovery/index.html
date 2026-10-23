@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Skills Discovery — A Capability Catalog That Never Scans the Disk | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Declared sources, metadata-first indexing, and progressive disclosure in the Capability Fabric.">
+    <meta property="og:description" content="Declared sources, metadata-first indexing, and progressive disclosure in the Capability Fabric.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/28-skills-discovery/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Declared sources, metadata-first indexing, and progressive disclosure in the Capability Fabric.">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/28-skills-discovery/">
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <nav class="menu">
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/28-skills-discovery/">Skills Discovery — A Capability Catalog That Never Scans the Disk</a></h1>
+    <div class="post-meta-inline">
+        <span class="post-date">2026-10-23</span>
+    </div>
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/discovery/">#Discovery</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/skills/">#Skills</a></span>
+    <div class="post-content">
+        <h1 id="ares-architecture-deep-dive-xxviii-skills-discovery-a-capability-catalog-that-never-scans-the-disk-0-3-x">ares Architecture Deep Dive (XXVIII): Skills Discovery — A Capability Catalog That Never Scans the Disk (0.3.x)</h1>
+<blockquote>
+<p>0.3.x update: Skills discovery has landed as the <strong>Capability Fabric</strong> in <code>internal/runtime/protocol/skills</code> — the framework-native skill discovery, indexing, and loading system. The <code>Catalog</code> facade plus <code>SourceManager</code> aggregates four declared source kinds (project / user / registered / experience, where registered itself falls into directory, git, and http-oci). <code>CatalogTools</code> exposes a quintet of catalog tools (skill_search/load/activate/list/experience). <code>ExperienceConfidenceSource</code> adapts the learned prior into a <code>taskfabric.ConfidenceSource</code> and feeds it into the Kernel Scheduler's fabric.</p>
+</blockquote>
+<blockquote>
+<p>Note: This article is grounded in the actual code (all of <code>internal/runtime/protocol/skills</code>: source.go / indexer.go / discovery.go / resolver.go / loader.go / experience.go / experience_store.go / experience_confidence.go / git_source.go / http_source.go / changes.go / config.go / tools.go / types.go / fts5.go / catalog.go) — the dedicated Capability-Fabric discovery-chain article in the docs series.</p>
+</blockquote>
+<h2 id="1-skills-discovery-from-searching-to-declaring">1. Skills Discovery: From "Searching" to "Declaring"</h2>
+<p>Traditional tool discovery is disk scanning: <code>find /</code>, sweep PATH, probe executables — hunting for "what might exist". ARES's Capability Fabric does the opposite (design pillar 1 in the <code>types.go</code> package comment):</p>
+<blockquote>
+<p><strong>Only scan "declared Sources", never the disk.</strong> Discover only "what is declared", never hunt for "what might exist".</p>
+</blockquote>
+<p>The discovery chain is a five-stage pipeline (pillar 4: content is progressively disclosed — metadata → SKILL.md body → references):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
+<span class="giallo-l"><span>    S</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">SourceManager&lt;br/&gt;enumerate declared sources</span><span style="color: #CBA6F7;">] --&gt;</span><span> I</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Indexer&lt;br/&gt;metadata</span><span>-</span><span style="color: #A6E3A1;">only index + hash</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    I </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Discovery&lt;br/&gt;keywords / FTS5 retrieval</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;</span><span> L</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Loader&lt;br/&gt;on</span><span>-</span><span style="color: #A6E3A1;">demand SKILL.md body</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    L </span><span style="color: #CBA6F7;">--&gt;</span><span> R</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Resolver&lt;br/&gt;trust gate + bind tools</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    R </span><span style="color: #CBA6F7;">--&gt;</span><span> A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Activate&lt;br/&gt;lazy MCP connect / ResolvedTool</span><span style="color: #CBA6F7;">]</span></span></code></pre>
+<ul>
+<li><strong>Indexer</strong> only emits Level-0 metadata entries, never a body;</li>
+<li><strong>Loader / Resolver / Activate</strong> only act on demand after a hit (Level-1 / Level-2).</li>
+</ul>
+<h2 id="2-sourcemanager-only-declared-sources">2. SourceManager: Only Declared Sources</h2>
+<p><code>SourceManager</code> in <code>internal/runtime/protocol/skills/source.go</code> never scans the whole disk or PATH — it only enumerates explicitly declared directory roots, and <code>SkillDirs</code> reads exactly <strong>one level</strong> below each root and requires <code>hasDeclaredMarker</code> (a <code>SKILL.md</code> or <code>skill.yaml</code> present) to count a directory as a skill. <strong>Declaration validation, never deep recursive scanning</strong>; a declared-but-absent root yields an empty set, not an error.</p>
+<p>The four <code>SourceKind</code> values (<code>types.go</code>):</p>
+<table><thead><tr><th>Source</th><th>Location</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>SourceProject</code></td><td><code>&lt;project&gt;/.ares/skills/</code></td><td>Project self-declared; metadata only, <strong>skills are never executed</strong></td></tr>
+<tr><td><code>SourceUser</code></td><td><code>~/.ares/skills/</code></td><td>User-installed global capabilities</td></tr>
+<tr><td><code>SourceRegistered</code></td><td><code>~/.ares/config.toml</code> <code>[[skill_sources]]</code></td><td>Explicitly declared extra dirs / git / http-oci</td></tr>
+<tr><td><code>SourceExperience</code></td><td>persisted relevance priors</td><td>Learned source, <strong>never auto-executed</strong></td></tr>
+</tbody></table>
+<p>Registered sources split into three (config.go <code>LoadSkillSources</code>):</p>
+<table><thead><tr><th>type</th><th>parsed</th><th>landed</th></tr></thead><tbody>
+<tr><td><code>""</code> / <code>"directory"</code></td><td><code>Path</code> expanded (<code>~</code>) and deduped</td><td>added to <code>RegisteredDirs</code>, indexed as directories</td></tr>
+<tr><td><code>"git"</code></td><td><code>URL</code> + <code>LocalDir</code></td><td><code>SyncGitSource</code>: <code>git clone --depth 1</code> if absent, else <code>git pull --ff-only</code> fast-forward into a local cache, indexed as a registered-style source</td></tr>
+<tr><td><code>"http"</code> / <code>"oci"</code></td><td><code>ManifestURL</code></td><td><code>FetchHTTPManifest</code> fetches a JSON manifest mapped to metadata-only entries (bodies stay remote; <code>Load</code> errors clearly instead of mis-reading CWD)</td></tr>
+</tbody></table>
+<p>The key check (<code>source.go</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// SkillDirs lists the skill subdirectories under a declared source. It reads</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// exactly one level below the source root and requires a SKILL.md marker file</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// (or a skill.yaml manifest) to count a directory as a skill — declaration</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// only, never a deep recursive scan.</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">SourceManager</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> SkillDirs</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">source</span><span style="color: #F9E2AF;font-style: italic;"> SourceDir</span><span style="color: #9399B2;">) ([]</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    entries</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> os</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ReadDir</span><span style="color: #9399B2;">(</span><span>source</span><span style="color: #9399B2;">.</span><span>Path</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    ...</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> e</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> entries</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span>e</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">IsDir</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> ||</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">HasPrefix</span><span style="color: #9399B2;">(</span><span>e</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Name</span><span style="color: #9399B2;">(),</span><span style="color: #A6E3A1;"> &quot;.&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            continue</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span>        dir</span><span style="color: #94E2D5;"> :=</span><span> filepath</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Join</span><span style="color: #9399B2;">(</span><span>source</span><span style="color: #9399B2;">.</span><span>Path</span><span style="color: #9399B2;">,</span><span> e</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Name</span><span style="color: #9399B2;">())</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #89B4FA;font-style: italic;"> hasDeclaredMarker</span><span style="color: #9399B2;">(</span><span>dir</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>            dirs</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>dirs</span><span style="color: #9399B2;">,</span><span> dir</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    sort</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Strings</span><span style="color: #9399B2;">(</span><span>dirs</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> dirs</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><h2 id="3-indexer-metadata-only-never-the-body">3. Indexer: Metadata Only, Never the Body</h2>
+<p><code>Indexer.Index</code> in <code>internal/runtime/protocol/skills/indexer.go</code> walks the declared sources and produces one <code>SkillIndexEntry</code> (<code>types.go</code>, Level-0 of progressive disclosure):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// SkillIndexEntry is the metadata-only index record (Level 0 of progressive</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// disclosure). The SKILL.md body is deliberately NOT loaded here so that 100</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// skills cost ~100 x 100 tokens instead of 100 full instruction bodies.</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> SkillIndexEntry</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">           string</span><span style="color: #9399B2;font-style: italic;">   // stable identifier (e.g. &quot;rust-review&quot;)</span></span>
+<span class="giallo-l"><span>    Name</span><span style="color: #CBA6F7;">         string</span><span style="color: #9399B2;font-style: italic;">   // human-readable name</span></span>
+<span class="giallo-l"><span>    Description</span><span style="color: #CBA6F7;">  string</span><span style="color: #9399B2;font-style: italic;">   // resident one-liner</span></span>
+<span class="giallo-l"><span>    Keywords</span><span style="color: #9399B2;">     []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;"> // search keywords</span></span>
+<span class="giallo-l"><span>    Source</span><span style="color: #F9E2AF;font-style: italic;">       SourceKind</span><span style="color: #9399B2;font-style: italic;"> // project | user | registered | experience</span></span>
+<span class="giallo-l"><span>    Path</span><span style="color: #CBA6F7;">         string</span><span style="color: #9399B2;font-style: italic;">   // skill directory</span></span>
+<span class="giallo-l"><span>    Version</span><span style="color: #CBA6F7;">      string</span><span style="color: #9399B2;font-style: italic;">   // manifest version</span></span>
+<span class="giallo-l"><span>    Capabilities</span><span style="color: #9399B2;"> []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;"> // capability labels</span></span>
+<span class="giallo-l"><span>    ToolTypes</span><span style="color: #9399B2;">    []</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;font-style: italic;"> // declared tool kinds (from the manifest)</span></span>
+<span class="giallo-l"><span>    Hash</span><span style="color: #CBA6F7;">         string</span><span style="color: #9399B2;font-style: italic;">   // content hash for change detection</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<ul>
+<li><strong>Front matter + manifest merge</strong> (<code>indexOne</code>): <code>SKILL.md</code> <code>---</code> front matter (parsed by <code>parseFrontMatter</code> for name/description/keywords/version/capabilities) merges with the <code>skill.yaml</code> manifest (via <code>loadManifest</code>), <strong>manifest fields win</strong>; ID falls back to the directory name.</li>
+<li><strong>Content hash</strong> (<code>contentHash</code>): a deterministic SHA-256 over <code>SKILL.md</code> + <code>skill.yaml</code> + the <code>tools/</code> dir entry names — only declaration files, never a body.</li>
+<li><strong>Progressive-disclosure boundary</strong>: the index never contains bodies. 100 skills = 100 × ~100 tokens of metadata, not 100 full instruction bodies (corresponding to <code>TestResidentMetadataTokenBudget</code>).</li>
+</ul>
+<h2 id="4-discovery-keyword-matching-fts5-fallback">4. Discovery: Keyword Matching + FTS5 Fallback</h2>
+<p><code>Discovery</code> in <code>internal/runtime/protocol/skills/discovery.go</code> touches only Level-0 metadata:</p>
+<ul>
+<li><strong>Keyword matching</strong> (<code>keywordSearch</code>): <code>splitTerms</code> lower-cases + whitespace-splits → <code>matchScore</code> counts hits across ID/name/keywords/capabilities/description → ranked by hit count desc + ID asc (deterministic).</li>
+<li><strong>FTS5 full-text search</strong> (<code>fts5.go</code>): <code>NewFTS5Index</code> builds an in-memory SQLite FTS5 virtual table (<code>modernc.org/sqlite</code>, CGO-free) over id/name/description/keywords, ordered by <code>ORDER BY rank</code>, mapping FTS rowid back to the entry slice index.</li>
+<li><strong>Graceful fallback</strong>: <code>Discovery.Search</code> prefers FTS5 and <strong>silently falls back to keyword matching</strong> when the query is unsafe / FTS5 fails / FTS5 is unavailable (<code>swapIndex</code> also degrades to keyword-only on FTS5 build failure) — one entry point, invisible to callers:</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    Q</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">query</span><span style="color: #CBA6F7;">] --&gt;</span><span> D</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">Discovery.Search</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">fts !</span><span>=</span><span style="color: #A6E3A1;"> nil&lt;br/&gt;&amp;&amp; query non</span><span>-</span><span style="color: #A6E3A1;">empty</span><span style="color: #CBA6F7;">|</span><span> F</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">FTS5 MATCH&lt;br/&gt;ORDER BY rank</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">ok &amp;&amp; hits</span><span style="color: #CBA6F7;">|</span><span> R1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ranked results</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">err / no match</span><span style="color: #CBA6F7;">|</span><span> K</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">keywordSearch&lt;br/&gt;splitTerms + matchScore</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">no FTS5</span><span style="color: #CBA6F7;">|</span><span> K</span></span>
+<span class="giallo-l"><span>    K </span><span style="color: #CBA6F7;">--&gt;</span><span> R2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">score desc + ID asc</span><span style="color: #CBA6F7;">]</span></span></code></pre><h2 id="5-loader-resolver-on-demand-disclosure-trust-gate">5. Loader / Resolver: On-Demand Disclosure + Trust Gate</h2>
+<ul>
+<li><strong>Loader</strong> (<code>loader.go</code>): <code>Load(id)</code> returns the full <code>SKILL.md</code> body (Level-1, on demand); <code>ListReferences</code>/<code>LoadReference</code> manage the <code>references/</code> dir (Level-2). <code>LoadReference</code> enforces a <strong>path-traversal guard</strong>: rejects names containing <code>/</code>, <code>\</code>, or <code>..</code>. Remote skills (Path is a URL) error clearly rather than reading from CWD. Unknown IDs return the sentinel <code>ErrSkillNotFound</code>.</li>
+<li><strong>Resolver</strong> (<code>resolver.go</code>): binds manifest <code>tools</code> declarations (<code>ToolDecl</code>: id/type/command/args/server/name) into <code>ResolvedTool{ID, Kind, Target, Args}</code> under the trust tier from <code>trustForSource</code>:</li>
+</ul>
+<table><thead><tr><th><code>ToolKind</code></th><th>Trust / declaration condition</th></tr></thead><tbody>
+<tr><td><code>ToolBuiltin</code></td><td><code>Name</code> must be in the builtin list (<code>CatalogConfig.Builtins</code>)</td></tr>
+<tr><td><code>ToolMCP</code></td><td>Only a declared <code>Server</code> name needed — connecting is deferred to <code>Activate</code></td></tr>
+<tr><td><code>ToolExecutable</code></td><td>Trust tier ≠ <code>TrustUntrusted</code> and <code>AllowLocalExecutables</code> enabled; <code>executableExists</code> is a declaration-only <strong>LookPath / existence check, no scanning</strong></td></tr>
+</tbody></table>
+<p>Trust tiers (<code>trustForSource</code>): <code>SourceProject</code>/<code>SourceUser</code> → <code>TrustAllowed</code>, <code>SourceRegistered</code> → <code>TrustAsk</code>, otherwise (experience/external) → <code>TrustUntrusted</code>. Failed trust gates return <code>ErrToolUntrusted</code>.</p>
+<p><strong>Discovery ≠ Permission</strong> (pillar 5): learned / external sources may be indexed but <strong>never auto-executed</strong>.</p>
+<h2 id="6-experience-the-learned-source-doesn-t-generate-skills">6. Experience: The Learned Source Doesn't "Generate" Skills</h2>
+<p><code>Experience</code> in <code>internal/runtime/protocol/skills/experience.go</code> records <code>{skill, task_pattern, success_rate}</code> relevance <strong>priors</strong> (<code>types.go</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ExperienceRecord</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Skill</span><span style="color: #CBA6F7;">       string</span><span style="color: #9399B2;font-style: italic;">  // skill ID, e.g. &quot;pdf-generation&quot;</span></span>
+<span class="giallo-l"><span>    TaskPattern</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;font-style: italic;">  // task pattern, e.g. &quot;document-to-pdf&quot;</span></span>
+<span class="giallo-l"><span>    SuccessRate</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;font-style: italic;"> // observed success rate 0-1</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<ul>
+<li><strong>Not LLM-generated skills</strong> — it only records "which skill has high success on which task pattern"; <code>BestMatch</code> scores by keyword overlap (substring containment for short patterns, <code>patternMatchScore</code> token-overlap ratio for long ones, below <code>matchScoreThreshold = 0.5</code> no match).</li>
+<li><strong>Bounded + persistable</strong>: <code>NewExperience</code> caps <code>maxRecords = 1000</code> (drops the oldest); <code>taskPattern</code> is truncated by <code>capPatternLength</code> to <code>maxPatternLength = 256</code> runes. Re-recording the same (skill, pattern) overwrites its rate.</li>
+<li><strong>JSON persistence</strong> (<code>experience_store.go</code>): <code>JSONExperienceStore.Save</code> is atomic (<code>tmp → rename</code>, dir 0700, file 0600). In production the file defaults to <code>~/.ares/experience.json</code> (assembled in <code>skills_wiring.go</code>).</li>
+<li><strong>Write side removed (dead code)</strong>: the former <code>SkillOutcomeRecorder</code> (<code>outcome_recorder.go</code>) was deleted — its only potential emitter (<code>EventSubTaskResult</code> from the retired tool loop) never carried the payload shape it read (<code>task.UsedExperienceID</code> + <code>success</code>), so it was starved from the start (RUNTIME.md breakage #8). The loop is currently read-only: nothing in production writes priors until a conforming <code>sub_task.result</code> emitter exists.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    REC</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Experience.Record&lt;br/&gt;skill, pattern, rate&lt;br/&gt;write side: no production emitter</span><span style="color: #CBA6F7;">] --&gt;</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Experience&lt;br/&gt;priors, max 1000 records</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;</span><span> STORE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">JSON store&lt;br/&gt;atomic tmp</span><span>→</span><span style="color: #A6E3A1;">rename</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;</span><span> BM</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Experience.BestMatch&lt;br/&gt;overlap, threshold 0.5</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    BM </span><span style="color: #CBA6F7;">--&gt;</span><span> EXP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ExperienceConfidenceSource.Confidence</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    EXP </span><span style="color: #CBA6F7;">--&gt;</span><span> FAB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">taskfabric.Kernel fabric&lt;br/&gt;WithConfidenceSource</span><span style="color: #CBA6F7;">]</span></span></code></pre>
+<ul>
+<li><strong>Bridge to the scheduler</strong> (<code>experience_confidence.go</code>): <code>ExperienceConfidenceSource</code> satisfies <code>taskfabric.ConfidenceSource</code> at compile time (<code>var _ taskfabric.ConfidenceSource = (*ExperienceConfidenceSource)(nil)</code>); <code>Confidence(taskPattern)</code> returns the best prior's success_rate (0 with no prior). Wiring lives in <code>cmd/ares/peer_mode.go</code>: <code>resolveExperienceConfidence</code> builds it from <code>catalog.Experience()</code>, and <code>kernel.fabric = kernel.fabric.WithConfidenceSource(expSrc)</code> — scheduler fitness Confidence is driven by real learned priors, not constants, echoing the SKILL-first direction.</li>
+</ul>
+<h2 id="7-catalog-facade-one-wrapper-for-the-whole-chain">7. Catalog Facade: One Wrapper for the Whole Chain</h2>
+<p><code>Catalog</code> in <code>internal/runtime/protocol/skills/catalog.go</code> composes all components:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Catalog</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Build</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;font-style: italic;">          // index all declared sources (git synced first, http manifests fetched)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Catalog</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Search</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">q</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> n</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">) []</span><span style="color: #F9E2AF;font-style: italic;">SkillIndexEntry</span><span style="color: #9399B2;font-style: italic;">  // Level-0 retrieval</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Catalog</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Load</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">id</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">            // Level-1 on-demand body</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Catalog</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> ResolveTools</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">id</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) ([]</span><span style="color: #F9E2AF;font-style: italic;">ResolvedTool</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;"> // trust-gated binding</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Catalog</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Activate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> id</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) ([]</span><span style="color: #F9E2AF;font-style: italic;">ResolvedTool</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;"> // lazy MCP connect</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Catalog</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Refresh</span><span style="color: #9399B2;">() (</span><span style="color: #F9E2AF;font-style: italic;">IndexChange</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span><span style="color: #9399B2;font-style: italic;">             // hash-based incremental re-index</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">c </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Catalog</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> SeedRegistry</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">reg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">skills</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Registry</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;font-style: italic;">   // pour into the memoryManager resident block</span></span></code></pre>
+<ul>
+<li><strong>Concurrency safety</strong>: a <code>sync.RWMutex</code> guards <code>swapIndex</code> (Build/Refresh take the write lock and atomically swap; Search/Load/All/Count take the read lock). <code>swapIndex</code> closes the old FTS5 handle, builds a fresh FTS5, swaps the discovery/loader views and re-seeds the registry — an FTS5 build failure degrades to keyword-only.</li>
+<li><strong>Lazy connect</strong>: <code>SetMCPConnector</code> attaches an <code>MCPConnector</code> (<code>ConnectServer(ctx, name)</code>, satisfied by <code>ares_mcp.MCPManager</code>); <code>Activate</code> connects declared MCP servers only at activation time (pillar 3: <strong>no MCP server is connected before then</strong>). Without a connector, MCP tools resolve to descriptors only.</li>
+<li><strong>Refresh aligned with Build</strong>: re-syncs git (first under a bounded 2-minute timeout, outside the index write lock), re-fetches http manifests, <code>DetectIndexChanges</code> splits <code>Added/Modified/Removed</code> by (Source, ID, Hash), closes + rebuilds FTS5 and re-seeds the registry. Note: current production wiring does a single <strong>startup Build</strong> (next section); <code>Refresh</code> is a fully implemented on-demand re-index path whose doc mentions listChanged-triggered refresh, but no keep-alive runtime refresh loop wires MCP listChanged into Refresh.</li>
+</ul>
+<h2 id="8-production-wiring">8. Production Wiring</h2>
+<p>The capability-catalog wiring is <strong>not</strong> done in one place in <code>serve.go</code> — it's split across two:</p>
+<p><strong>① Catalog build + resident block</strong> (<code>wireSkills</code> in <code>internal/ares_bootstrap/skills_wiring.go</code>, called from <code>bootstrap.go</code>):</p>
+<ol>
+<li><code>LoadSkillSources("")</code> reads the default <code>~/.ares/config.toml</code> <code>[[skill_sources]]</code> (directory/git/http-oci)</li>
+<li><code>NewCatalog</code>: project <code>.ares/skills</code> + user <code>~/.ares/skills</code> + registered + <code>ExperiencePath</code> (<code>~/.ares/experience.json</code>)</li>
+<li><code>SetGitSources</code> / <code>SetHTTPSources</code>; MCP attached as the lazy connector; <code>SyncGitSources</code> is non-fatal (degrading to local-checkout indexing on failure)</li>
+<li><code>catalog.Build()</code> — built exactly once at startup; failure is logged, not fatal</li>
+<li><code>SeedRegistry</code> pours into <code>skills.Registry</code> → <code>setter.SetSkillsRegistry(reg)</code> attaches to the memoryManager resident "Available skills" block</li>
+<li><code>bootstrap.go</code> used to start <code>NewSkillOutcomeRecorder(catalog).Start(ctx, comp.EventStore)</code> here — removed as dead code (starved from the start; see Section 6), leaving a TODO(tech-debt) at the wiring spot</li>
+</ol>
+<p><strong>② Tool exposure</strong> (<code>cmd/ares/serve.go</code> / <code>tools.go</code>):</p>
+<ul>
+<li>After a successful build, <code>serve.go</code> registers the <strong>quintet</strong> returned by <code>ares_skills.CatalogTools(comp.SkillCatalog)</code> (<code>tools.go</code>): <code>skill_search</code> (search metadata), <code>skill_load</code> (fetch body), <code>skill_activate</code> (resolve + lazy-connect MCP + attach references), <code>skill_list</code> (unfiltered listing), <code>skill_experience</code> (query best prior, read-only).</li>
+<li><code>registerCapabilitySearch</code> (<code>tools.go</code>) wraps <code>envcap.NewSearcher(envcap.NewRegistryLister(internalReg), skillReg, nil)</code> as the <strong><code>search_capabilities</code></strong> tool and registers it into the internal registry — unified retrieval over "registered tools + skills" (native commands are already pre-registered by <code>registerNativeTools</code> as <code>KindTool</code> in the same registry, so no separate <code>Discoverer</code> is passed to avoid double-probing).</li>
+<li>Skill/tool binding into the agent runtime flows through the internal <code>core.Registry</code> + <code>newToolBinder</code> (<code>BridgeFromRegistry</code>); <code>agentsyscall.BindTools</code> binds peer primitives like <code>spawn_agent</code>/<code>create_task</code> and does <strong>not</strong> handle skills — this article's main line does not depend on it.</li>
+</ul>
+<h3 id="8-1-envcap-unified-retrieval-bridge-tools-skills-aggregation">8.1 envcap Unified Retrieval Bridge (tools/skills aggregation)</h3>
+<p><code>Searcher</code> in <code>internal/tools/envcap/envcap.go</code> offers one unified environment-search entry point:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Searcher</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    tools</span><span style="color: #F9E2AF;font-style: italic;">  ToolLister</span><span style="color: #9399B2;font-style: italic;">               // registered tools (builtin + MCP)</span></span>
+<span class="giallo-l"><span>    skills</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">skills</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Registry</span><span style="color: #9399B2;font-style: italic;">         // poured in via catalog.SeedRegistry</span></span>
+<span class="giallo-l"><span>    cmds</span><span style="color: #94E2D5;">   *</span><span style="color: #F9E2AF;font-style: italic;">discovery</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Discoverer</span><span style="color: #9399B2;font-style: italic;">    // native-command allowlist (may be nil)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<ul>
+<li><strong>Bridge</strong>: <code>catalog.SeedRegistry(reg)</code> pours the skills index into <code>*skills.Registry</code>, then <code>serve.go</code> builds <code>envcap.NewSearcher(...)</code> — the catalog becomes envcap's skill source (guarded by <code>TestCatalogSeedsEnvcapAggregation</code>).</li>
+<li><strong>Aggregated ranking</strong>: <code>Search</code> returns <code>Capability{Kind, Name, Description}</code>, stably sorted by <code>kindRank</code> (tool &lt; skill &lt; command) then name ascending.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
+<span class="giallo-l"><span>    REG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Cmd/ares internal core.Registry</span><span style="color: #CBA6F7;">] --&gt;</span><span> REGL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">envcap.RegistryLister</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    REGL </span><span style="color: #CBA6F7;">--&gt;</span><span> SE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">envcap.Searcher</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    SKILLREG</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">skills.Registry&lt;br/&gt;seeded via SeedRegistry</span><span style="color: #CBA6F7;">] --&gt;</span><span> SE</span></span>
+<span class="giallo-l"><span>    SE </span><span style="color: #CBA6F7;">--&gt;</span><span> TOOL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">search_capabilities tool</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    SE </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">aggregate tool/skill</span><span style="color: #CBA6F7;">|</span><span> LLM</span></span></code></pre><h2 id="9-summary">9. Summary</h2>
+<table><thead><tr><th>Component</th><th>Responsibility</th><th>Design Pillar</th></tr></thead><tbody>
+<tr><td>SourceManager</td><td>Declared-source enumeration (directory/git/http-oci)</td><td>1. no disk scan, one level + marker</td></tr>
+<tr><td>Indexer</td><td>Metadata-only index + SHA-256 hash</td><td>4. Level-0 progressive disclosure</td></tr>
+<tr><td>Discovery</td><td>Keyword + FTS5 (fallback)</td><td>4. metadata only to the LLM</td></tr>
+<tr><td>Loader</td><td>On-demand body / references (traversal guard)</td><td>4. Level-1/2</td></tr>
+<tr><td>Resolver</td><td>Trust-gated tool binding (builtin/mcp/executable)</td><td>5. discovery ≠ execution</td></tr>
+<tr><td>Experience</td><td>Learned priors (bounded, persistable)</td><td>5. learned never auto-executes</td></tr>
+<tr><td>ExperienceConfidenceSource</td><td>Adapts taskfabric.ConfidenceSource</td><td>priors feed the scheduler</td></tr>
+<tr><td>Catalog</td><td>Facade + Swap + Refresh + Activate</td><td>2. Skill ≠ Tool</td></tr>
+<tr><td>envcap.Searcher</td><td>Unified tool/skill retrieval</td><td>second half of progressive disclosure</td></tr>
+</tbody></table>
+<p><strong>Main line: turn capability management from runtime scanning into startup-time indexing.</strong> Closed loop with the context-management article's <code>ContextCleaner</code> / memoryManager resident block — metadata resident, bodies on demand — giving an agent a born-with capability foundation.</p>
+<h3 id="9-1-benchmarks-verification-no-fabricated-numbers">9.1 Benchmarks &amp; Verification (no fabricated numbers)</h3>
+<p><code>internal/runtime/protocol/skills/benchmark_test.go</code> defines 100-skill scenarios and assertions, <strong>but the code contains no concrete ms/µs measurements</strong> (those are environment-dependent; the raw figures sometimes quoted are not code constants and are deliberately dropped):</p>
+<table><thead><tr><th>Benchmark / test</th><th>What it measures</th><th>Assertion in code</th></tr></thead><tbody>
+<tr><td><code>BenchmarkCatalogBuild100Skills</code></td><td>timing metadata indexing of 100 skills (Level-0, no scanning)</td><td>no fixed baseline</td></tr>
+<tr><td><code>BenchmarkCatalogSearch100Skills</code></td><td>timing + allocs for <code>fts5-hit</code> and <code>keyword-fallback</code> subtests</td><td>no fixed baseline</td></tr>
+<tr><td><code>BenchmarkExperienceBestMatch100</code></td><td>timing + allocs for BestMatch over 100 priors</td><td>no fixed baseline</td></tr>
+<tr><td><code>TestResidentMetadataTokenBudget</code></td><td>the progressive-disclosure promise</td><td>asserts the resident block (name + description) has estimated tokens ≤ 20k (target ~10k for ~100 skills), and <strong>never contains <code>## When to use</code> body content</strong></td></tr>
+</tbody></table>
+<p>That is, the benchmarks guard <em>behavioral constraints</em> of progressive disclosure rather than fabricating specific performance numbers; the hard invariant actually enforced is "<strong>the resident block holds only metadata and never leaks SKILL.md bodies</strong>".</p>
+
+    </div>
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/27-context-management/"><span class="button__text">Context Management — Three-Layer Context and Checkpointable Cognitive State</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                        </span>
+                    </div>
+            </div>
+        </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 2026 Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

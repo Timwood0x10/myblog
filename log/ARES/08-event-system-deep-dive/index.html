@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>Event System — Event Sourcing Foundation for State Recovery and Audit Trails | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <title>Event System — Append-Only Event Log and Task Lifecycle | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
     <meta name="robots" content="noodp"/>
 
@@ -22,13 +22,13 @@
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
-    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="If I record every single thing the Agent does, can I fully reconstruct its state after it crashes?">
-    <meta property="og:description" content="If I record every single thing the Agent does, can I fully reconstruct its state after it crashes?">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Task Fabric appends every state transition to an in-memory log and, when an EventStore is attached, writes to the durable layer.">
+    <meta property="og:description" content="Task Fabric appends every state transition to an in-memory log and, when an EventStore is attached, writes to the durable layer.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/08-event-system-deep-dive/">
 
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:description" content="If I record every single thing the Agent does, can I fully reconstruct its state after it crashes?">
+    <meta name="twitter:description" content="Task Fabric appends every state transition to an in-memory log and, when an EventStore is attached, writes to the durable layer.">
     <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
     <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/08-event-system-deep-dive/">
                 <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
@@ -73,7 +73,7 @@
         
 <div class="article-layout">
   <article class="post">
-    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/08-event-system-deep-dive/">Event System — Event Sourcing Foundation for State Recovery and Audit Trails</a></h1>
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/08-event-system-deep-dive/">Event System — Append-Only Event Log and Task Lifecycle</a></h1>
     <div class="post-meta-inline">
         <span class="post-date">2026-06-28</span>
     </div>
@@ -83,59 +83,57 @@
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/event-sourcing/">#Event Sourcing</a>&nbsp;
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a></span>
     <div class="post-content">
-        <h1 id="ares-architecture-deep-dive-viii-event-system-event-sourcing-foundation-for-state-recovery-and-audit-trails">ares Architecture Deep Dive (VIII): Event System — Event Sourcing Foundation for State Recovery and Audit Trails</h1>
+        <h1 id="ares-architecture-deep-dive-viii-event-system-append-only-event-log-compaction-and-the-task-lifecycle-0-3-x">ares Architecture Deep Dive (VIII): Event System — Append-Only Event Log, Compaction, and the Task Lifecycle (0.3.x)</h1>
 <blockquote>
-<p>Agent startup is an event, task assignment is an event, tool call is an event, LLM response is an event, Agent crash is an event too.
-I thought at the time: <strong>If I record every single thing the Agent does, can I fully reconstruct its state after it crashes?</strong>
-The answer is yes. That's how Event Sourcing works in ares.</p>
+<p>0.3.x update: <code>internal/fabric/task</code> now carries a full Task lifecycle event set (created/ready/acquired/started/yielded/checkpointed/preempted/released/completed/failed/expired/stolen). Task Fabric appends every state transition to an in-memory log and, when an <code>EventStore</code> is attached, writes to the durable layer so Scheduler/Task/Lease state can be rebuilt across restarts. Note: "events directly drive scheduling" is over-hyped — the scheduler is capability+priority work-stealing scoring, NOT event-driven dispatch where <code>task.completed → dependent becomes Ready</code>.</p>
+</blockquote>
+<blockquote>
+<p>Agent startup is an event, a task state transition is an event, a tool call is an event, an LLM response is an event, an Agent crash leaves an event too.
+My idea was: if I record every state change as an append-only record, can I replay what happened after the process dies?
+The answer: some of it can be rebuilt. But honestly — <strong>not all of it</strong> (see "What it does NOT do").</p>
 </blockquote>
 <hr />
-<h2 id="1-why-record-every-single-thing">1. Why Record Every Single Thing</h2>
-<p>Back in the early days when I was building Agents, I managed state with a global struct. Everything crammed into one big map — what step the Agent was on, what data it had processed, what errors it hit. It looked simple, but problems surfaced.</p>
-<p>I still remember the worst one: an Agent had been running in production all afternoon, handling 30+ user requests, each involving multiple rounds of conversation and tool calls. Then the process crashed — OOM killed, with only a single "signal: killed" line in the logs.</p>
-<p>All state was gone. No checkpoint, no recovery path, no way to tell what it was working on when it died.</p>
-<p>Users came asking: "Why isn't the Agent responding?" I said: "It lost its memory." That was the moment I realized: without persistent state, an Agent is a disposable consumable — use it once and you can't get it back.</p>
-<p>To put it bluntly, the global map approach has three hard problems:</p>
-<ol>
-<li>Agent crashes → map is gone → state is lost</li>
-<li>Want to know what the Agent did five minutes ago? No record.</li>
-<li>Need to audit whether the Agent made unauthorized tool calls? No log.</li>
-</ol>
-<p>Later I looked into Event Sourcing, and I found its approach is the complete opposite: <strong>Don't store the current state. Store every operation that changed the state. Want the current state? Replay the events and compute it yourself.</strong></p>
-<p>This pattern has been used in financial systems for years, but not so much in Agent frameworks. I figured: since nobody's doing it, I'll build it.</p>
+<h2 id="1-why-record-events">1. Why Record Events</h2>
+<p>In the early days I kept Agent state in an in-memory struct. Where it was, what it processed, what errors it hit — everything lived in the process. When the process die, zero evidence: no history, no replay, no way to audit whether a step escalated to an unauthorized tool call.</p>
+<p>So I turned to Event Sourcing: <strong>don't store the current state, store every change. Want the current state? Replay the event stream and compute it yourself.</strong></p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
 <span class="giallo-l"><span>    subgraph &quot;Traditional Approach </span><span style="color: #CBA6F7;">(</span><span style="color: #A6E3A1;">State Store</span><span style="color: #CBA6F7;">)</span><span>&quot;</span></span>
-<span class="giallo-l"><span>        S1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Current State</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">Update</span><span style="color: #CBA6F7;">|</span><span> S2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">New State</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        S1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Current State</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">UPDATE</span><span style="color: #CBA6F7;">|</span><span> S2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">New State</span><span style="color: #CBA6F7;">]</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Event Sourcing&quot;</span></span>
+<span class="giallo-l"><span>    subgraph &quot;Append-Only Event Log&quot;</span></span>
 <span class="giallo-l"><span>        E1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Event 1</span><span style="color: #CBA6F7;">] --&gt;</span><span> E2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Event 2</span><span style="color: #CBA6F7;">]</span></span>
 <span class="giallo-l"><span>        E2 </span><span style="color: #CBA6F7;">--&gt;</span><span> E3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Event 3</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        E3 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Replay</span><span style="color: #CBA6F7;">|</span><span> STATE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Derived State</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        E3 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">REPLAY</span><span style="color: #CBA6F7;">|</span><span> STATE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Derived State</span><span style="color: #CBA6F7;">]</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span></code></pre>
-<p>This architecture provides three critical guarantees:</p>
+<p>But let me be clear about what this design actually buys you, and what it does <strong>not</strong> — so you don't come away with inflated expectations:</p>
 <ul>
-<li><strong>Complete audit trail</strong>: Every state change is recorded with a timestamp and payload</li>
-<li><strong>Temporal query</strong>: The system can answer "what was the state at time T?"</li>
-<li><strong>State reconstruction</strong>: Any Agent's state can be rebuilt from scratch by replaying its event stream</li>
+<li>✅ <strong>Audit trail</strong>: every change carries a timestamp, type, emitting module (<code>module_name</code>), and payload.</li>
+<li>✅ <strong>Replay</strong>: read a stream ascending and step through it; <code>ares_flight</code>'s ReplaySession replays/jumps through events.</li>
+<li>✅ <strong>Cross-restart rebuild</strong>: <code>taskfabric</code> can rebuild its task set from the persisted events (<code>RestoreFromStore</code>).</li>
+<li>⚠️ <strong>It does NOT</strong> guarantee "replayable side effects" — it records what happened, it doesn't rewind external world effects.</li>
+<li>⚠️ <strong>It does NOT</strong> persist every lifecycle event (see Section 5): most transitions are observability-only; after a restart the topology is rebuilt by recompiling the live DAG, not by replaying these.</li>
 </ul>
 <p>Core files:</p>
 <table><thead><tr><th>File</th><th>Purpose</th></tr></thead><tbody>
-<tr><td><code>internal/ares_events/types.go</code></td><td>Event model, EventStore interface</td></tr>
-<tr><td><code>internal/ares_events/memory_store.go</code></td><td>In-memory EventStore</td></tr>
-<tr><td><code>internal/ares_events/pg_store.go</code></td><td>PostgreSQL EventStore</td></tr>
-<tr><td><code>internal/ares_events/compactor.go</code></td><td>Event compaction into summaries</td></tr>
-<tr><td><code>internal/ares_events/trim_store.go</code></td><td>Delete old events after compaction</td></tr>
+<tr><td><code>internal/ares_events/types.go</code></td><td>Event model, EventType enum, ReadOptions / EventFilter, sentinel errors</td></tr>
+<tr><td><code>internal/ares_events/store.go</code></td><td>EventStore / EventAppender interfaces + <code>Emit</code> helper</td></tr>
+<tr><td><code>internal/ares_events/memory_store.go</code></td><td>In-memory <code>MemoryEventStore</code> (subscribe, trim)</td></tr>
+<tr><td><code>internal/ares_events/pg_store.go</code></td><td>PostgreSQL <code>PostgresEventStore</code></td></tr>
+<tr><td><code>internal/ares_events/compactor.go</code></td><td>Compactor: aggregate old events into summaries</td></tr>
+<tr><td><code>internal/ares_events/summary.go</code></td><td>EventSummary model + SummaryRepository interface + CompactionConfig</td></tr>
 <tr><td><code>internal/ares_events/compactable_store.go</code></td><td>Auto-compacting EventStore wrapper</td></tr>
-<tr><td><code>internal/ares_events/summary.go</code></td><td>EventSummary model + CompactionConfig</td></tr>
-<tr><td><code>internal/ares_events/summary_repository.go</code></td><td>PgSummaryRepository</td></tr>
-<tr><td><code>internal/ares_events/memory_summary_repo.go</code></td><td>In-memory SummaryRepository</td></tr>
-<tr><td><code>internal/ares_flight/replay.go</code></td><td>ReplaySession for step-by-step replay</td></tr>
+<tr><td><code>internal/ares_events/trim_store.go</code></td><td><code>TrimAwareStore</code>: trim old events after compaction</td></tr>
+<tr><td><code>internal/ares_events/archive_hook.go</code></td><td><code>ArchiveSink</code>: round archiving hook</td></tr>
+<tr><td><code>internal/ares_events/tool_events.go</code></td><td>Unified tool-completion payload keys</td></tr>
+<tr><td><code>internal/fabric/task/events.go</code></td><td>Task lifecycle EventType + TaskEvent</td></tr>
+<tr><td><code>internal/fabric/task/fabric.go</code></td><td>Event recording / persistence / restore logic</td></tr>
+<tr><td><code>internal/runtime/observability/flight/replay.go</code></td><td>ReplaySession for step-by-step replay (see series #16)</td></tr>
 </tbody></table>
 <hr />
 <h2 id="2-event-model">2. Event Model</h2>
 <h3 id="2-1-event-structure">2.1 Event Structure</h3>
-<p><code>internal/ares_events/types.go</code> defines the foundational types:</p>
+<p><code>internal/ares_events/types.go</code>:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Event</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">         string</span><span style="color: #A6E3A1;">         `json:&quot;id&quot;`</span></span>
 <span class="giallo-l"><span>    StreamID</span><span style="color: #CBA6F7;">   string</span><span style="color: #A6E3A1;">         `json:&quot;stream_id&quot;`</span></span>
@@ -146,270 +144,295 @@ The answer is yes. That's how Event Sourcing works in ares.</p>
 <span class="giallo-l"><span>    Version</span><span style="color: #CBA6F7;">    int64</span><span style="color: #A6E3A1;">          `json:&quot;version&quot;`</span></span>
 <span class="giallo-l"><span>    Timestamp</span><span style="color: #F9E2AF;font-style: italic;">  time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span><span style="color: #A6E3A1;">      `json:&quot;timestamp&quot;`</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>Each event belongs to a <strong>stream</strong> (identified by <code>StreamID</code>). A stream is an append-only sequence of events for a single entity — typically an Agent. The <code>Version</code> field enables optimistic concurrency control, and the <code>Type</code> field is used for routing and replay classification. The <code>ModuleName</code> field records which subsystem emitted the event — "runtime", "workflow", "memory", etc. This sounds obvious until you try to replay an event stream and discover you can't tell whether <code>step.started</code> came from the workflow engine or the plugin bus. Without it, you're reverse-engineering the source from the payload shape. With it, you know.</p>
-<h3 id="2-2-event-types">2.2 Event Types</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventAgentStarted</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.started&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventAgentStopped</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.stopped&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventAgentFailed</span><span style="color: #F9E2AF;font-style: italic;">         EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;agent.failed&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventTaskCreated</span><span style="color: #F9E2AF;font-style: italic;">         EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.created&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventTaskAssigned</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.assigned&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventTaskCompleted</span><span style="color: #F9E2AF;font-style: italic;">       EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.completed&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventTaskFailed</span><span style="color: #F9E2AF;font-style: italic;">          EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.failed&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventMessageAdded</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;message.added&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventLLMCall</span><span style="color: #F9E2AF;font-style: italic;">             EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;llm.call&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventToolCall</span><span style="color: #F9E2AF;font-style: italic;">            EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;tool.call&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventSessionCreated</span><span style="color: #F9E2AF;font-style: italic;">      EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;session.created&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventFailoverTriggered</span><span style="color: #F9E2AF;font-style: italic;">   EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;failover.triggered&quot;</span></span>
-<span class="giallo-l"><span style="color: #FAB387;">    EventFailoverCompleted</span><span style="color: #F9E2AF;font-style: italic;">   EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;failover.completed&quot;</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre><h3 id="2-3-eventstore-interface">2.3 EventStore Interface</h3>
+<p>An event belongs to a <strong>stream</strong> (<code>StreamID</code>) — an append-only sequence for one entity, typically a task or agent. <code>Version</code> is assigned and incremented by the store on append (optimistic concurrency). <code>ModuleName</code> records which subsystem emitted it (e.g. <code>taskfabric</code>), so on replay you know the source directly. <code>Type</code> is used for routing and classification.</p>
+<p>The same file also provides: <code>VerifyStreamIntegrity</code> (checks a stream's versions are contiguous, no gaps) and <code>StreamHash</code> (deterministic stream hash to detect silent corruption), plus sentinel errors <code>ErrVersionConflict</code>, <code>ErrStreamNotFound</code>, <code>ErrEventStoreClosed</code>, <code>ErrEventIntegrity</code>, <code>ErrSummaryNotFound</code>.</p>
+<h3 id="2-2-event-types-ares-events-side">2.2 Event Types (ares_events side)</h3>
+<p><code>ares_events.EventType</code> is a string alias enumerating events across subsystems:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// excerpt</span></span>
+<span class="giallo-l"><span>EventAgentStarted</span><span style="color: #94E2D5;">      =</span><span style="color: #A6E3A1;"> &quot;agent.started&quot;</span></span>
+<span class="giallo-l"><span>EventTaskCreated</span><span style="color: #94E2D5;">       =</span><span style="color: #A6E3A1;"> &quot;task.created&quot;</span></span>
+<span class="giallo-l"><span>EventTaskCompleted</span><span style="color: #94E2D5;">     =</span><span style="color: #A6E3A1;"> &quot;task.completed&quot;</span></span>
+<span class="giallo-l"><span>EventTaskFailed</span><span style="color: #94E2D5;">        =</span><span style="color: #A6E3A1;"> &quot;task.failed&quot;</span></span>
+<span class="giallo-l"><span>EventSessionCreated</span><span style="color: #94E2D5;">    =</span><span style="color: #A6E3A1;"> &quot;session.created&quot;</span></span>
+<span class="giallo-l"><span>EventMessageAdded</span><span style="color: #94E2D5;">      =</span><span style="color: #A6E3A1;"> &quot;message.added&quot;</span></span>
+<span class="giallo-l"><span>EventMemoryDistilled</span><span style="color: #94E2D5;">   =</span><span style="color: #A6E3A1;"> &quot;memory.distilled&quot;</span></span>
+<span class="giallo-l"><span>EventLLMCall</span><span style="color: #94E2D5;">           =</span><span style="color: #A6E3A1;"> &quot;llm.call&quot;</span></span>
+<span class="giallo-l"><span>EventToolCallStarted</span><span style="color: #94E2D5;">   =</span><span style="color: #A6E3A1;"> &quot;tool.call.started&quot;</span></span>
+<span class="giallo-l"><span>EventToolCallCompleted</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;tool.call.completed&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Task lifecycle (published by taskfabric)</span></span>
+<span class="giallo-l"><span>EventTaskReady</span><span style="color: #94E2D5;">       =</span><span style="color: #A6E3A1;"> &quot;task.ready&quot;</span></span>
+<span class="giallo-l"><span>EventTaskAcquired</span><span style="color: #94E2D5;">    =</span><span style="color: #A6E3A1;"> &quot;task.acquired&quot;</span></span>
+<span class="giallo-l"><span>EventTaskStarted</span><span style="color: #94E2D5;">     =</span><span style="color: #A6E3A1;"> &quot;task.started&quot;</span></span>
+<span class="giallo-l"><span>EventTaskYielded</span><span style="color: #94E2D5;">     =</span><span style="color: #A6E3A1;"> &quot;task.yielded&quot;</span></span>
+<span class="giallo-l"><span>EventTaskCheckpointed</span><span style="color: #94E2D5;">=</span><span style="color: #A6E3A1;"> &quot;task.checkpointed&quot;</span></span>
+<span class="giallo-l"><span>EventTaskPreempted</span><span style="color: #94E2D5;">   =</span><span style="color: #A6E3A1;"> &quot;task.preempted&quot;</span></span>
+<span class="giallo-l"><span>EventTaskReleased</span><span style="color: #94E2D5;">    =</span><span style="color: #A6E3A1;"> &quot;task.released&quot;</span></span>
+<span class="giallo-l"><span>EventTaskExpired</span><span style="color: #94E2D5;">     =</span><span style="color: #A6E3A1;"> &quot;task.expired&quot;</span></span>
+<span class="giallo-l"><span>EventTaskStolen</span><span style="color: #94E2D5;">      =</span><span style="color: #A6E3A1;"> &quot;task.stolen&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Leader-sub collaboration</span></span>
+<span class="giallo-l"><span>EventSubTaskResult</span><span style="color: #94E2D5;">    =</span><span style="color: #A6E3A1;"> &quot;sub_task.result&quot;</span></span>
+<span class="giallo-l"><span>EventSubAgentFailed</span><span style="color: #94E2D5;">   =</span><span style="color: #A6E3A1;"> &quot;sub_agent.failed&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// others: step.* / discovery.* / component.failed</span></span></code></pre><h3 id="2-3-eventstore-interface">2.3 EventStore Interface</h3>
+<p><code>internal/ares_events/store.go</code>:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> EventStore</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
 <span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Append</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> events</span><span style="color: #9399B2;"> []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> expectedVersion</span><span style="color: #CBA6F7;"> int64</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
 <span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Read</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> opts</span><span style="color: #F9E2AF;font-style: italic;"> ReadOptions</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
 <span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ReadAll</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> opts</span><span style="color: #F9E2AF;font-style: italic;"> ReadOptions</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
 <span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Subscribe</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> filter</span><span style="color: #F9E2AF;font-style: italic;"> EventFilter</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">&lt;-</span><span style="color: #CBA6F7;">chan</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
 <span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    StreamVersion</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">int64</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">classDiagram</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Key semantics (consistent across both implementations):</p>
+<ul>
+<li><code>Append(expectedVersion)</code>: <code>&gt;0</code> must match the stream's current version or it returns <code>ErrVersionConflict</code>; <code>&lt;=0</code> means "append after the current version, no conflict check." Both implementations do this via lock/transaction.</li>
+<li><code>ReadOptions</code>: <code>FromVersion</code> (inclusive), <code>ToVersion</code> (inclusive, 0 = no cap), <code>Limit</code> (0 = no limit), <code>Direction</code> (Ascending/Descending), <code>Since</code>. <code>ToVersion</code> is the version upper bound shared by the bounded compaction read (4.3) and the summary-merge read path (4.5).</li>
+<li><code>EventAppender</code> is a narrow one-method interface used by <code>Emit</code>. <code>Emit(ctx, store, streamID, type, moduleName, payload)</code> is the canonical publish entry; on failure it only logs a warning and returns false.</li>
+</ul>
+<hr />
+<h2 id="3-two-store-implementations">3. Two Store Implementations</h2>
+<p>Both satisfy the same interface with aligned semantics, but different mechanics:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">classDiagram</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span style="color: #F9E2AF;font-style: italic;"> EventStore</span><span style="color: #CBA6F7;"> {</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">        &lt;&lt;</span><span style="color: #89B4FA;">interface</span><span style="color: #9399B2;">&gt;&gt;</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Append</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">ctx</span><span>, </span><span style="color: #CBA6F7;">streamID</span><span>, </span><span style="color: #CBA6F7;">events</span><span>, </span><span style="color: #CBA6F7;">expectedVersion</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">ctx</span><span>, </span><span style="color: #CBA6F7;">streamID</span><span>, </span><span style="color: #CBA6F7;">opts</span><span>) []Event</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">ReadAll</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">ctx</span><span>, </span><span style="color: #CBA6F7;">opts</span><span>) []Event</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Subscribe</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">ctx</span><span>, </span><span style="color: #CBA6F7;">filter</span><span>) &lt;-chan Event</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">ctx</span><span>, </span><span style="color: #CBA6F7;">streamID</span><span>, </span><span style="color: #CBA6F7;">opts</span><span>) []*Event</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">ReadAll</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">ctx</span><span>, </span><span style="color: #CBA6F7;">opts</span><span>) []*Event</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Subscribe</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">ctx</span><span>, </span><span style="color: #CBA6F7;">filter</span><span>) &lt;-chan *Event</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">StreamVersion</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">ctx</span><span>, </span><span style="color: #CBA6F7;">streamID</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> int64</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    }</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEventStore</span><span style="color: #CBA6F7;"> {</span></span>
-<span class="giallo-l"><span>        -streams map[string][]Event</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Append</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        -mu</span><span> sync.RWMutex</span></span>
+<span class="giallo-l"><span>        -events []*Event</span></span>
+<span class="giallo-l"><span>        -streams map[string][]*Event</span></span>
+<span class="giallo-l"><span>        -versions map[string]int64</span></span>
+<span class="giallo-l"><span>        -subscribers []subscription</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        -dropped</span><span> atomic.Int64</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    }</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span style="color: #F9E2AF;font-style: italic;"> PostgresEventStore</span><span style="color: #CBA6F7;"> {</span></span>
 <span class="giallo-l"><span>        -pool *Pool</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Append</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    }</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    class</span><span style="color: #F9E2AF;font-style: italic;"> CompactableEventStore</span><span style="color: #CBA6F7;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Append</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        +</span><span style="color: #89B4FA;font-style: italic;">ForceCompact</span><span style="color: #9399B2;">()</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    }</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EventStore</span><span style="color: #CBA6F7;"> &lt;|--</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEventStore</span></span>
-<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EventStore</span><span style="color: #CBA6F7;"> &lt;|--</span><span style="color: #F9E2AF;font-style: italic;"> PostgresEventStore</span></span>
-<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EventStore</span><span style="color: #CBA6F7;"> &lt;|--</span><span style="color: #F9E2AF;font-style: italic;"> CompactableEventStore</span></span>
-<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    CompactableEventStore</span><span style="color: #CBA6F7;"> o--</span><span style="color: #F9E2AF;font-style: italic;"> Compactor</span></span>
-<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Compactor</span><span style="color: #CBA6F7;"> o--</span><span style="color: #F9E2AF;font-style: italic;"> SummaryRepository</span></span></code></pre>
-<p>Key semantics:</p>
-<ul>
-<li><code>Append</code> uses <code>expectedVersion</code> for optimistic concurrency control: <code>0</code> means the stream must be empty, <code>-1</code> bypasses the check, a positive value must match the current version</li>
-<li><code>Read</code> supports <code>FromVersion</code>, <code>Limit</code>, and <code>Direction</code> (ascending/descending) via <code>ReadOptions</code></li>
-<li><code>Subscribe</code> returns a channel of events matching the filter; the channel closes when the context is cancelled</li>
-</ul>
-<hr />
-<h2 id="3-store-implementations">3. Store Implementations</h2>
-<h3 id="3-1-memoryeventstore">3.1 MemoryEventStore</h3>
-<p><code>internal/ares_events/memory_store.go</code> provides an in-memory implementation, primarily used for testing and demo mode:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> MemoryEventStore</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    mu</span><span style="color: #F9E2AF;font-style: italic;">      sync</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">RWMutex</span></span>
-<span class="giallo-l"><span>    streams</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">][]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span></span>
-<span class="giallo-l"><span>    events</span><span style="color: #9399B2;">  []</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span></span>
-<span class="giallo-l"><span>    version</span><span style="color: #CBA6F7;"> int64</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>The <code>Append</code> method performs: lock → version validation → assign sequence numbers → write to both stream store and flat store → notify subscribers. <code>Subscribe</code> creates a buffered channel (capacity 100); new events are broadcast to all channels; if the buffer is full, the event is dropped (non-blocking send).</p>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    EventStore</span><span style="color: #CBA6F7;"> &lt;|--</span><span style="color: #F9E2AF;font-style: italic;"> PostgresEventStore</span></span></code></pre><h3 id="3-1-memoryeventstore">3.1 MemoryEventStore</h3>
+<p><code>memory_store.go</code>. Lock → version check → assign an incrementing <code>Version</code> to each non-nil event (nil events are skipped, never consuming a version) → write to both flat <code>events</code> and per-stream <code>streams</code> → notify subscribers. Subscribers are handed a <strong>clone</strong> (B19), because the <code>*Event</code> pointer is shared with the internal store and a mutating subscriber would race concurrent Read/Append.</p>
+<p><code>Subscribe</code>'s channel capacity is <strong>64</strong>; <code>notifySubscribers</code> is a <strong>non-blocking send</strong> — if the buffer is full the event is silently dropped into the <code>dropped</code> counter (<code>Stats()</code> exposes <code>dropped_events</code>, for monitoring only; the write path is never blocked). When the subscriber's context is cancelled or the store <code>Close()</code>s, its channel is closed and cleaned up.</p>
+<p><code>MemoryEventStore</code> also implements <code>TrimBefore</code>, so the compaction-trim loop works on the memory half too — otherwise long-running serve processes grow the in-memory store without bound.</p>
 <h3 id="3-2-postgreseventstore">3.2 PostgresEventStore</h3>
-<p><code>internal/ares_events/pg_store.go</code> provides a production-grade PostgreSQL implementation:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="sql"><span class="giallo-l"><span style="color: #CBA6F7;">INSERT INTO</span><span> events (id, stream_id, </span><span style="color: #CBA6F7;">type</span><span>, payload, metadata, </span><span style="color: #CBA6F7;">version</span><span>, created_at, </span><span style="color: #CBA6F7;">timestamp</span><span>)</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">VALUES</span><span> ($</span><span style="color: #FAB387;">1</span><span>, $</span><span style="color: #FAB387;">2</span><span>, $</span><span style="color: #FAB387;">3</span><span>, $</span><span style="color: #FAB387;">4</span><span>, $</span><span style="color: #FAB387;">5</span><span>, $</span><span style="color: #FAB387;">6</span><span>, $</span><span style="color: #FAB387;">7</span><span>, $</span><span style="color: #FAB387;">8</span><span>)</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">ON</span><span> CONFLICT (stream_id, </span><span style="color: #CBA6F7;">version</span><span>) DO NOTHING</span></span></code></pre>
-<p><code>ON CONFLICT DO NOTHING</code> provides idempotent append — if the same event is inserted twice due to a client retry, the second insert is silently ignored. This is critical for at-least-once delivery semantics.</p>
+<p><code>pg_store.go</code>. <code>Append</code> runs in a transaction: <code>SELECT MAX(version) WHERE stream_id = $1</code>, optimistic check, then per-event <code>INSERT INTO events (id, stream_id, type, payload, metadata, version, created_at)</code>. A concurrent unique-key violation (PG error code <code>23505</code>) is translated to <code>ErrVersionConflict</code>.</p>
+<p><code>Subscribe</code> does <strong>not</strong> use LISTEN/NOTIFY — it <strong>polls every 1 second</strong> (sliding window of <code>defaultEventReadLimit = 100</code>), de-duplicating by id (<code>maxDeliveredIDs = 8192</code>, resets the set on overflow — at worst re-delivers old events, never loses new ones). This reduces "subscribe" to "scheduled query," so real-time lag is only second-ish.</p>
+<p>The two implementations share the same <code>Emit</code>, <code>ReadOptions</code>, and <code>expectedVersion</code> semantics.</p>
 <hr />
-<h2 id="4-event-compaction-pipeline">4. Event Compaction Pipeline</h2>
-<p>Without compaction, the event store grows unboundedly. ares's Compactor solves this by summarizing old events into compact snapshots.</p>
-<h3 id="4-1-compactionconfig">4.1 CompactionConfig</h3>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> CompactionConfig</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    Threshold</span><span style="color: #CBA6F7;">              int</span><span style="color: #9399B2;font-style: italic;">           // Events triggering compaction (default: 500)</span></span>
-<span class="giallo-l"><span>    KeepRecent</span><span style="color: #CBA6F7;">             int</span><span style="color: #9399B2;font-style: italic;">           // Raw events to retain (default: 100)</span></span>
-<span class="giallo-l"><span>    MaxSummariesPerStream</span><span style="color: #CBA6F7;">  int</span><span style="color: #9399B2;font-style: italic;">           // Max summaries per stream</span></span>
-<span class="giallo-l"><span>    SummaryTTL</span><span style="color: #F9E2AF;font-style: italic;">             time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;font-style: italic;"> // Summary retention (default: 30 days)</span></span>
-<span class="giallo-l"><span>    EnableTrimming</span><span style="color: #CBA6F7;">         bool</span><span style="color: #9399B2;font-style: italic;">          // Delete raw events after compaction</span></span>
+<h2 id="4-compaction-archiving-pipeline">4. Compaction &amp; Archiving Pipeline</h2>
+<p>Without compaction the event store grows without bound. <code>Compactor</code> aggregates old events into compact <code>EventSummary</code> records in a <code>SummaryRepository</code> (relational), then trims the raw events out of the hot store.</p>
+<h3 id="4-1-compactionconfig-defaults">4.1 CompactionConfig Defaults</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> DefaultCompactionConfig</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> CompactionConfig</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F9E2AF;font-style: italic;"> CompactionConfig</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        Threshold</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">             500</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        KeepRecent</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">            100</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        MaxSummariesPerStream</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;"> 50</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        SummaryTTL</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">            30</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 24</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Hour</span><span style="color: #9399B2;">,</span><span style="color: #9399B2;font-style: italic;"> // 30 days</span></span>
+<span class="giallo-l"><span>        EnableTrimming</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;">        true</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>Default behavior: when a stream exceeds 500 events, compact the oldest 400 into a summary, keep the most recent 100 as raw events.</p>
-<h3 id="4-2-compaction-pipeline">4.2 Compaction Pipeline</h3>
+<p><code>CompactableEventStore</code> is an <strong>auto-compacting wrapper</strong> (<code>compactable_store.go</code>): it embeds <code>EventStore</code>, overrides <code>Append</code>, and asynchronously checks whether the stream needs compaction after the write.</p>
+<blockquote>
+<p><strong><code>SummaryTTL</code> semantic fix</strong>: <code>CleanupOldSummaries</code> now explicitly handles <code>SummaryTTL &lt;= 0</code> — the pre-fix let the zero value flow straight into <code>threshold := time.Now().Add(-SummaryTTL)</code>, so the first cleanup pass would delete <em>every</em> summary ever created (zero TTL was indistinguishable from "disable cleanup"). The new code returns <code>(0, nil)</code> when <code>SummaryTTL &lt;= 0</code>, treating it as "cleanup disabled."</p>
+</blockquote>
+<h3 id="4-2-auto-trigger-debounce">4.2 Auto-Trigger + Debounce</h3>
+<p><code>Append</code> only writes synchronously; the real compaction work is <strong>async</strong> (one goroutine per batch, derived from the store's own lifecycle context <code>lctx</code> rather than the caller's, so short-lived requests can't cancel it — each run is still bounded by <code>compactionTimeout = 30s</code>):</p>
+<ul>
+<li><code>maybeCompact</code> reads <code>StreamVersion</code>, <strong>debounced</strong>: it only really checks when <code>version - lastChecked &gt;= threshold/4</code> (<code>compactionCheckDivisor = 4</code>), to avoid doing I/O on every append on a hot stream.</li>
+<li>Past threshold → <code>compactor.CheckAndCompact</code>.</li>
+<li>Progress is tracked by the <code>lastChecked</code> map.</li>
+</ul>
+<h3 id="4-3-compaction-flow">4.3 Compaction Flow</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
-<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Stream exceeds threshold</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Read all events\nascending order</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;</span><span> C</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">Split at\nKeepRecent</span><span style="color: #CBA6F7;">}</span></span>
-<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Candidate events</span><span style="color: #CBA6F7;">|</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Build EventSummary\nrule</span><span>-</span><span style="color: #A6E3A1;">based aggregation</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Recent events</span><span style="color: #CBA6F7;">|</span><span> E</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Keep in raw store</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;</span><span> F</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Save summary to\nSummaryRepository</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;</span><span> G</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">EnableTrimming?</span><span style="color: #CBA6F7;">}</span></span>
-<span class="giallo-l"><span>    G </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Yes</span><span style="color: #CBA6F7;">|</span><span> H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">TrimBefore\nDelete old events</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    G </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">No</span><span style="color: #CBA6F7;">|</span><span> I</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Keep raw events</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    H </span><span style="color: #CBA6F7;">--&gt;</span><span> J</span><span style="color: #CBA6F7;">[</span><span>✓</span><span style="color: #A6E3A1;"> Compacted</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>    I </span><span style="color: #CBA6F7;">--&gt;</span><span> J</span></span></code></pre><h3 id="4-3-defaultsummarizer">4.3 DefaultSummarizer</h3>
-<p>The rule-based summarizer produces concise English summaries without requiring an LLM call:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Agent agent-1 ran 3 task(s) [task-42, task-43, task-44],</span></span>
-<span class="giallo-l"><span>called 5 tool(s) [search, book, weather, calculator, email],</span></span>
-<span class="giallo-l"><span>emitted 23 events over 3m12s,</span></span>
-<span class="giallo-l"><span>bound to user request: &quot;Plan a trip to Tokyo&quot;,</span></span>
-<span class="giallo-l"><span>result: completed</span></span></code></pre><h3 id="4-4-summary-fallback-on-read">4.4 Summary Fallback on Read</h3>
-<p>If raw events have been trimmed, <code>Read</code> automatically falls back to summaries:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">s </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">CompactableEventStore</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Read</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> streamID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> opts</span><span style="color: #F9E2AF;font-style: italic;"> ReadOptions</span><span style="color: #9399B2;">) ([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
-<span class="giallo-l"><span>    events</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>EventStore</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Read</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">,</span><span> opts</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> err</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>events</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> &gt;</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> events</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    summaries</span><span style="color: #9399B2;">,</span><span> summaryErr</span><span style="color: #94E2D5;"> :=</span><span> s</span><span style="color: #9399B2;">.</span><span>compactor</span><span style="color: #9399B2;">.</span><span>repo</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">FindByStreamID</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> summaryErr</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #94E2D5;"> ||</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>summaries</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> events</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    synthetic</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> len</span><span style="color: #9399B2;">(</span><span>summaries</span><span style="color: #9399B2;">))</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> _</span><span style="color: #9399B2;">,</span><span> sum</span><span style="color: #94E2D5;"> :=</span><span style="color: #CBA6F7;"> range</span><span> summaries</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>        synthetic</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> append</span><span style="color: #9399B2;">(</span><span>synthetic</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">Event</span><span style="color: #9399B2;">{</span></span>
-<span class="giallo-l"><span>            Type</span><span style="color: #9399B2;">:</span><span style="color: #89B4FA;font-style: italic;"> EventType</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;event.summary&quot;</span><span style="color: #9399B2;">),</span></span>
-<span class="giallo-l"><span>            Payload</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span></span>
-<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;summary_text&quot;</span><span style="color: #9399B2;">:</span><span> sum</span><span style="color: #9399B2;">.</span><span>SummaryText</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;event_count&quot;</span><span style="color: #9399B2;">:</span><span>  sum</span><span style="color: #9399B2;">.</span><span>EventCount</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span style="color: #A6E3A1;">                &quot;outcome&quot;</span><span style="color: #9399B2;">:</span><span>      sum</span><span style="color: #9399B2;">.</span><span>Outcome</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">            },</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">        })</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> synthetic</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Append to hot store</span><span style="color: #CBA6F7;">] --&gt;</span><span> B</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">terminal in batch?&lt;br/&gt;task.completed/failed?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">yes</span><span style="color: #CBA6F7;">|</span><span> C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">DrainPendingRounds&lt;br/&gt;archive current round</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">no</span><span style="color: #CBA6F7;">|</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">proceed to compaction check</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C </span><span style="color: #CBA6F7;">--&gt;</span><span> D</span></span>
+<span class="giallo-l"><span>    D </span><span style="color: #CBA6F7;">--&gt;</span><span> E</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">version</span><span>-</span><span style="color: #A6E3A1;">lastCheck &gt;</span><span>=</span><span style="color: #A6E3A1;"> threshold/4 ?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">no</span><span style="color: #CBA6F7;">|</span><span> Z</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">debounce skip</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    E </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">yes</span><span style="color: #CBA6F7;">|</span><span> F</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">CheckAndCompact</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    F </span><span style="color: #CBA6F7;">--&gt;</span><span> G</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">version &lt;</span><span>=</span><span style="color: #A6E3A1;"> Threshold ?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    G </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">yes</span><span style="color: #CBA6F7;">|</span><span> Z</span></span>
+<span class="giallo-l"><span>    G </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">no</span><span style="color: #CBA6F7;">|</span><span> H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Read bounded candidates&lt;br/&gt;ToVersion </span><span>=</span><span style="color: #A6E3A1;"> version</span><span>-</span><span style="color: #A6E3A1;">KeepRecent</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    H </span><span style="color: #CBA6F7;">--&gt;</span><span> I</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">buildSummary&lt;br/&gt;rule</span><span>-</span><span style="color: #A6E3A1;">based aggregation</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    I </span><span style="color: #CBA6F7;">--&gt;</span><span> K</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">repo.Save summary</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    K </span><span style="color: #CBA6F7;">--&gt;</span><span> K2</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">MaxSummariesPerStream &gt; 0 ?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    K2 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">yes</span><span style="color: #CBA6F7;">|</span><span> K3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">pruneSummaries&lt;br/&gt;delete oldest beyond cap</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    K2 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">no</span><span style="color: #CBA6F7;">|</span><span> L</span></span>
+<span class="giallo-l"><span>    K3 </span><span style="color: #CBA6F7;">--&gt;</span><span> L</span><span style="color: #CBA6F7;">{</span><span style="color: #A6E3A1;">EnableTrimming &amp;&amp; trimStore wired?</span><span style="color: #CBA6F7;">}</span></span>
+<span class="giallo-l"><span>    L </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">yes</span><span style="color: #CBA6F7;">|</span><span> M</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">TrimBefore trims raw events</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    L </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">no</span><span style="color: #CBA6F7;">|</span><span> Z</span></span></code></pre>
+<p>Key points:</p>
+<ul>
+<li><strong>Summary is saved before trimming.</strong> The trim boundary is the summary's <code>EndVersion</code>, so every trimmed event is already captured in a summary.</li>
+<li><strong>The candidate read is bounded.</strong> <code>compactStream</code> uses <code>ReadOptions{Direction: Ascending, ToVersion: version - KeepRecent}</code> to read only the candidate window instead of the entire stream. The pre-fix unbounded read pulled every event of the stream into memory — O(n) on very long streams, and the keep-recent tail was never a compaction candidate anyway. The bound is exact even on trimmed streams (prefix deletions only shift the earliest version; the version cap naturally skips the missing prefix).</li>
+<li><strong><code>MaxSummariesPerStream</code> is now actually enforced.</strong> After the summary is persisted, <code>pruneSummaries</code> lists all existing summaries for the stream, sorts them (by <code>StartVersion</code> / <code>EndVersion</code> / <code>CreatedAt</code> three-way tie-break, not trusting the repo's ordering contract), and deletes the oldest ones beyond the cap. Best-effort: a failed delete is logged and the loop continues. The pre-fix documented the field ("older summaries are merged or pruned when this limit is exceeded") but never implemented it — summaries accumulated without bound.</li>
+<li><strong>Config sanitisation:</strong> <code>NewCompactor</code> replaces a non-positive <code>Threshold</code> or negative <code>KeepRecent</code> with the defaults. A negative <code>KeepRecent</code> would turn <code>events[:total-KeepRecent]</code> into a slice past the end, panicking inside the store's background worker and killing the whole process, not just the request.</li>
+<li><code>Compactor</code> also exposes <code>ForceCompact</code> (compact regardless of threshold) and <code>CleanupOldSummaries</code> (delete expired summaries per <code>SummaryTTL</code>).</li>
+</ul>
+<h3 id="4-4-defaultsummarizer-rule-based">4.4 DefaultSummarizer: Rule-Based</h3>
+<p><code>EventSummarizer</code> is a function type (<code>func([]*Event) string</code>), and the default <code>DefaultSummarizer</code> is pure rule-based — no LLM call. It counts events, de-duplicates task IDs from <code>task.created</code> and tool names from <code>llm.call</code> / <code>tool.call.*</code>, snippets the user request, and derives outcome from <code>task.failed</code> / <code>task.completed</code> (<code>failed</code> / <code>partial</code> / <code>completed</code> / <code>active</code>). Example output:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Agent stream-1, ran 1 task(s) [task-42], called 2 tool(s) [search, calculator], emitted 6 events, duration 1s, bound to user request: &quot;Plan a trip to Tokyo&quot;, result: completed</span></span></code></pre>
+<p>(Tools capped at 5, tasks at 3, request snippet at 120 chars, errors at 3 — hard limits to keep summaries bounded.)</p>
+<p>Two details worth calling out:</p>
+<ul>
+<li><strong>Rune-safe truncation</strong>: both <code>RequestSummary</code> (in <code>buildSummary</code>) and the <code>DefaultSummarizer</code> request snippet use <code>internal/truncate.WithEllipsis</code> (truncates on <code>[]rune</code>, appends <code>"..."</code> keeping total length ≤ <code>maxLen</code>). Byte-level truncation can split a multi-byte CJK character in the middle, producing invalid UTF-8 that PostgreSQL <code>text</code> columns reject — one such character in the first 200 bytes permanently failed compaction while the stream kept growing. This is a bug that actually hit in production.</li>
+<li><strong>Multi-agent window attribution</strong>: <code>buildSummary</code> tracks the first non-empty agent ID across all events in the window; if a later event carries a <em>different</em> agent ID, the summary is marked <code>"multi"</code> rather than silently attributing everything to the first agent. <code>"unknown"</code> is the fallback when no event carries an <code>agent_id</code>.</li>
+</ul>
+<h3 id="4-5-summary-fallback-on-read-v2">4.5 Summary Fallback on Read (v2)</h3>
+<p>The v2 read path is substantially richer than the pre-fix version (which only looked up summaries when the underlying <code>Read</code> returned <strong>empty</strong>):</p>
+<ol>
+<li><strong>Wider trigger</strong>: after the underlying <code>Read</code>, if the caller's <code>FromVersion</code> falls below the oldest live event (i.e. the requested window reaches into the trimmed head), <code>SummaryRepository</code> is also consulted. A partially trimmed stream with a live tail no longer skips the summary lookup just because "there are results."</li>
+<li><strong>Synthetic events honour <code>ReadOptions</code></strong>: <code>applyReadOptions</code> filters and orders synthetic <code>event.summary</code> events by <code>FromVersion</code> / <code>ToVersion</code> (inclusive) / <code>Since</code> / <code>Direction</code> / <code>Limit</code>. The pre-fix fallback ignored all of these — a paged <code>Limit</code> call got an unbounded summary list, and <code>DESC</code> callers got ascending order.</li>
+<li><strong>Overlap dropping</strong>: <code>dropOverlappingSummaries</code> removes synthetic summaries whose range reaches into the live events' version span. Concurrent compaction rounds can leave a summary covering 1–15 while a later trim only removed up to 11, leaving live events 12–14 <em>inside</em> the summary's range; splicing such a summary before the live tail would break the version-ordered merge contract. Dropping the overlap is lossless for replay semantics. The summary range endpoint is read from each synthetic event's own payload (accepting <code>int64</code>, <code>int</code>, and <code>float64</code> to cover PG JSON round-trips); a decode failure defaults to <code>MaxInt64</code> (conservative: drop rather than splice out of order).</li>
+<li><strong>Direction-aware merge</strong>: <code>mergeSyntheticWithLive</code> places summaries before live events in ascending reads and after them in descending reads (summary versions are always ≤ the trim point &lt; every live version). <code>Limit</code> applies to the merged slice.</li>
+</ol>
+<p>Note: this is still a <strong>degradation</strong> — you get summaries (<code>event.summary</code>), not the originals.</p>
+<h3 id="4-6-archivesink-round-archiving">4.6 ArchiveSink: Round Archiving</h3>
+<p><code>compactable_store.go</code> lets you attach an <code>ArchiveSink</code> (function type in <code>archive_hook.go</code>) via <code>WithArchiveSink</code>. Its job is to archive the record of one "round" (from the previous terminal event to <code>task.completed</code>/<code>task.failed</code>) <strong>before</strong> compaction trims the raw events, so a durable copy exists for the context-compression strategy. Archiving runs on terminal hits (detected synchronously, executed in the async goroutine) or before compaction, via <code>drainPendingRounds</code> paging (<code>archiveReadLimit = 500</code>/page, up to <code>maxArchiveDrainRounds = 1000</code> rounds). Three layers of defence in the new version:</p>
+<ul>
+<li><strong>Exclusive claim (<code>archiveInflight</code>)</strong>: the pre-fix boundary check alone (<code>lastArchivedVersion</code> comparison) was not a true claim — two goroutines could both observe the same <code>lastArchivedVersion</code> before either wrote anything, both pass the boundary check, and both invoke the sink for the same round (archived twice). The new logic CASes <code>archiveInflight[streamID] = true</code> under <code>archiveMu</code> first; only one in-flight claimant per stream is allowed. The claim is released by a single <code>defer releaseClaim</code> on every return path (success, failure, nothing-to-archive), so no explicit release call can accidentally strip a concurrent drainer's freshly acquired claim and re-open the double-archive window.</li>
+<li><strong>Per-round event cap (<code>maxArchiveRoundEvents = 50000</code>)</strong>: the pre-fix bounded single page (500) and single drain round-count (1000), but had <strong>no cap on the total events accumulated per round</strong> — a long-lived terminal-less stream would materialize the entire stream into memory on first compaction. The new logic returns an error (not a quiet defer) when <code>roundEvents</code> reaches 50000; <code>maybeCompact</code> receives this error and <strong>defers compaction to the next window</strong> instead of trimming raw events from an un-archived window.</li>
+<li><strong>Drain cap exhaustion is a hard error</strong>: <code>drainPendingRounds</code> returning past 1000 rounds now returns an error, not <code>nil</code>. The pre-fix <code>nil</code> told <code>maybeCompact</code> the archive was flushed, so it trimmed raw events whose RoundRecord was never written — permanent loss. Under the new logic, compaction is deferred to a later window.</li>
+</ul>
+<p><code>archiveSink</code> write failure is best-effort: the boundary does <strong>not</strong> advance, so the next drain re-scans the same window and retries the sink (the pre-fix advanced the boundary <em>before</em> the durable write; one I/O error permanently lost the round record).</p>
+<h3 id="4-7-per-stream-bookkeeping-ttl-sweep-new">4.7 Per-Stream Bookkeeping TTL Sweep (New)</h3>
+<p>The four per-stream maps (<code>lastChecked</code>, <code>lastTouched</code>, <code>roundCounter</code>, <code>lastArchivedVersion</code>) persist for the life of the process. <code>serve</code> mints one event stream per conversation, so in a long-lived process each conversation leaves a permanent set of entries that grow unboundedly.</p>
+<p>The new sweep runs opportunistically inside <code>maybeCompact</code> (<code>streamBookkeepingTTL = 24h</code> idle → clear; <code>streamBookkeepingSweepInterval = 1min</code> frequency cap, no dedicated goroutine): removes stale <code>lastChecked</code> and <code>lastTouched</code> entries, and under <code>archiveMu</code> removes the corresponding <code>roundCounter</code> and <code>lastArchivedVersion</code> entries. Resetting an idle stream's bookkeeping is safe by existing design: <code>lastChecked</code> is a pure debounce cache (reset just costs one extra I/O check), and <code>roundCounter</code> already restarts at 1 after every process restart (in-memory only).</p>
+<p>Lock order is fixed as <code>mu → archiveMu</code> (<code>maybeSweepBookkeepingLocked</code> is the only path that holds <code>mu</code> while taking <code>archiveMu</code>); the archive path never holds <code>mu</code> while taking <code>archiveMu</code>, so inversion is impossible.</p>
+<h3 id="4-8-close-safe-shutdown-new">4.8 <code>Close()</code> Safe Shutdown (New)</h3>
+<p><code>CompactableEventStore</code>'s <code>lctx</code> (derived from <code>context.Background()</code>, cancelled by <code>Close</code>) is the lifecycle context for background compaction workers, decoupled from any <code>Append</code> caller's ctx — a per-request ctx is cancelled as soon as that request returns, but <code>lctx</code> lets compaction outlive short-lived requests. Each run is still bounded by <code>compactionTimeout = 30s</code>.</p>
+<p><code>Close()</code> runs a three-step shutdown sequence:</p>
+<ol>
+<li>Set <code>closed = true</code> (under <code>mu</code>) and call <code>lcancel()</code>;</li>
+<li>Wait for in-flight workers (<code>wg.Wait()</code>, guarded by a <code>compactionTimeout + 5s</code> fallback so the wait never blocks indefinitely);</li>
+<li>If the underlying <code>EventStore</code> implements <code>io.Closer</code>, call its <code>Close()</code>.</li>
+</ol>
+<p><code>Append</code> checks the <code>closed</code> flag under <code>mu</code>: if <code>Close</code> has already begun, it skips the launch (avoiding a WaitGroup Add-after-Wait); if <code>Append</code> wins the race, <code>Close</code>'s <code>wg.Wait</code> covers that worker.</p>
 <hr />
-<h2 id="5-replaysession">5. ReplaySession</h2>
-<p><code>internal/ares_flight/replay.go</code> provides step-by-step event replay for a task:</p>
+<h2 id="5-task-fabric-task-lifecycle-events">5. Task Fabric: Task Lifecycle Events</h2>
+<p><code>internal/fabric/task/events.go</code> defines an <code>EventType</code> enum <strong>separate</strong> from <code>ares_events</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskCreated</span><span style="color: #F9E2AF;font-style: italic;">      EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.created&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskReady</span><span style="color: #F9E2AF;font-style: italic;">        EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.ready&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskAcquired</span><span style="color: #F9E2AF;font-style: italic;">     EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.acquired&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskStarted</span><span style="color: #F9E2AF;font-style: italic;">      EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.started&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskYielded</span><span style="color: #F9E2AF;font-style: italic;">      EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.yielded&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskCheckpointed</span><span style="color: #F9E2AF;font-style: italic;"> EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.checkpointed&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskPreempted</span><span style="color: #F9E2AF;font-style: italic;">    EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.preempted&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskReleased</span><span style="color: #F9E2AF;font-style: italic;">     EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.released&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskCompleted</span><span style="color: #F9E2AF;font-style: italic;">    EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.completed&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskFailed</span><span style="color: #F9E2AF;font-style: italic;">       EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.failed&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskExpired</span><span style="color: #F9E2AF;font-style: italic;">      EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.expired&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskStolen</span><span style="color: #F9E2AF;font-style: italic;">       EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.stolen&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    EventTaskUpdated</span><span style="color: #F9E2AF;font-style: italic;">      EventType</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;task.updated&quot;</span><span style="color: #9399B2;font-style: italic;"> // observability-only, never persisted</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span></code></pre>
+<p><code>TaskEvent</code> is the immutable record in that <strong>in-memory log</strong>: <code>{Type, TaskID, AgentID, Origin, State, Checkpoint, At}</code>. The fabric appends one to the in-memory log (<code>f.events</code>, capped by <code>maxInMemoryEvents</code>) on every state transition.</p>
+<h3 id="5-1-state-transition-event-mapping">5.1 State Transition → Event Mapping</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">stateDiagram-v2</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    [*] --&gt;</span><span> Ready</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Create -&gt; task.created (persist)</span></span>
+<span class="giallo-l"><span>    Ready</span><span style="color: #CBA6F7;"> --&gt;</span><span> Leased</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Acquire -&gt; task.acquired (obs) + task.ready (obs)</span></span>
+<span class="giallo-l"><span>    Leased</span><span style="color: #CBA6F7;"> --&gt;</span><span> Running</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Start -&gt; task.started (obs)</span></span>
+<span class="giallo-l"><span>    Running</span><span style="color: #CBA6F7;"> --&gt;</span><span> Suspended</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Yield -&gt; task.yielded (obs) / Checkpoint -&gt; task.checkpointed (persist)</span></span>
+<span class="giallo-l"><span>    Suspended</span><span style="color: #CBA6F7;"> --&gt;</span><span> Leased</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Release/Resume -&gt; task.released (obs)</span></span>
+<span class="giallo-l"><span>    Running</span><span style="color: #CBA6F7;"> --&gt;</span><span> Done</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Complete -&gt; task.completed (persist)</span></span>
+<span class="giallo-l"><span>    Running</span><span style="color: #CBA6F7;"> --&gt;</span><span> Done</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Fail -&gt; task.failed (persist)</span></span>
+<span class="giallo-l"><span>    Leased</span><span style="color: #CBA6F7;"> --&gt;</span><span> Done</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Expire -&gt; task.expired (persist)</span></span>
+<span class="giallo-l"><span>    Leased</span><span style="color: #CBA6F7;"> --&gt;</span><span> Done</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Steal -&gt; task.stolen (obs) / Preempt -&gt; task.preempted (obs)</span></span>
+<span class="giallo-l"><span>    Done</span><span style="color: #CBA6F7;"> --&gt; [*]</span></span></code></pre>
+<blockquote>
+<p>This is an <strong>intent-level</strong> "transition → event" sketch, labeled with which events persist. For the exact state set and the functions each transition runs in, defer to the <code>internal/fabric/task</code> state machine; this article only asserts the event-side facts (including persist/non-persist).</p>
+</blockquote>
+<h3 id="5-2-what-persists-vs-what-s-observability-only">5.2 What Persists vs What's Observability-Only</h3>
+<p>The fabric records events in the in-memory log, and only writes to the durable store when an <code>EventStore</code> is attached (<code>WithEventStore</code>) — and not every event. <code>isMustPersistEvent</code> decides:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// must-persist (recovery/replay correctness depends on them)</span></span>
+<span class="giallo-l"><span>TaskCreated</span><span style="color: #9399B2;">,</span><span> TaskCheckpointed</span><span style="color: #9399B2;">,</span><span> TaskCompleted</span><span style="color: #9399B2;">,</span><span> TaskFailed</span><span style="color: #9399B2;">,</span><span> TaskExpired</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// observability-only (enrich the trace, not required for rebuild)</span></span>
+<span class="giallo-l"><span>TaskReady</span><span style="color: #9399B2;">,</span><span> TaskAcquired</span><span style="color: #9399B2;">,</span><span> TaskStarted</span><span style="color: #9399B2;">,</span><span> TaskYielded</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>TaskPreempted</span><span style="color: #9399B2;">,</span><span> TaskReleased</span><span style="color: #9399B2;">,</span><span> TaskStolen</span></span></code></pre>
+<p>Mechanics: <code>recordLocked</code> builds the in-memory event + one <code>pendingAppend</code> under the lock (no I/O); after unlock, <code>flushAppends</code> performs the durable write <strong>off-lock</strong>, using <code>flushCond</code> + a monotonic <code>seq</code> so concurrent fabric calls flush in record order (N7) without inverting a stream's version sequence. Every persisted event carries <code>module_name: "taskfabric"</code> and payload keys <code>task_id / agent_id / origin / epoch / strategy_id / session_id</code>; <strong>must-persist</strong> events additionally carry full restore fields (capability / priority / dependencies / deadline / retry / created_at / checkpoint JSON) — this is exactly what <code>RestoreFromStore</code> folds back via <code>foldRestoreEvent</code>.</p>
+<p>On append failure: must-persist events log an <code>Error</code> (so durable-vs-memory divergence is detectable); observability events are silent and best-effort. The in-memory state machine stays authoritative — a failed append does not roll back the transition.</p>
+<h3 id="5-3-eventtaskupdated-incremental-rewrites-never-persisted">5.3 EventTaskUpdated: Incremental Rewrites, Never Persisted</h3>
+<p>When the incremental compiler rewrites one task's scheduling shape (<code>Dependencies</code>) or payload, the fabric records an <code>EventTaskUpdated</code>. But this event is deliberately <strong>not persisted</strong> (<code>events.go</code>: "BY DESIGN"):</p>
+<ul>
+<li>it's absent from <code>isMustPersistEvent</code>;</li>
+<li>it has <strong>no mapping</strong> in <code>taskEventType</code> (returns <code>""</code>, so the fabric never publishes it).</li>
+</ul>
+<p>Reason: these are <strong>in-place rewrites</strong> (<code>SetDependencies</code> moves one task instead of recompiling a whole batch). After a restart the topology is rebuilt by recompiling the live DAG, not by replaying these rewrites. Including it in the cross-restart protocol would be a protocol change, not a compiler change. Worth noting: if you expected "the event log is the whole truth," <code>EventTaskUpdated</code> breaks that expectation.</p>
+<hr />
+<h2 id="6-what-it-does-not-do-honest-list">6. What it Does NOT Do (Honest List)</h2>
+<ol>
+<li><strong>Not every lifecycle event lands in the durable store.</strong> Ready/Started/Yielded/Stolen are observability-only; <code>EventTaskUpdated</code> never touches the store. Cross-restart rebuild relies on the five must-persist types + recompiling the DAG.</li>
+<li><strong>Postgres subscribe is a 1-second poll</strong>, not a real-time push. Streaming to a Dashboard means layering your own SSE on top — the event layer doesn't provide it.</li>
+<li><strong>It records what happened, not replayable side effects.</strong> Tool side effects (send email, write DB) are recorded after the fact; the store won't undo or replay external effects.</li>
+<li><strong>Read fallback after compaction is a degradation</strong> — you get synthetic <code>event.summary</code> events, not the originals. For originals you need the archive/pre-trim copies. The new fallback correctly honours the caller's <code>ReadOptions</code> (version window / direction / limit) and drops summaries that overlap the live event version span (<code>dropOverlappingSummaries</code>); it's no longer an unbounded ascending list.</li>
+<li><strong>Write path is non-blocking</strong>: compaction and archiving are async best-effort; failures are only logged. The <code>dropped_events</code> counter is for monitoring — it does not guarantee no loss. However, drain cap exhaustion in archiving is now a <strong>hard error</strong> (<code>drainPendingRounds</code> returns an error, not <code>nil</code>), so <code>maybeCompact</code> defers compaction rather than trimming raw events whose RoundRecord was never written.</li>
+</ol>
+<hr />
+<h2 id="7-replay-recovery">7. Replay &amp; Recovery</h2>
+<h3 id="7-1-replaysession">7.1 ReplaySession</h3>
+<p><code>NewReplaySession(ctx, eventStore, taskID)</code> in <code>internal/runtime/observability/flight/replay.go</code> reads a task's stream ascending for step-by-step replay. See series #16 (Flight Recorder) for detail; here I only note its existence and its dependency on the event store.</p>
+<h3 id="7-2-task-fabric-cross-restart-rebuild">7.2 Task Fabric Cross-Restart Rebuild</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">sequenceDiagram</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> User</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> User</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> RS</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> ReplaySession</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> Store</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> EventStore</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> F</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> Fabric</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> ES</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> EventStore (Postgres)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> R</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> Scheduler</span></span>
 <span class="giallo-l"></span>
-<span class="giallo-l"><span>    User</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>RS</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> NewReplaySession(task-42)</span></span>
-<span class="giallo-l"><span>    RS</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>Store</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Read(task-42, ascending)</span></span>
-<span class="giallo-l"><span>    Store</span><span style="color: #CBA6F7;">--&gt;&gt;</span><span>RS</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> [Event 1, Event 2, ..., Event N]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    loop</span><span style="color: #A6E3A1;"> Step-by-step replay</span></span>
-<span class="giallo-l"><span>        User</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>RS</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Step()</span></span>
-<span class="giallo-l"><span>        RS</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>RS</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> currentIdx++</span></span>
-<span class="giallo-l"><span>        RS</span><span style="color: #CBA6F7;">--&gt;&gt;</span><span>User</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> ReplayStep{EventType, Payload}</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    Note</span><span style="color: #89B4FA;font-style: italic;"> over</span><span> F</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> startup</span></span>
+<span class="giallo-l"><span>    F</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>F</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> WithEventStore(store)</span></span>
+<span class="giallo-l"><span>    F</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>ES</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> ReadAll / read events per stream</span></span>
+<span class="giallo-l"><span>    ES</span><span style="color: #CBA6F7;">--&gt;&gt;</span><span>F</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> task.* events</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    loop</span><span style="color: #A6E3A1;"> each event</span></span>
+<span class="giallo-l"><span>        F</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>F</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> foldRestoreEvent(payload)</span></span>
+<span class="giallo-l"><span>        F</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>F</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> rebuild Task / Lease / scheduling state</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    User</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>RS</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> StepTo(5)</span></span>
-<span class="giallo-l"><span>    RS</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>RS</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> currentIdx = 5</span></span>
-<span class="giallo-l"><span>    RS</span><span style="color: #CBA6F7;">--&gt;&gt;</span><span>User</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> ReplayStep at index 5</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    User</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>RS</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Summary()</span></span>
-<span class="giallo-l"><span>    RS</span><span style="color: #CBA6F7;">--&gt;&gt;</span><span>User</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> ReplaySummary{TotalSteps, Duration, Agents}</span></span></code></pre>
-<p>Core methods:</p>
-<ul>
-<li><code>Step()</code>: advance one event, return that step</li>
-<li><code>StepTo(n)</code>: jump to a specified step</li>
-<li><code>Summary()</code>: return an overview (total steps, duration, list of Agent IDs, event type distribution)</li>
-<li><code>Reset()</code>: return to the starting position</li>
-</ul>
+<span class="giallo-l"><span>    F</span><span style="color: #CBA6F7;">--&gt;&gt;</span><span>R</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> restored ReadyTasks schedulable</span></span></code></pre><h3 id="7-3-relationship-to-agent-resurrection">7.3 Relationship to "Agent Resurrection"</h3>
+<p>Agent resurrection (two-phase recovery, snapshot-first, event-stream fallback) is the subject of <strong>#07</strong> (Runtime / Resurrection): <code>internal/runtime/recovery.go</code>'s <code>RecoverSnapshotOrEvents()</code> prefers a snapshot then falls back to the event stream, and <code>event_recovery.go</code> rebuilds RecoveryState from events. Here the event system is only a <strong>fallback data source</strong> consumed by ares_runtime — a consumer, not a capability of the event system. Don't attribute it to the event layer.</p>
 <hr />
-<h2 id="6-store-implementation-comparison">6. Store Implementation Comparison</h2>
-<table><thead><tr><th>Feature</th><th>MemoryEventStore</th><th>PostgresEventStore</th></tr></thead><tbody>
-<tr><td>Persistence</td><td>None (process-level)</td><td>Yes (table storage)</td></tr>
-<tr><td>Concurrency control</td><td>Mutex lock</td><td><code>ON CONFLICT DO NOTHING</code></td></tr>
-<tr><td>Subscription</td><td>Buffered channel + subscriber map</td><td>LISTEN/NOTIFY or polling</td></tr>
-<tr><td>Use cases</td><td>Testing, demo, single process</td><td>Production, distributed deployment</td></tr>
-</tbody></table>
-<hr />
-<h2 id="7-integration-with-agent-resurrection">7. Integration with Agent Resurrection</h2>
-<p>The Event System integrates deeply with the Runtime's resurrection pipeline:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">sequenceDiagram</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> RT</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> Runtime</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> ES</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> EventStore</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> SA</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> StatefulAgent</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    RT</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>RT</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> NotifyAgentDead(agent-1)</span></span>
-<span class="giallo-l"><span>    RT</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>RT</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> factory() creates new instance</span></span>
-<span class="giallo-l"><span>    RT</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>ES</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Read(agent-1, ascending)</span></span>
-<span class="giallo-l"><span>    ES</span><span style="color: #CBA6F7;">--&gt;&gt;</span><span>RT</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> [Event 1, ..., Event N]</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    Note</span><span style="color: #89B4FA;font-style: italic;"> over</span><span> RT</span><span style="color: #CBA6F7;">,</span><span>SA</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Phase A: Rebuild operational state</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    RT</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>SA</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> RestoreState({session, tasks, ...})</span></span>
-<span class="giallo-l"><span>    RT</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>SA</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> ReplayEvents([Event 1, ..., Event N])</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    Note</span><span style="color: #89B4FA;font-style: italic;"> over</span><span> RT</span><span style="color: #CBA6F7;">,</span><span>SA</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Phase B: Rebuild cognitive state</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    RT</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>MM</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> GetLatestSessionForLeader()</span></span>
-<span class="giallo-l"><span>    MM</span><span style="color: #CBA6F7;">--&gt;&gt;</span><span>RT</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> session-42</span></span>
-<span class="giallo-l"><span>    RT</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>MM</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> GetMessages(session-42)</span></span>
-<span class="giallo-l"><span>    MM</span><span style="color: #CBA6F7;">--&gt;&gt;</span><span>RT</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> [Message 1, ..., Message M]</span></span>
-<span class="giallo-l"><span>    RT</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>SA</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Inject cognitive state</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    Note</span><span style="color: #89B4FA;font-style: italic;"> over</span><span> RT</span><span style="color: #CBA6F7;">,</span><span>SA</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Agent is now fully recovered</span></span>
-<span class="giallo-l"><span>    RT</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>RT</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> StartAgent new instance</span></span></code></pre>
-<p>Two-phase recovery ensures:</p>
-<ul>
-<li><strong>Operational state</strong> (tasks, sessions, execution status) is reconstructed from the event stream</li>
-<li><strong>Cognitive state</strong> (conversation history, memories) is restored from MemoryManager</li>
-<li><strong>Each phase is independently recoverable</strong> — partial recovery is better than no recovery at all</li>
-</ul>
-<hr />
-<h2 id="8-architectural-summary">8. Architectural Summary</h2>
-<h3 id="design-patterns">Design Patterns</h3>
+<h2 id="8-design-patterns-summary">8. Design Patterns Summary</h2>
 <table><thead><tr><th>Pattern</th><th>Location</th><th>Purpose</th></tr></thead><tbody>
-<tr><td>Event Sourcing</td><td><code>types.go</code></td><td>Immutable append-only log</td></tr>
-<tr><td>Optimistic Concurrency Control</td><td><code>Append(expectedVersion)</code></td><td>Conflict detection on concurrent writes</td></tr>
-<tr><td>CQRS</td><td>EventStore (write) + SummaryRepository (read)</td><td>Write-optimized raw store + read-optimized summaries</td></tr>
-<tr><td>Observer</td><td><code>Subscribe(channel)</code></td><td>Real-time event stream push</td></tr>
-<tr><td>Strategy</td><td><code>Summarizer</code> function type</td><td>Pluggable summary generation (rule-based or LLM)</td></tr>
-<tr><td>Decorator</td><td><code>CompactableEventStore</code> wraps <code>EventStore</code></td><td>Transparent compaction, unchanged API</td></tr>
-<tr><td>Debounce</td><td><code>lastChecked</code> map</td><td>Avoid redundant compaction checks</td></tr>
+<tr><td>Append-only event log</td><td><code>types.go</code></td><td>Immutable log with per-stream versions</td></tr>
+<tr><td>Optimistic concurrency</td><td><code>Append(expectedVersion)</code></td><td><code>&gt;0</code> must match current version; conflict → <code>ErrVersionConflict</code></td></tr>
+<tr><td>CQRS (degraded)</td><td>EventStore (hot) + SummaryRepository</td><td>Read falls back to summaries, direction/paging aware (<code>applyReadOptions</code>)</td></tr>
+<tr><td>Observer / subscribe</td><td><code>Subscribe(EventFilter)</code></td><td>Memory: non-blocking broadcast; PG: 1s poll</td></tr>
+<tr><td>Strategy</td><td><code>EventSummarizer</code> function type</td><td>Pluggable summarizer (default rule-based)</td></tr>
+<tr><td>Decorator</td><td><code>CompactableEventStore</code> wraps <code>EventStore</code></td><td>Transparent auto-compaction, unchanged Append API</td></tr>
+<tr><td>Debounce + TTL sweep</td><td><code>lastChecked</code> + <code>threshold/4</code>; <code>streamBookkeepingTTL</code></td><td>Fewer redundant compaction checks on hot streams; unbounded growth guard for per-stream bookkeeping maps in long-lived processes</td></tr>
+<tr><td>CAS exclusive claim</td><td><code>archiveInflight</code> (under <code>archiveMu</code>)</td><td>Per-stream round-archiving deduplication, prevents double-archive</td></tr>
+<tr><td>Two-phase write decoupling</td><td><code>recordLocked</code> (locked) + <code>flushAppends</code> (off-lock)</td><td>Durable writes never block the fabric state machine</td></tr>
+<tr><td>Bounded read</td><td><code>ReadOptions.ToVersion</code> (<code>compactStream</code> candidate window)</td><td>Compaction reads only the candidate segment, not the whole stream; prevents OOM on very long streams</td></tr>
+<tr><td>Safe shutdown</td><td><code>CompactableEventStore.Close()</code></td><td><code>lctx</code> cancel → <code>wg.Wait</code> (bounded) → underlying <code>Close</code></td></tr>
 </tbody></table>
 <h3 id="key-data-flow">Key Data Flow</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TB</span></span>
 <span class="giallo-l"><span>    subgraph &quot;Write Path&quot;</span></span>
-<span class="giallo-l"><span>        C</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Client</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">Append</span><span style="color: #CBA6F7;">|</span><span> CES</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">CompactableEventStore</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        CES </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">1. Write</span><span style="color: #CBA6F7;">|</span><span> ES</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EventStore</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        CES </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">2. Background</span><span style="color: #CBA6F7;">|</span><span> CP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Compactor</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        CP </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">3. Summarize</span><span style="color: #CBA6F7;">|</span><span> SR</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">SummaryRepository</span><span style="color: #CBA6F7;">]</span></span>
-<span class="giallo-l"><span>        CP </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">4. Optionally trim</span><span style="color: #CBA6F7;">|</span><span> TS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">TrimStore</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        F</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">taskfabric\nrecordLocked</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">pendingAppend</span><span style="color: #CBA6F7;">|</span><span> FE</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">flushAppends off</span><span>-</span><span style="color: #A6E3A1;">lock serialized</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        FE </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Append</span><span style="color: #CBA6F7;">|</span><span> CES</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">CompactableEventStore</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        CES </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">write hot store</span><span style="color: #CBA6F7;">|</span><span> ES</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">EventStore</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        CES </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">async lctx</span><span style="color: #CBA6F7;">|</span><span> CP</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Compactor</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>        CP </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">bounded read ToVersion</span><span style="color: #CBA6F7;">|</span><span> ES</span></span>
+<span class="giallo-l"><span>        CP </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">buildSummary</span><span style="color: #CBA6F7;">|</span><span> SR</span><span style="color: #CBA6F7;">[(</span><span style="color: #A6E3A1;">SummaryRepository</span><span style="color: #CBA6F7;">)]</span></span>
+<span class="giallo-l"><span>        CP </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">pruneSummaries oldest beyond cap</span><span style="color: #CBA6F7;">|</span><span> SR</span></span>
+<span class="giallo-l"><span>        CP </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">optional trim</span><span style="color: #CBA6F7;">|</span><span> TS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">TrimBefore</span><span style="color: #CBA6F7;">]</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
 <span class="giallo-l"></span>
 <span class="giallo-l"><span>    subgraph &quot;Read Path&quot;</span></span>
-<span class="giallo-l"><span>        RS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ReplaySession</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">Read</span><span style="color: #CBA6F7;">|</span><span> CES</span></span>
-<span class="giallo-l"><span>        CES </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Has events?</span><span style="color: #CBA6F7;">|</span><span> ES</span></span>
-<span class="giallo-l"><span>        CES </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Empty? Fallback</span><span style="color: #CBA6F7;">|</span><span> SR</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span>    subgraph &quot;Subscription Push&quot;</span></span>
-<span class="giallo-l"><span>        DV</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Dashboard</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">Subscribe</span><span style="color: #CBA6F7;">|</span><span> CES</span></span>
-<span class="giallo-l"><span>        CES </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">SSE</span><span style="color: #CBA6F7;">|</span><span> DV</span></span>
+<span class="giallo-l"><span>        FL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">ReplaySession / describe</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">Read</span><span style="color: #CBA6F7;">|</span><span> CES</span></span>
+<span class="giallo-l"><span>        CES </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">raw events present?</span><span style="color: #CBA6F7;">|</span><span> ES</span></span>
+<span class="giallo-l"><span>        CES </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">window reaches trimmed head? fetch summaries</span><span style="color: #CBA6F7;">|</span><span> SR</span></span>
+<span class="giallo-l"><span>        CES </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">dropOverlappingSummaries +\nmergeSyntheticWithLive</span><span style="color: #CBA6F7;">|</span><span> FL</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span></code></pre>
 <hr />
-<h2 id="v0-2-4-update">v0.2.4 Update</h2>
-<p><strong>Event.ModuleName</strong>: Every event now carries a <code>ModuleName</code> field identifying which module emitted it. The <code>Emit()</code> signature changed from:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Before: who emitted this event?</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">Emit</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> store</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">,</span><span> eventType</span><span style="color: #9399B2;">,</span><span> payload</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// After: always traceable</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">Emit</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> store</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">,</span><span> eventType</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;runtime&quot;</span><span style="color: #9399B2;">,</span><span> payload</span><span style="color: #9399B2;">)</span></span></code></pre>
-<p>When you replay an event stream, you can now see:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;step.started&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">module_name</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;workflow&quot;</span><span style="color: #9399B2;">,</span><span> ...</span><span style="color: #9399B2;">}</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;tool.call.completed&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">module_name</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;runtime&quot;</span><span style="color: #9399B2;">,</span><span> ...</span><span style="color: #9399B2;">}</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;memory.distilled&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">module_name</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;memory&quot;</span><span style="color: #9399B2;">,</span><span> ...</span><span style="color: #9399B2;">}</span></span></code></pre>
-<p>This closes the "who did what" gap — previously you had to infer the source from the event type and payload. Now it's explicit.</p>
-<hr />
 <h2 id="9-conclusion">9. Conclusion</h2>
-<p>Event Sourcing + CQRS + pluggable stores + auto-compaction — this combination isn't anything new in enterprise systems. But placed within an Agent framework, I think it's a pretty interesting experiment.</p>
-<p>What was the most satisfying experience? An Agent was running a complex multi-step workflow with multiple tool calls and LLM interactions when it crashed halfway through. In the old days, I'd be staring at logs, guessing: was it a prompt problem? An LLM hallucination? Wrong tool parameters? Guess, fix, rerun, repeat — three or four cycles just to pinpoint the issue.</p>
-<p>But this time I opened the Dashboard, found the Agent's event stream, and replayed it step by step from the beginning. By event 7 I was already grinning — the Agent's <code>tool.call:7</code> had returned an empty result from the search API, and it blindly concatenated that empty result into the next LLM prompt without a null check. The bug itself wasn't complicated — what was new is that I <strong>saw the full causal chain</strong> unfolding event by event. Not guessing — watching.</p>
-<p>At that moment, I felt like I wasn't debugging — I was watching a black box flight recorder.</p>
-<p><strong>That's the value of the event system: it doesn't make you run faster. It tells you exactly why things went wrong when they do.</strong></p>
+<p>Event Sourcing's real value isn't "running faster" — it's that after something goes wrong you get an <strong>ordered record of who did what, when</strong>, and that record can support replay and cross-restart rebuild. It also has real edges: not every event is persisted, subscriptions are second-granularity polls, and external side effects aren't replayable. I documented those edges faithfully in this article, because those are the potholes you'll actually hit in a real system.</p>
+<p><strong>The event system doesn't make you run faster. It tells you where to look and what you'll find after something breaks.</strong></p>
 <hr />
-<p><em>Next preview: Arena / Fault Injection — possibly the most unhinged feature in ares. You can click a button on the Dashboard, assassinate a running Agent, and then watch it resurrect from the ashes.</em></p>
+<p><em>Next preview: Arena / Fault Injection — you may be able to push a button on the Dashboard and "assassinate" a running Agent, then watch it resurrect from ashes. It's the most direct stress test of how completely the state system can actually recover.</em></p>
 
     </div>
             <div class="pagination">
@@ -419,12 +442,12 @@ The answer is yes. That's how Event Sourcing works in ares.</p>
                 </div>
                 <div class="pagination__buttons">
                         <span class="button previous">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/09-arena-fault-injection-deep-dive/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Arena / Fault Injection — Break It Deliberately, Watch It Self-Heal</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/09-arena-fault-injection-deep-dive/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Arena / Fault Injection — Break It Deliberately, Watch It Rise Again</span></a>
                         </span>
                     
                     
                         <span class="button next">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/07-runtime-lifecycle-deep-dive/"><span class="button__text">Runtime &amp; Lifecycle — Birth, Death, and Resurrection</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/07-runtime-lifecycle-deep-dive/"><span class="button__text">Runtime &amp; Lifecycle — Birth, Death, and Fresh Birth</span>&nbsp;<span class="button__icon">&#8594;</span></a>
                         </span>
                     </div>
             </div>

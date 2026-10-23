@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>Bootstrap &amp; API Layer — Wiring Without the Pain | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <title>Bootstrap &amp; System Runtime — Wiring as a Readable Sequence | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
     <meta name="robots" content="noodp"/>
 
@@ -22,13 +22,13 @@
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
-    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="When the user's first question shifts from 'how do I call an LLM?' to 'how do I wire all this together?'">
-    <meta property="og:description" content="When the user's first question shifts from 'how do I call an LLM?' to 'how do I wire all this together?'">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Bootstrap is the single wiring hub; the System Runtime constructs, binds, starts, and stops components in topological order.">
+    <meta property="og:description" content="Bootstrap is the single wiring hub; the System Runtime constructs, binds, starts, and stops components in topological order.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/13-bootstrap-api-deep-dive/">
 
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:description" content="When the user's first question shifts from 'how do I call an LLM?' to 'how do I wire all this together?'">
+    <meta name="twitter:description" content="Bootstrap is the single wiring hub; the System Runtime constructs, binds, starts, and stops components in topological order.">
     <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
     <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/13-bootstrap-api-deep-dive/">
                 <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
@@ -73,7 +73,7 @@
         
 <div class="article-layout">
   <article class="post">
-    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/13-bootstrap-api-deep-dive/">Bootstrap &amp; API Layer — Wiring Without the Pain</a></h1>
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/13-bootstrap-api-deep-dive/">Bootstrap &amp; System Runtime — Wiring as a Readable Sequence</a></h1>
     <div class="post-meta-inline">
         <span class="post-date">2026-06-28</span>
     </div>
@@ -83,126 +83,210 @@
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/bootstrap/">#Bootstrap</a>&nbsp;
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a></span>
     <div class="post-content">
-        <h1 id="ares-architecture-deep-dive-xiii-bootstrap-api-layer-wiring-without-the-pain">ares Architecture Deep Dive (XIII): Bootstrap &amp; API Layer — Wiring Without the Pain</h1>
-<p>There's a moment in every framework's life when the user's first question shifts from "how do I call an LLM?" to "how do I wire all this together?" That's the moment you need a bootstrap.</p>
-<p>In the early days, starting ares meant creating 15 objects by hand, passing them to each other in the right order, and praying you didn't miss a dependency. It looked like this:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>eventStore</span><span style="color: #94E2D5;"> :=</span><span> events</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewMemoryEventStore</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span>memMgr</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> memory</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewMemoryManager</span><span style="color: #9399B2;">(</span><span>memory</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">DefaultMemoryConfig</span><span style="color: #9399B2;">())</span></span>
-<span class="giallo-l"><span>llmClient</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> llm</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewClient</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">llm</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">{</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">})</span></span>
-<span class="giallo-l"><span>leader</span><span style="color: #94E2D5;"> :=</span><span> leader</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">leader</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">{</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">},</span><span> memMgr</span><span style="color: #9399B2;">,</span><span> llmClient</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> ...</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>rt</span><span style="color: #94E2D5;"> :=</span><span> runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">runtime</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">{</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">},</span><span> eventStore</span><span style="color: #9399B2;">,</span><span> memMgr</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>rt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RegisterAgent</span><span style="color: #9399B2;">(</span><span>leader</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> base</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Agent</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span> leader</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">) })</span></span>
-<span class="giallo-l"><span>rt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Start</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span></code></pre>
-<p>Six lines of wiring before you can do anything. Miss one dependency? Runtime panic at 3am. Change a constructor signature? Fix 20 call sites.</p>
-<p>The bootstrap solves this: <code>ares, _ := bootstrap.New(ctx, bootstrap.DefaultConfig())</code>. One line. All dependencies wired. All modules connected.</p>
+        <h1 id="ares-architecture-deep-dive-xiii-bootstrap-system-runtime-wiring-as-a-readable-sequence-0-3-x">ares Architecture Deep Dive (XIII): Bootstrap &amp; System Runtime — Wiring as a Readable Sequence (0.3.x)</h1>
+<blockquote>
+<p>0.3.x update: <code>internal/ares_bootstrap.Bootstrap</code> is the single wiring hub. It assembles EventStore, Runtime, Memory, MCP, Skills, LLM, Distillation, AKG, Observability, NewEvolution, FlightRecorder, Evolution, GA, Discovery, and SystemRuntime in a fixed, meaningful order. The System Runtime (<code>internal/kernel.Orchestrator</code>) runs <strong>Construct → Bind → Start → Ready</strong> on startup in topological order and <strong>Stop → Wait</strong> in reverse topological order on shutdown (bounded by a 30s budget). The entry point is <code>Bootstrap(ctx, cfg, deps)</code> — not <code>New</code>, and there is no <code>DefaultConfig()</code>.</p>
+</blockquote>
+<p>Every framework hits the moment when the user's first question shifts from "how do I call an LLM?" to "how do I wire all this together?" That's the moment you need a bootstrap.</p>
+<p>Wiring by hand is the obvious alternative, and it fails the same way every time: miss one dependency and every call site follows. But the real solution is not a container with magic. It's <strong>one function that explicitly turns config into a component graph</strong>.</p>
+<p>In today's <code>internal/ares_bootstrap</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>comp</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> ares_bootstrap</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Bootstrap</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> cfg</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">ares_bootstrap</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">BootstrapDeps</span><span style="color: #9399B2;">{</span><span style="color: #94E2D5;">...</span><span style="color: #9399B2;">})</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_bootstrap/bootstrap.go</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Bootstrap</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> cfg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">ares_config</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> deps</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">BootstrapDeps</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Components</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p><code>cmd/ares/serve.go</code> is the caller: it builds an archive-enabled EventStore and injects it via <code>deps</code>; Bootstrap does the rest (serve.go, ~line 168). <code>cfg</code> comes from <code>ares_config.Load(path)</code> (config details unverified, but the <code>Config</code> struct is real — see below).</p>
 <hr />
-<h2 id="the-problem-dependency-hell">The Problem: Dependency Hell</h2>
-<p>Every module in ares depends on other modules:</p>
+<h2 id="the-problem-dependency-hell-solved-with-explicit-code">The Problem: Dependency Hell, Solved With Explicit Code</h2>
+<p>Dependencies in <code>internal/ares_bootstrap</code> are not guessed — a <code>BootstrapDeps</code> struct receives the <strong>optional</strong> external deps:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> BootstrapDeps</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>	EventStore</span><span style="color: #F9E2AF;font-style: italic;"> ares_events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">EventStore</span></span>
+<span class="giallo-l"><span>	ExpRepo</span><span style="color: #F9E2AF;font-style: italic;">    repositories</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ExperienceRepositoryInterface</span></span>
+<span class="giallo-l"><span>	LLMClient</span><span style="color: #F9E2AF;font-style: italic;">  ares_eval</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">LLMClient</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Anything not supplied here is built in default form inside <code>Bootstrap</code> (e.g. an in-memory EventStore). This is the opposite of a DI framework (Wire/Dig/fx): <strong>no generated files, no reflection.</strong> The wiring order is written out in the <code>Bootstrap</code> body, top to bottom, readable and debuggable.</p>
+<p>The dependencies are not a fictional pyramid — they are the real data flow inside <code>Bootstrap</code>:</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
-<span class="giallo-l"><span>    Runtime </span><span style="color: #CBA6F7;">--&gt;</span><span> EventStore</span></span>
-<span class="giallo-l"><span>    Runtime </span><span style="color: #CBA6F7;">--&gt;</span><span> MemoryManager</span></span>
-<span class="giallo-l"><span>    Leader </span><span style="color: #CBA6F7;">--&gt;</span><span> Runtime</span></span>
-<span class="giallo-l"><span>    Leader </span><span style="color: #CBA6F7;">--&gt;</span><span> MemoryManager</span></span>
-<span class="giallo-l"><span>    Leader </span><span style="color: #CBA6F7;">--&gt;</span><span> LLMClient</span></span>
-<span class="giallo-l"><span>    Leader </span><span style="color: #CBA6F7;">--&gt;</span><span> ToolRegistry</span></span>
-<span class="giallo-l"><span>    Evolution </span><span style="color: #CBA6F7;">--&gt;</span><span> Arena</span></span>
-<span class="giallo-l"><span>    Evolution </span><span style="color: #CBA6F7;">--&gt;</span><span> Scorer</span></span>
-<span class="giallo-l"><span>    Dashboard </span><span style="color: #CBA6F7;">--&gt;</span><span> EventStore</span></span>
-<span class="giallo-l"><span>    Dashboard </span><span style="color: #CBA6F7;">--&gt;</span><span> MCPManager</span></span></code></pre>
-<p>Wire it by hand and you're playing Jenga with constructor arguments. Get the order wrong? Circular dependency. Forget a nil check? Panic at runtime.</p>
-<p><strong>Honest reflection</strong>: We considered dependency injection frameworks (Wire, Dig, fx). They solve the wiring problem but add complexity and magic. When something fails at startup, you're staring at a generated file you've never seen, trying to understand why the DI container couldn't resolve <code>MemoryManager</code>. I'd rather have explicit code I can read and debug.</p>
+<span class="giallo-l"><span>    Bootstrap </span><span style="color: #CBA6F7;">--&gt;</span><span> EventStore</span></span>
+<span class="giallo-l"><span>    Bootstrap </span><span style="color: #CBA6F7;">--&gt;</span><span> Runtime</span></span>
+<span class="giallo-l"><span>    EventStore </span><span style="color: #CBA6F7;">--&gt;</span><span> Runtime</span></span>
+<span class="giallo-l"><span>    EventStore </span><span style="color: #CBA6F7;">--&gt;</span><span> Memory</span></span>
+<span class="giallo-l"><span>    EventStore </span><span style="color: #CBA6F7;">--&gt;</span><span> MCP</span></span>
+<span class="giallo-l"><span>    EventStore </span><span style="color: #CBA6F7;">--&gt;</span><span> Distillation</span></span>
+<span class="giallo-l"><span>    Evidence_Store </span><span style="color: #CBA6F7;">--&gt;</span><span> NewEvolution</span></span>
+<span class="giallo-l"><span>    EventStore </span><span style="color: #CBA6F7;">--&gt;</span><span> FlightRecorder</span></span>
+<span class="giallo-l"><span>    Evidence_Store </span><span style="color: #CBA6F7;">--&gt;</span><span> FlightRecorder</span></span>
+<span class="giallo-l"><span>    EventStore </span><span style="color: #CBA6F7;">--&gt;</span><span> Evolution_legacy</span></span>
+<span class="giallo-l"><span>    KnowledgeRuntime </span><span style="color: #CBA6F7;">--&gt;</span><span> NewEvolution</span></span>
+<span class="giallo-l"><span>    VectorStore </span><span style="color: #CBA6F7;">--&gt;</span><span> KnowledgeRuntime</span></span></code></pre>
 <hr />
-<h2 id="the-design-interfaces-first">The Design: Interfaces First</h2>
-<p>The API layer has one rule: <strong>no implementations</strong>.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>api/</span></span>
-<span class="giallo-l"><span>├── core/        # Interfaces only: AgentService, Runtime, Evolution, Arena, ...</span></span>
-<span class="giallo-l"><span>├── errors/      # Error types</span></span>
-<span class="giallo-l"><span>├── client/      # Go SDK (talks to the server)</span></span>
-<span class="giallo-l"><span>├── handler/     # HTTP handlers (thin delegation)</span></span>
-<span class="giallo-l"><span>├── router/      # Route registration</span></span>
-<span class="giallo-l"><span>└── bootstrap/   # Factory — wires internal/ implementations</span></span></code></pre>
-<p><code>api/core/</code> defines what a module <em>does</em>, not how it <em>does it</em>. The <code>Runtime</code> interface says "you can start, stop, register agents, get stats." It doesn't say whether agents are goroutines, threads, or remote processes.</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// api/core/runtime.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Runtime</span><span style="color: #CBA6F7;"> interface</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    RegisterAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agent</span><span style="color: #F9E2AF;font-style: italic;"> Agent</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> factory</span><span style="color: #F9E2AF;font-style: italic;"> AgentFactory</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    StartAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> agent</span><span style="color: #F9E2AF;font-style: italic;"> Agent</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    StopAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    GetAgent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agentID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #F9E2AF;font-style: italic;"> Agent</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Start</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Stop</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Stats</span><span style="color: #9399B2;">()</span><span style="color: #F9E2AF;font-style: italic;"> RuntimeStats</span></span>
+<h2 id="bootstrap-from-config-to-component-graph-in-order">Bootstrap: From Config to Component Graph, In Order</h2>
+<p>The assembly order in <code>Bootstrap</code> is <strong>meaningful</strong> — downstream components are built after their upstream. The real sequence (indented lines denote dependencies):</p>
+<table><thead><tr><th>Step</th><th>Function / Provider (real symbol)</th><th>Writes to <code>comp.</code></th><th>Gate / semantics</th></tr></thead><tbody>
+<tr><td>1</td><td><code>deps.EventStore</code> or <code>ares_events.NewMemoryEventStore()</code></td><td><code>EventStore</code></td><td>in-memory default</td></tr>
+<tr><td>2</td><td><code>ProvideRuntime(eventStore)</code> → <code>ares_runtime.New(nil, eventStore, nil)</code></td><td><code>Runtime</code></td><td>always created</td></tr>
+<tr><td>3</td><td><code>wireMemory(cfg, eventStore)</code> → <code>ProvideMemory(memCfg)</code>; <code>mem.SetEventStore(eventStore, "memory")</code></td><td><code>Memory</code></td><td>gated by <code>cfg.Memory.IsEnabled()</code></td></tr>
+<tr><td>4</td><td><code>ProvideMCP(ctx, cfg.MCP)</code> → <code>ares_mcp.NewMCPManager</code> + <code>.Start(ctx)</code></td><td><code>MCP</code></td><td>minimal when no servers</td></tr>
+<tr><td>4b</td><td><code>wireSkills(ctx, mem, mcp)</code></td><td><code>SkillsRegistry</code>, <code>SkillCatalog</code></td><td>best-effort</td></tr>
+<tr><td>5</td><td><code>ProvideLLM(cfg.LLM)</code> (or <code>deps.LLMClient</code>)</td><td><code>LLM</code></td><td>callback registry + CostDashboard + Prometheus tracer</td></tr>
+<tr><td>5b</td><td><code>wireDistillation(...)</code> → <code>provideDistillation(...)</code></td><td><code>Distillation</code>, <code>ExpRepo</code></td><td>gated by <code>Memory.DistillationEnabled()</code> + PG + Embedding</td></tr>
+<tr><td>5c</td><td><code>wireAKGLoop(cfg, deps, embClient)</code></td><td><code>KnowledgeStore</code>, <code>AKGBridge</code></td><td>gated by <code>cfg.Knowledge.RetrievalEnabled</code></td></tr>
+<tr><td>—</td><td><code>subscribeDistillationEvents(ctx, &amp;comp)</code></td><td>(background)</td><td>subscribes to TaskCompleted/Failed</td></tr>
+<tr><td>6</td><td><code>ProvideObservability(tracer, feedbackStore, globalTracer)</code></td><td><code>Observability</code>, <code>Dashboard</code></td><td>shared tracer/feedback/spans</td></tr>
+<tr><td>7</td><td><code>BuildKnowledgeRuntime(vecStore, emb, knowStore)</code></td><td><code>KnowledgeRuntime</code></td><td>best-effort provider registration</td></tr>
+<tr><td>8</td><td><code>buildEvolutionDAG</code> + <code>wireNewEvolution</code> → <code>ProvideNewEvolution(dag, rt, memStore, evStore)</code></td><td><code>NewEvolution</code>, <code>EvidenceStore</code></td><td>gated by <code>cfg.Evolution.Enabled</code></td></tr>
+<tr><td>—</td><td><code>flight.NewFlightRecorder</code> + <code>.Start(ctx)</code></td><td><code>FlightRecorder</code></td><td>shared singleton</td></tr>
+<tr><td>—</td><td><code>wireLegacyEvolution</code> → <code>ProvideEvolution(...)</code></td><td><code>Evolution</code></td><td>gated by Enabled + deps present</td></tr>
+<tr><td>—</td><td><code>wireRetrievers(...)</code></td><td>(injects into Memory)</td><td>best-effort</td></tr>
+<tr><td>—</td><td>Deployment pipeline → <code>SetDeployer</code></td><td>(injects into UngatedPatcher)</td><td>gated by <code>cfg.Evolution.Deployment.Enabled</code></td></tr>
+<tr><td>9</td><td><code>wireGAEvolution(ctx, cfg, comp, newEvol, guidanceProvider)</code></td><td>(GA + ticker + lifecycle)</td><td>gated by <code>cfg.Evolution.Enabled</code></td></tr>
+<tr><td>10</td><td><code>ProvideDiscovery(ctx, &amp;cfg.Discovery, comp.EventStore)</code></td><td><code>Discovery</code></td><td><code>ErrDiscoveryDisabled</code> = off</td></tr>
+<tr><td>11</td><td><code>wireSystemRuntime(ctx, cfg, &amp;comp)</code></td><td><code>SystemRuntime</code>, <code>SystemRegistry</code></td><td>observational registration</td></tr>
+<tr><td>—</td><td><code>startExpiryCleanupWorker(ctx, &amp;comp)</code></td><td>(background)</td><td>no-op when no cleaners</td></tr>
+</tbody></table>
+<p>Key truths:</p>
+<ul>
+<li><strong>Failure policy is deliberately non-uniform.</strong> Some failures are fail-loud (a configured Postgres that can't connect makes the evidence store call <code>runCleanups()</code> and return an error); others are best-effort (distillation, skills, observability degrade gracefully). <code>Bootstrap</code> keeps a <code>cleanups []func()</code> slice and, on any error, releases already-built components <strong>in reverse creation order</strong>.</li>
+<li><strong>Config gates are honored.</strong> E.g. with <code>cfg.Evolution.Enabled=false</code>, neither <code>NewEvolution</code> nor the GA ticker nor the LLM-suggestion ticker is constructed — components don't start "behind the config's back".</li>
+</ul>
+<p><code>Components</code> is the container — <strong>not <code>ARES</code>, it's <code>Components</code></strong>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_bootstrap/bootstrap.go — excerpt</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Components</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>	MCP</span><span style="color: #94E2D5;">          *</span><span style="color: #F9E2AF;font-style: italic;">ares_mcp</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">MCPManager</span></span>
+<span class="giallo-l"><span>	Dashboard</span><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">ObservabilityProviders</span></span>
+<span class="giallo-l"><span>	LLM</span><span style="color: #94E2D5;">          *</span><span style="color: #F9E2AF;font-style: italic;">LLMComponents</span></span>
+<span class="giallo-l"><span>	Evolution</span><span style="color: #94E2D5;">    *</span><span style="color: #F9E2AF;font-style: italic;">EvolutionComponents</span></span>
+<span class="giallo-l"><span>	NewEvolution</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">NewEvolutionComponents</span></span>
+<span class="giallo-l"><span>	Runtime</span><span style="color: #94E2D5;">      *</span><span style="color: #F9E2AF;font-style: italic;">ares_runtime</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Manager</span></span>
+<span class="giallo-l"><span>	Memory</span><span style="color: #F9E2AF;font-style: italic;">       ares_memory</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">MemoryManager</span></span>
+<span class="giallo-l"><span>	EventStore</span><span style="color: #F9E2AF;font-style: italic;">   ares_events</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">EventStore</span></span>
+<span class="giallo-l"><span>	Distillation</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">aresexp</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">DistillationService</span></span>
+<span class="giallo-l"><span>	SkillsRegistry</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">skills</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Registry</span></span>
+<span class="giallo-l"><span>	SkillCatalog</span><span style="color: #94E2D5;">   *</span><span style="color: #F9E2AF;font-style: italic;">ares_skills</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Catalog</span></span>
+<span class="giallo-l"><span>	KnowledgeRuntime</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">knowledgeruntime</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeRuntime</span></span>
+<span class="giallo-l"><span>	VectorStore</span><span style="color: #F9E2AF;font-style: italic;">     storage</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">VectorStore</span></span>
+<span class="giallo-l"><span>	KnowledgeStore</span><span style="color: #F9E2AF;font-style: italic;">  knowledge</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">KnowledgeStore</span></span>
+<span class="giallo-l"><span>	AKGBridge</span><span style="color: #94E2D5;">       *</span><span style="color: #F9E2AF;font-style: italic;">adapter</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">DistillBridge</span></span>
+<span class="giallo-l"><span>	FlightRecorder</span><span style="color: #94E2D5;">  *</span><span style="color: #F9E2AF;font-style: italic;">flight</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">FlightRecorder</span></span>
+<span class="giallo-l"><span>	ExpRepo</span><span style="color: #F9E2AF;font-style: italic;">         repositories</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">ExperienceRepositoryInterface</span></span>
+<span class="giallo-l"><span>	EvidenceStore</span><span style="color: #F9E2AF;font-style: italic;">   evidence</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Store</span></span>
+<span class="giallo-l"><span>	SystemRuntime</span><span style="color: #94E2D5;">   *</span><span style="color: #F9E2AF;font-style: italic;">system_runtime</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Orchestrator</span></span>
+<span class="giallo-l"><span>	SystemRegistry</span><span style="color: #94E2D5;">  *</span><span style="color: #F9E2AF;font-style: italic;">system_runtime</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Registry</span></span>
+<span class="giallo-l"><span>	Observability</span><span style="color: #94E2D5;">   *</span><span style="color: #F9E2AF;font-style: italic;">ObservabilityComponents</span></span>
+<span class="giallo-l"><span>	ExpiryCleaners</span><span style="color: #9399B2;">  []</span><span style="color: #F9E2AF;font-style: italic;">NamedExpiryCleaner</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">	// ...</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>The implementation lives in <code>internal/ares_runtime/manager.go</code>. The bootstrap wires them together.</p>
-<p><strong>Honest reflection</strong>: We had 7 service implementations living in <code>api/service/</code>. They were full of business logic — in-memory caches, retry loops, error handling. This defeated the purpose of the API layer. In v0.2.4, we moved all implementations to <code>internal/</code> and left <code>api/</code> as a pure contract. The migration was painful (30+ files moved, 50+ import paths updated) but the result is clean: <code>api/</code> is a contract, <code>internal/</code> is implementation.</p>
+<p>The container also exposes read helpers: <code>Snapshot()</code>, <code>ComponentStatus(name)</code>, <code>IsSystemReady()</code> (all backed by <code>SystemRegistry</code>, returning safe empty values when unwired).</p>
 <hr />
-<h2 id="the-bootstrap-one-line-to-rule-them-all">The Bootstrap: One Line to Rule Them All</h2>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// api/bootstrap/bootstrap.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> New</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> cfg</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ARES</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
-<span class="giallo-l"><span>    eventStore</span><span style="color: #94E2D5;"> :=</span><span> ares_events</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewMemoryEventStore</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span>    rt</span><span style="color: #94E2D5;"> :=</span><span> ares_runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span>cfg</span><span style="color: #9399B2;">.</span><span>Runtime</span><span style="color: #9399B2;">,</span><span> eventStore</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>    memMgr</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> memory</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewMemoryManager</span><span style="color: #9399B2;">(</span><span>cfg</span><span style="color: #9399B2;">.</span><span>Memory</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>    evoSvc</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> evolution</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewService</span><span style="color: #9399B2;">(</span><span>cfg</span><span style="color: #9399B2;">.</span><span>Evolution</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>    arenaSvc</span><span style="color: #94E2D5;"> :=</span><span> arena</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewService</span><span style="color: #9399B2;">(</span><span>cfg</span><span style="color: #9399B2;">.</span><span>ArenaInjector</span><span style="color: #9399B2;">,</span><span> eventStore</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>    mcpMgr</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> mcp</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewMCPManager</span><span style="color: #9399B2;">(</span><span>cfg</span><span style="color: #9399B2;">.</span><span>MCP</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>    dashOrch</span><span style="color: #94E2D5;"> :=</span><span> dashboard</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewOrchestrator</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">nil</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>    flightRec</span><span style="color: #94E2D5;"> :=</span><span> flight</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewFlightRecorder</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">*</span><span>cfg</span><span style="color: #9399B2;">.</span><span>Flight</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">ARES</span><span style="color: #9399B2;">{</span></span>
-<span class="giallo-l"><span>        Runtime</span><span style="color: #9399B2;">:</span><span>    rt</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span>        Memory</span><span style="color: #9399B2;">:</span><span>     memMgr</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span>        Evolution</span><span style="color: #9399B2;">:</span><span>  evoSvc</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span>        Arena</span><span style="color: #9399B2;">:</span><span>      arenaSvc</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span>        MCP</span><span style="color: #9399B2;">:</span><span>        mcpMgr</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span>        Dashboard</span><span style="color: #9399B2;">:</span><span>  dashOrch</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span>        Flight</span><span style="color: #9399B2;">:</span><span>     flightRec</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span>        EventStore</span><span style="color: #9399B2;">:</span><span> eventStore</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">    },</span><span style="color: #F38BA8;"> nil</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>The <code>ARES</code> struct is a container — it holds references to all modules. You access them directly:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>ares</span><span style="color: #9399B2;">,</span><span> _</span><span style="color: #94E2D5;"> :=</span><span> bootstrap</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> bootstrap</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">DefaultConfig</span><span style="color: #9399B2;">())</span></span>
-<span class="giallo-l"><span>ares</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Start</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>ares</span><span style="color: #9399B2;">.</span><span>Runtime</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Stats</span><span style="color: #9399B2;">()</span></span>
-<span class="giallo-l"><span>ares</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">RunEvolution</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span>ares</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ExecuteArenaAction</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> action</span><span style="color: #9399B2;">)</span></span></code></pre>
-<p><strong>Honest reflection</strong>: The bootstrap isn't a dependency injection container. It's a factory function with hardcoded wiring. If you need custom dependencies (e.g., a PostgreSQL event store instead of in-memory), you wire it yourself. The bootstrap covers 90% of use cases. The other 10% can call constructors directly.</p>
+<h2 id="the-providers-they-actually-exist">The Providers: They Actually Exist</h2>
+<p><code>internal/ares_bootstrap</code> isn't just <code>Bootstrap</code> — it's a family of <code>Provide*</code> functions, one per big component. All of these are real symbols I read in the source (module prefix <code>github.com/Timwood0x10/ares</code>):</p>
+<table><thead><tr><th>Provider (real signature)</th><th>Produces</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>ProvideRuntime(eventStore) (*ares_runtime.Manager, error)</code></td><td>Runtime</td><td><code>ares_runtime.New(nil, eventStore, nil)</code></td></tr>
+<tr><td><code>ProvideMemory(cfg) (ares_memory.MemoryManager, error)</code></td><td>Memory</td><td><code>cfg==nil</code> → <code>DefaultMemoryConfig()</code></td></tr>
+<tr><td><code>provideDistillation(ctx, cfg, llmClient) (*distillationWiring, error)</code></td><td>distillation wiring</td><td>returns <code>{pool, embeddingClient, experienceRepo, service, guidanceProvider, embeddingQueue, embeddingConfig}</code></td></tr>
+<tr><td><code>ProvideMCP(ctx, cfg) (*ares_mcp.MCPManager, error)</code></td><td>MCP</td><td><code>NewMCPManager</code> + <code>Start</code></td></tr>
+<tr><td><code>ProvideLLM(cfg) (*LLMComponents, error)</code></td><td>LLM</td><td><code>llm.NewClient</code> + callbacks + <code>CostDashboard</code></td></tr>
+<tr><td><code>ProvideObservability(tracer, feedback, spans) (*ObservabilityProviders)</code></td><td>Dashboard</td><td><code>IntrospectOptions()</code> feeds introspect</td></tr>
+<tr><td><code>ProvideNewEvolution(dag, rt, memoryStore, evStore) (*NewEvolutionComponents, error)</code></td><td>NewEvolution</td><td>registers Genome/Diff/Patch Registries + UngatedPatcher</td></tr>
+<tr><td><code>ProvideEvolution(ctx, cfg, eventStore, expRepo, llmClient, fr) (*EvolutionComponents, error)</code></td><td>legacy Evolution</td><td>non-nil only when all deps present</td></tr>
+</tbody></table>
+<p><code>NewEvolutionComponents</code> exposes <code>UpdateLiveDAG(dag)</code>, <code>UpdateLiveKnowledgeRuntime(rt)</code>, <code>SetToolClassDAG(dag)</code> — serve injects the <em>real</em> runtime into the evolution system after agents are assembled (via in-place <code>SetDAG</code>/<code>SetGraph</code>, because <code>patch.Registry.Register</code> <strong>cannot overwrite</strong> an already-registered key).</p>
+<p><strong>Honest reflection</strong>: this is not a DI container, it's readable constructor orchestration. Want a Postgres event store? Build it and put it in <code>deps.EventStore</code>. Want a minimal offline config? Pass an empty <code>BootstrapDeps{}</code> and Bootstrap's defaults cover ~90% of cases. The rest, you call the <code>Provide*</code> functions directly.</p>
 <hr />
-<h2 id="module-logging-who-said-that">Module Logging: Who Said That?</h2>
-<p>Every module in ares has a scoped logger:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/logger/logger.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Module</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">name</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">slog</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Logger</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> slog</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Default</span><span style="color: #9399B2;">().</span><span style="color: #89B4FA;font-style: italic;">With</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;module&quot;</span><span style="color: #9399B2;">,</span><span> name</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_runtime/log.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> log</span><span style="color: #94E2D5;"> =</span><span> logger</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Module</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;runtime&quot;</span><span style="color: #9399B2;">)</span></span></code></pre>
-<p>Now every log entry from Runtime carries <code>module=runtime</code>. Workflow carries <code>module=workflow</code>. Memory carries <code>module=memory</code>.</p>
-<p>This sounds trivial until 3am when you're staring at logs like:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>INFO started agents=3</span></span>
-<span class="giallo-l"><span>INFO started agents=2</span></span>
-<span class="giallo-l"><span>INFO started agents=1</span></span></code></pre>
-<p>Which module started which agents? Without module tags, you don't know. With them:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>INFO started agents=3 module=runtime</span></span>
-<span class="giallo-l"><span>INFO started agents=2 module=workflow</span></span>
-<span class="giallo-l"><span>INFO started agents=1 module=memory</span></span></code></pre>
-<p><strong>Honest reflection</strong>: We considered passing loggers through context. Context-based logging is "more correct" — it propagates through call chains. But in practice, Runtime doesn't call Workflow doesn't call Memory in a neat chain. They're peers. A package-level logger per module is the pragmatic choice. If you need correlation, that's what trace IDs are for.</p>
+<h2 id="skills-wiring-0-3-x">Skills Wiring (0.3.x)</h2>
+<p>Step 4b in <code>bootstrap.go</code> — <code>wireSkills(ctx, comp.Memory, mcp)</code> — is a piece of "invisible wiring": you call <code>Bootstrap()</code> and agents are born with a skill catalog. What it actually does (as I read it):</p>
+<ul>
+<li><code>ares_skills.NewCatalog(CatalogConfig{...})</code> with declared sources <code>./.ares/skills</code> + <code>~/.ares/skills</code> plus directory/git/http sources from <code>LoadSkillSources("")</code>; <code>SetGitSources</code> / <code>SetHTTPSources</code>; <code>mcp != nil</code> → <code>SetMCPConnector(mcp)</code>.</li>
+<li><code>SyncGitSources(ctx)</code> → <code>Build()</code> builds the index → <code>SeedRegistry(reg)</code>, injecting a <code>skills.NewRegistry()</code> into the memory manager via <code>setter.SetSkillsRegistry(reg)</code>.</li>
+<li>Returns <code>(*ares_skills.Catalog, *skills.Registry)</code>: the first gets a <code>Close</code> cleanup, the second is handed to the env-cap searcher so skills become searchable tool capabilities.</li>
+<li>The skill outcome recorder that used to subscribe to <code>EventSubTaskResult</code> here was removed as dead code (starved from the start — no emitter ever carried its expected payload shape, W8 / RUNTIME.md breakage #8); a TODO(tech-debt) marks the spot.</li>
+<li>Entirely best-effort: memory disabled / memory not exposing <code>SetSkillsRegistry</code> / index-build failure all log-and-skip rather than blocking startup.</li>
+</ul>
+<blockquote>
+<p><code>CatalogTools(skill_search/skill_load/...)</code>, <code>SetToolChangeHandler</code> and <code>wireSkillCatalog</code> could not be verified in <code>internal/ares_bootstrap</code>, so they are marked (unverified). The real skill-wiring entry is <code>wireSkills</code> above.</p>
+</blockquote>
 <hr />
-<h2 id="event-modulename-who-did-what">Event.ModuleName: Who Did What?</h2>
-<p>The same problem exists in the event system. When you replay an event stream, you see:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="json"><span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;step.started&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">payload</span><span style="color: #9399B2;">&quot;: {&quot;</span><span style="color: #89B4FA;">step_id</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;s1&quot;</span><span style="color: #9399B2;">}}</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">{&quot;</span><span style="color: #89B4FA;">type</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;tool.call.completed&quot;</span><span style="color: #9399B2;">, &quot;</span><span style="color: #89B4FA;">payload</span><span style="color: #9399B2;">&quot;: {&quot;</span><span style="color: #89B4FA;">tool</span><span style="color: #9399B2;">&quot;:</span><span style="color: #A6E3A1;"> &quot;search&quot;</span><span style="color: #9399B2;">}}</span></span></code></pre>
-<p>Which module emitted <code>step.started</code>? The workflow engine? The runtime? The plugin bus? The payload doesn't say.</p>
-<p>Adding <code>ModuleName</code> to the <code>Event</code> struct forced a signature change:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Before: ambiguous source</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">Emit</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> store</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">,</span><span> eventType</span><span style="color: #9399B2;">,</span><span> payload</span><span style="color: #9399B2;">)</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// After: explicit source</span></span>
-<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">Emit</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span> store</span><span style="color: #9399B2;">,</span><span> streamID</span><span style="color: #9399B2;">,</span><span> eventType</span><span style="color: #9399B2;">,</span><span style="color: #A6E3A1;"> &quot;runtime&quot;</span><span style="color: #9399B2;">,</span><span> payload</span><span style="color: #9399B2;">)</span></span></code></pre>
-<p>This broke every caller. All 30+ of them. But it was the right call — making the source explicit at the call site means you can't accidentally emit an event without declaring who you are.</p>
+<h2 id="the-system-runtime-orchestrator-the-0-3-x-star">The System Runtime Orchestrator (the 0.3.x star)</h2>
+<p><code>Bootstrap</code>'s last step registers the assembled components into <code>system_runtime</code>, and the Orchestrator manages their lifecycle:</p>
+<ul>
+<li><code>system_runtime.NewRegistry()</code>, then each constructed component is registered via <code>reg.Register(adapter, mode)</code> (adapter carries <code>deps</code>/<code>Stop</code>/<code>Wait</code>/<code>Ready</code> hooks).</li>
+<li><code>system_runtime.NewOrchestrator(reg, rootCtx)</code>, <code>orch.SetEventSink(comp.EventStore)</code> (background component failures hit the event stream), and finally <code>orch.Start(ctx)</code>.</li>
+</ul>
+<h3 id="lifecycle-startup">Lifecycle: Startup</h3>
+<p><code>Orchestrator.Start</code> runs <strong>Construct → Bind → Start → Ready</strong> per component, in topological order (dependencies become Ready first):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">stateDiagram-v2</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    [*] --&gt;</span><span> Constructed</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Register</span></span>
+<span class="giallo-l"><span>    Constructed</span><span style="color: #CBA6F7;"> --&gt;</span><span> Bound</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Bind(ctx, Resolver)</span></span>
+<span class="giallo-l"><span>    Bound</span><span style="color: #CBA6F7;"> --&gt;</span><span> Started</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Start(ctx)</span></span>
+<span class="giallo-l"><span>    Started</span><span style="color: #CBA6F7;"> --&gt;</span><span> Ready</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Ready(ctx) ok</span></span>
+<span class="giallo-l"><span>    Ready</span><span style="color: #CBA6F7;"> --&gt; [*]</span></span>
+<span class="giallo-l"><span>    Started</span><span style="color: #CBA6F7;"> --&gt;</span><span> Degraded</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Ready err (ModeDegraded)</span></span>
+<span class="giallo-l"><span>    Started</span><span style="color: #CBA6F7;"> --&gt;</span><span> Failed</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Ready err (ModeRequired)</span></span>
+<span class="giallo-l"><span>    Started</span><span style="color: #CBA6F7;"> --&gt;</span><span> Failed</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Start err</span></span>
+<span class="giallo-l"><span>    Constructed</span><span style="color: #CBA6F7;"> --&gt;</span><span> Failed</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Bind err</span></span>
+<span class="giallo-l"><span>    Failed</span><span style="color: #CBA6F7;"> --&gt; [*]:</span><span style="color: #A6E3A1;"> rollback started components (Stop in reverse)</span></span></code></pre>
+<ul>
+<li><code>Construct</code> is already done at registration (<code>Bootstrap</code> built the instances); the Orchestrator runs Bind/Start/Ready.</li>
+<li><code>Start</code> is not idempotent: calling it twice returns an error.</li>
+<li>On any failure the failing component is cleaned up first, then already-started components are rolled back in reverse order (via <code>stopComponent</code>).</li>
+</ul>
+<p>Components participate through interface contracts:</p>
+<table><thead><tr><th>Interface (real symbol)</th><th>Method</th><th>Phase</th></tr></thead><tbody>
+<tr><td><code>Component</code></td><td><code>Name()</code>, <code>Dependencies()</code></td><td>global</td></tr>
+<tr><td><code>Binder</code></td><td><code>Bind(ctx, Resolver)</code></td><td>Bind</td></tr>
+<tr><td><code>Starter</code></td><td><code>Start(ctx)</code></td><td>Start</td></tr>
+<tr><td><code>ReadinessChecker</code></td><td><code>Ready(ctx)</code></td><td>Ready</td></tr>
+<tr><td><code>Stopper</code></td><td><code>Stop(ctx)</code></td><td>shutdown</td></tr>
+<tr><td><code>Waiter</code></td><td><code>Wait()</code></td><td>shutdown</td></tr>
+<tr><td><code>Resolver</code></td><td><code>Get(name) any</code></td><td>Bind resolves deps</td></tr>
+</tbody></table>
+<p>There are three Modes: <code>ModeRequired</code> (must reach Ready), <code>ModeOptional</code>, <code>ModeDegraded</code> (may run reduced, reporting the missing capability via <code>Ready</code>).</p>
+<h3 id="lifecycle-shutdown">Lifecycle: Shutdown</h3>
+<p><code>Orchestrator.Shutdown(ctx)</code> is <strong>reverse topological</strong>: first <code>cancel()</code> the root context (waking every goroutine waiting on <code>RootContext().Done()</code>), then <code>Stop → Wait</code> in reverse order, then drain the errgroup under a bounded timeout. Three budgets live in the code (<code>stopTimeout</code>/<code>waitTimeout</code>/<code>overallShutdownTimeout</code>, all 30s):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">sequenceDiagram</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> C</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> Caller</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> O</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> Orchestrator</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    participant</span><span> R</span><span style="color: #CBA6F7;"> as</span><span style="color: #A6E3A1;"> Registry</span></span>
+<span class="giallo-l"><span>    C</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>O</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Shutdown(ctx)</span></span>
+<span class="giallo-l"><span>    O</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>O</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> cancel() root context</span></span>
+<span class="giallo-l"><span>    O</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>R</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> TopologicalOrder()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    loop</span><span style="color: #A6E3A1;"> reverse-topological order</span></span>
+<span class="giallo-l"><span>        O</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>O</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> Stop(comp) → Wait(comp)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    end</span></span>
+<span class="giallo-l"><span>    O</span><span style="color: #CBA6F7;">-&gt;&gt;</span><span>O</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> bounded errgroup drain</span></span>
+<span class="giallo-l"><span>    O</span><span style="color: #CBA6F7;">--&gt;&gt;</span><span>C</span><span style="color: #CBA6F7;">:</span><span style="color: #A6E3A1;"> errors.Join(...) or nil</span></span></code></pre>
+<ul>
+<li><code>Shutdown</code> is idempotent and safe to call concurrently; only the first call runs the sequence.</li>
+<li>Components that don't reach <code>Stopped</code> within budget are named in the returned error — a truncated teardown is visible, not silent.</li>
+<li><code>Adopt(ctx, c, mode)</code> is <strong>late admission</strong> (K1: kernel pillars assembled later in serve): it runs only <code>Bind</code> + the <code>Ready</code> gate (NOT <code>Start</code>; the adopter owns startup). It returns <code>ErrShuttingDown</code> if called during a shutdown, and rejects components whose dependencies are unregistered or Failed (fail-loud).</li>
+<li><code>GoBackground(name, fn)</code> is the unified wrapper for long-lived loops: a panic is recovered, recorded to the event sink, and marks the component <code>Failed</code> — but it never cancels the whole errgroup. One misbehaving loop does not tear down the process; teardown is driven by <code>Shutdown</code>.</li>
+</ul>
+<h3 id="registered-components">Registered components</h3>
+<p><code>wireSystemRuntime</code> actually registers these (name + mode + dependencies):</p>
+<table><thead><tr><th>Name</th><th>Mode</th><th>Dependencies</th><th>Stop hook</th></tr></thead><tbody>
+<tr><td><code>eventstore</code></td><td>Required</td><td>—</td><td>—</td></tr>
+<tr><td><code>runtime</code></td><td>Required</td><td><code>eventstore</code></td><td><code>Stop()</code></td></tr>
+<tr><td><code>memory</code></td><td>Required</td><td><code>eventstore</code></td><td><code>Stop(ctx)</code></td></tr>
+<tr><td><code>mcp</code></td><td>Required</td><td>—</td><td><code>Stop(ctx)</code></td></tr>
+<tr><td><code>llm</code></td><td>Required</td><td>—</td><td>—</td></tr>
+<tr><td><code>evidence</code></td><td>Required</td><td>—</td><td>—</td></tr>
+<tr><td><code>flight</code></td><td>Required</td><td><code>eventstore</code>, <code>evidence</code></td><td><code>Stop()</code></td></tr>
+<tr><td><code>knowledge</code></td><td>Required / <strong>Degraded</strong> (AKG write deps missing)</td><td>—</td><td><code>Ready</code> reports error</td></tr>
+<tr><td><code>newevolution</code></td><td>Required</td><td><code>evidence</code></td><td>—</td></tr>
+<tr><td><code>discovery</code></td><td>Required</td><td>—</td><td>—</td></tr>
+</tbody></table>
+<p><code>Registry.TopologicalOrder()</code> uses Kahn's algorithm. A declared-but-unregistered dependency, or a detected cycle, is fail-loud. <code>Registry.IsReady()</code> requires all <code>Required</code> components to be <code>Ready</code> (or <code>Degraded</code>) with no <code>Failed</code>. This is the core principle made real: <strong>wiring is readable explicit data, not magic hidden in generated files.</strong></p>
+<hr />
+<h2 id="config-wiring">Config Wiring</h2>
+<p>Configuration lives in <code>internal/ares_config</code>: <code>Load(path) (*Config, error)</code> (gate methods like <code>MemoryConfig.IsEnabled()</code> really exist). The <code>Config</code> struct carries <code>Server</code>, <code>LLM</code>, <code>Agents</code>, <code>Tools</code>, <code>Storage</code>, <code>Memory</code>, <code>Knowledge</code>, <code>MCP</code>, <code>Evolution</code>, <code>Embedding</code>, <code>Discovery</code>, <code>Kernel</code>, <code>Security</code> sections — Bootstrap reads each to decide which components to build and which to skip. The <code>IsEnabled</code> / <code>DistillationEnabled</code> / <code>RetrievalEnabled</code> / <code>Deployment.Enabled</code> gates are the switches behind the failure-policy table above.</p>
+<hr />
+<h2 id="module-logging-event-modulename">Module Logging &amp; Event.ModuleName</h2>
+<p>Every package logs through a scoped logger. <code>internal/ares_bootstrap/log.go</code>:</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> log</span><span style="color: #94E2D5;"> =</span><span> logger</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Module</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;ares_bootstrap&quot;</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p><code>system_runtime</code> does the same (<code>log = logger.Module("system_runtime")</code>). So every Orchestrator state-transition line carries <code>module=system_runtime</code>, every Bootstrap line carries <code>module=ares_bootstrap</code> — at 3am, the logs tell you exactly which layer is speaking.</p>
+<p>The event system does too: the <code>ares_events.Event</code> struct has a <code>ModuleName</code> field (<code>types.go</code>), written at <code>Append</code> time in <code>store.go</code>. An event says not only "what happened" but also "which layer did it".</p>
 <hr />
 <h2 id="the-lesson">The Lesson</h2>
-<p>The API layer and bootstrap aren't glamorous features. They don't demo well. You can't show a investor a factory function and say "look, it wires dependencies!"</p>
-<p>But they're the difference between a framework that's pleasant to use and one that makes you want to throw your laptop out the window. Every minute spent on wiring is a minute not spent on the user's actual problem.</p>
-<p><strong>The best API is the one you don't notice.</strong> You call <code>bootstrap.New()</code>, get a working system, and focus on your Agent logic. The wiring is invisible. That's the point.</p>
+<p>Bootstrap and the System Runtime aren't glamorous. They don't demo well. But they're the difference between a framework that's pleasant to use and one that makes you want to throw your laptop out the window.</p>
+<p>The real strength is in the details: <code>Bootstrap</code> uses a <code>cleanups []func()</code> slice to tear down the failure path in reverse; <code>Orchestrator.Shutdown</code> uses bounded budgets so teardown can never hang forever; <code>patch.Registry</code> can't overwrite an already-registered key, so <code>UpdateLiveDAG</code> has to <code>SetDAG</code> in place. This is the real substance of "wiring."</p>
+<p><strong>The best wiring is the wiring you can read, debug, and trace through the logs — step by step.</strong> Wiring shouldn't be magic. It should be an explicit, ordered sequence. That's the whole point.</p>
 
     </div>
             <div class="pagination">
@@ -212,12 +296,12 @@
                 </div>
                 <div class="pagination__buttons">
                         <span class="button previous">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/14-plugin-system-deep-dive/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Plugin System — Extending Without Touching</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/14-plugin-system-deep-dive/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">The Plugin System — A Contract and a Bus, Not Dynamic Loading</span></a>
                         </span>
                     
                     
                         <span class="button next">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/12-security-hardening-deep-dive/"><span class="button__text">Security Hardening — When Agents Learn to Defend Themselves</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/12-security-hardening-deep-dive/"><span class="button__text">Security Hardening — The Tool-Trust Gate and Identity Provenance</span>&nbsp;<span class="button__icon">&#8594;</span></a>
                         </span>
                     </div>
             </div>

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Agent Communication — Agent IPC Primitives and the Syscall Tool Layer | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Agents are peer cognitive processes; communication runs over a peer-mesh message bus with no Leader relay.">
+    <meta property="og:description" content="Agents are peer cognitive processes; communication runs over a peer-mesh message bus with no Leader relay.">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/26-agent-communication/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Agents are peer cognitive processes; communication runs over a peer-mesh message bus with no Leader relay.">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/26-agent-communication/">
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <nav class="menu">
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/26-agent-communication/">Agent Communication — Agent IPC Primitives and the Syscall Tool Layer</a></h1>
+    <div class="post-meta-inline">
+        <span class="post-date">2026-10-23</span>
+    </div>
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/agent/">#Agent</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/communication/">#Communication</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ipc/">#IPC</a></span>
+    <div class="post-content">
+        <h1 id="ares-architecture-deep-dive-xxvi-agent-communication-agent-ipc-primitives-and-the-syscall-tool-layer-0-3-x">ares Architecture Deep Dive (XXVI): Agent Communication — Agent IPC Primitives and the Syscall Tool Layer (0.3.x)</h1>
+<blockquote>
+<p>Note: This article is grounded in the actual code (<code>internal/agentipc</code> — <code>bus.go</code> / <code>primitives.go</code> / <code>policy.go</code> / <code>deadletter.go</code> / <code>collaboration_observer.go</code> — and <code>internal/agentsyscall</code> — <code>syscall.go</code> / <code>plan.go</code>), the dedicated Agent-communication article in the docs series. Agents are peer cognitive processes (A ≡ B ≡ C); communication runs over a peer-mesh message bus, no Leader relay required.</p>
+</blockquote>
+<h2 id="1-why-agent-communication-matters">1. Why Agent Communication Matters</h2>
+<p>In a multi-agent system agents must exchange messages — "I found X" / "help me verify Y" / "your conclusion conflicts with mine" (the archetypal collaboration phrases listed in <code>internal/agentipc/doc.go</code>). This is ARES's Kernel IPC pillar (P4), and the third of the three context layers (Task Shared / Agent Private / IPC Messages) — the first two live in <code>internal/fabric/agent</code>; this layer is carried by this package.</p>
+<p>Let's first separate duties: <strong>task dispatch is the Scheduler's (Task Fabric) job; agent communication is IPC's job.</strong> They are not the same thing:</p>
+<table><thead><tr><th>Dimension</th><th>Task Dispatch (taskfabric / Scheduler)</th><th>Agent Communication (agentipc)</th></tr></thead><tbody>
+<tr><td>View</td><td>Who executes what task</td><td>Who needs to know what message</td></tr>
+<tr><td>Path</td><td>Created via Task Fabric → scheduled → executed</td><td>Direct peer-mesh delivery</td></tr>
+<tr><td>Semantics</td><td>Task execution, recoverable, replayable</td><td>Collaboration, request/reply, broadcast/subscribe, handoff</td></tr>
+<tr><td>State</td><td>Durable Task</td><td>In-memory registry + immediate delivery</td></tr>
+</tbody></table>
+<p><strong>Core principle: agents express intent (Send / Request / Delegate / Handoff / Subscribe); the Kernel guarantees delivery.</strong> Communication is a "collaboration channel", not a "task execution channel".</p>
+<h2 id="2-the-native-message-unit-message">2. The Native Message Unit: Message</h2>
+<p>Every IPC message uses <code>Message</code> from <code>internal/agentipc/bus.go</code> (design Section 13: Context layer 3 — IPC Messages):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Message</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">            string</span><span style="color: #9399B2;font-style: italic;">    // unique message ID generated by the bus</span></span>
+<span class="giallo-l"><span>    From</span><span style="color: #CBA6F7;">          string</span><span style="color: #9399B2;font-style: italic;">    // sender agent ID</span></span>
+<span class="giallo-l"><span>    To</span><span style="color: #CBA6F7;">            string</span><span style="color: #9399B2;font-style: italic;">    // target agent ID (&quot;&quot; = broadcast to subscribers)</span></span>
+<span class="giallo-l"><span>    Topic</span><span style="color: #CBA6F7;">         string</span><span style="color: #9399B2;font-style: italic;">    // message subject (e.g. &quot;verify-conclusion&quot; / &quot;handoff-task&quot;)</span></span>
+<span class="giallo-l"><span>    CorrelationID</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;font-style: italic;">    // correlation id pairing a reply with its request</span></span>
+<span class="giallo-l"><span>    Payload</span><span style="color: #F9E2AF;font-style: italic;">       any</span><span style="color: #9399B2;font-style: italic;">       // message body</span></span>
+<span class="giallo-l"><span>    At</span><span style="color: #F9E2AF;font-style: italic;">            time</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Time</span><span style="color: #9399B2;font-style: italic;"> // send timestamp</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>The paired delivery function and sentinel errors (<code>Handler</code>, <code>ErrAgentNotRegistered</code>, <code>ErrNoHandler</code>, <code>ErrTimeout</code>, <code>ErrInvalidMessage</code>) are defined in the same package.</p>
+<h2 id="3-the-six-primitives-bus">3. The Six Primitives: Bus</h2>
+<p>The core object is <code>Bus</code> (<code>internal/agentipc/bus.go</code>): a peer message bus mapping agent IDs to handlers. It maintains <code>handlers</code>, <code>subscribers</code> (topic → subscriber list), and <code>pending</code> / <code>pendingErr</code> (per-correlation reply channels / stashed errors). The full primitive set:</p>
+<table><thead><tr><th>Primitive</th><th>Semantics</th><th>Notes</th></tr></thead><tbody>
+<tr><td><code>Send</code></td><td>fire-and-forget direct send</td><td>Invokes the target handler synchronously; waits for no reply</td></tr>
+<tr><td><code>Request</code></td><td>synchronous request/reply</td><td>Allocates a correlation ID, waits for a reply, with a timeout</td></tr>
+<tr><td><code>Reply</code></td><td>asynchronous response</td><td>The target handler answers later by correlation ID</td></tr>
+<tr><td><code>Delegate</code></td><td>forward on behalf of</td><td>Forwards to the final target, preserving the end-to-end correlation ID</td></tr>
+<tr><td><code>Handoff</code></td><td>task hand-off</td><td>Structured task payload + receiver acknowledgement; does NOT go through the Scheduler</td></tr>
+<tr><td><code>Subscribe</code> / <code>Unsubscribe</code></td><td>subscribe / unsubscribe</td><td>Topic subscription, paired with <code>Broadcast</code> fan-out</td></tr>
+</tbody></table>
+<blockquote>
+<p>Note: <code>doc.go</code> frames the set as Send / Request / Delegate / Handoff / Subscribe (+ Reply); the implementation adds <code>Broadcast</code> / <code>Unsubscribe</code> as supplementary entry points, listed all together here.</p>
+</blockquote>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> TD</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Initiator Agent</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">Send / Broadcast</span><span style="color: #CBA6F7;">|</span><span> B</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Bus</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    A </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Request / Delegate / Handoff</span><span style="color: #CBA6F7;">|</span><span> B</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Send: sync handler call, no wait</span><span style="color: #CBA6F7;">|</span><span> C1</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Target handler</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Request: allocate corrID + reply channel</span><span style="color: #CBA6F7;">|</span><span> C2</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Target handler</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    B </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Broadcast: fan out by topic</span><span style="color: #CBA6F7;">|</span><span> C3</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Subscriber handlers</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C2 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Reply same corrID</span><span style="color: #CBA6F7;">|</span><span> A</span></span>
+<span class="giallo-l"><span>    C1 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">result vs failure</span><span style="color: #CBA6F7;">|</span><span> D</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">DeadLetterStore / CollaborationObserver</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    C3 </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">delivery count</span><span style="color: #CBA6F7;">|</span><span> A</span></span></code></pre><h3 id="send-vs-request-two-collaboration-stances">Send vs Request: Two Collaboration Stances</h3>
+<ul>
+<li><code>Send(ctx, from, to, topic, payload) error</code> — fire-and-forget. The target handler is invoked synchronously in the caller's goroutine; a handler error is surfaced but no reply channel is set up — "fire and done", no paired reply.</li>
+<li><code>Request(ctx, from, to, topic, payload, timeout) (*Message, error)</code> — synchronous request/reply. The bus allocates a correlation ID and registers a pending reply channel; the target handler must call <code>Reply</code> with the same correlation ID to complete the request. <strong>Timeout has a sane default</strong>: a <code>timeout &lt;= 0</code> falls back to <code>defaultRequestTimeout = 30 * time.Second</code> (primitives.go, B16 — no indefinite blocking). The request runs in a managed goroutine with a recover boundary — if the handler panics, it is contained as one <code>ErrHandlerPanic</code>, failing exactly that single request rather than the whole process.</li>
+</ul>
+<h2 id="4-delegate-and-handoff">4. Delegate and Handoff</h2>
+<ul>
+<li><code>Delegate(ctx, delegator, to, topic, payload, timeout)</code> — forwards a request to another agent on the caller's behalf. The original requester's correlation ID is preserved end-to-end so the reply chains back. Semantics: "I can't handle this — let me ask someone who can".</li>
+<li><code>Handoff(ctx, from, to, taskID, contextSnapshot, timeout)</code> — transfers a task's <em>ownership</em> from a yielding agent to an accepting agent. Payload is <code>{task_id, context, artifacts}</code> on the constant topic <code>handoff-task</code>; the receiver returns an acceptance reply. <strong>Key point: this is a peer-to-peer task-transfer primitive — it does NOT go through the Scheduler.</strong></li>
+</ul>
+<h2 id="5-publish-subscribe-subscribe-broadcast-unsubscribe">5. Publish/Subscribe: Subscribe / Broadcast / Unsubscribe</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Bus</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Subscribe</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agentID</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> topic</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;font-style: italic;">   // idempotent: duplicates de-duplicated</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Bus</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Unsubscribe</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">agentID</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> topic</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">b </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Bus</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Broadcast</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> from</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> topic</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> payload</span><span style="color: #F9E2AF;font-style: italic;"> any</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> int</span></span></code></pre>
+<p><code>Broadcast</code> fans one message out to every subscriber's handler for a topic; a handler error does not stop the rest, and the successful-delivery count is returned. Subscribe de-duplicates the same agent on the same topic (B16).</p>
+<h2 id="6-observability-deadletterstore-and-collaborationobserver">6. Observability: DeadLetterStore and CollaborationObserver</h2>
+<p>IPC is not just communication — it is one input to the evolution loop (N-11 / GAP-3 closure):</p>
+<ul>
+<li><strong>DeadLetterStore</strong> (<code>deadletter.go</code>): a bounded FIFO recording failed deliveries (<code>ErrAgentNotRegistered</code> / <code>ErrTimeout</code> / handler errors). Default capacity 1024 (<code>capacity &lt;= 0</code> falls back). <code>Record</code> (oldest evicted), <code>Snapshot</code>, <code>Count</code> serve diagnosis and redelivery. Both Send and Request record failures.</li>
+<li><strong>CollaborationObserver</strong> (<code>collaboration_observer.go</code>): each collaboration attempt with an observable receipt emits one <code>feedback.CollaborationOutcome</code>. <code>Send</code> and <code>Request</code> (and the Delegate / Handoff built on them) are observed; <code>Broadcast</code> is deliberately NOT observed (no single target to attribute the outcome to). The observer is invoked on the initiator's path, so it MUST NOT block — and it is called outside the bus lock.</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    S</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Initiator</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">Send / Request failure</span><span style="color: #CBA6F7;">|</span><span> DL</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">DeadLetterStore bounded FIFO</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    S </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Send / Request receipt</span><span style="color: #CBA6F7;">|</span><span> OBS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">CollaborationObserver</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    OBS </span><span style="color: #CBA6F7;">--&gt;</span><span> FB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">feedback source: collaboration</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    DL </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">Snapshot / redelivery</span><span style="color: #CBA6F7;">|</span><span> OPS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">diagnosis / ops tooling</span><span style="color: #CBA6F7;">]</span></span></code></pre><h2 id="7-the-syscall-layer-kernel-and-tools">7. The Syscall Layer: Kernel and Tools</h2>
+<p><code>internal/agentsyscall</code> wraps IPC/collaboration capability into <strong>LLM-callable tools</strong> (W2 design: the real LLM executor decides whether to split work; the Kernel validates and enforces — "Agent decides. Kernel enforces."). <code>BindTools(binder, kernel)</code> registers four tools:</p>
+<table><thead><tr><th>Tool constant</th><th>Kernel syscall</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>SpawnAgentTool</code> (<code>spawn_agent</code>)</td><td><code>Kernel.SpawnAgent</code></td><td>Spawn a peer Agent with a declared capability; validate quota and register it as a schedulable executor</td></tr>
+<tr><td><code>CreateTaskTool</code> (<code>create_task</code>)</td><td><code>Kernel.CreateTask</code></td><td>Create a sub-task in the Task Fabric (→ READY), leaves it to the Scheduler</td></tr>
+<tr><td><code>AskAgentTool</code> (<code>ask_agent</code>)</td><td><code>Kernel.AskAgent</code></td><td>Ask a target Agent a question on a topic (use when you know WHICH agent to ask)</td></tr>
+<tr><td><code>CreatePlanTool</code> (<code>create_plan</code>)</td><td><code>Kernel.CreatePlan</code></td><td>Compile the whole dependency DAG into one batch of tasks (optional bounded round-loop)</td></tr>
+</tbody></table>
+<p><code>ToolSchemas()</code> returns the LLM-facing schemas for these tools and injects them into <code>resources.Registry</code>, alongside the built-in tools in the Chat API.</p>
+<p><strong>The Kernel's <code>AskAgentFn</code> is the key injection point</strong> (<code>syscall.go</code>):</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> AskAgentFn</span><span style="color: #CBA6F7;"> func</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> from</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> to</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> topic</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> payload</span><span style="color: #F9E2AF;font-style: italic;"> any</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> error</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// WithAskAgent injects the collaboration primitive; SetAskAgent can replace it during</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// serve assembly (after setupPeerRegistry). Production wire-up:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// aresrecovery.EvolutionAwareIPC.Send → agentipc Bus.</span></span></code></pre>
+<p><code>ask_agent</code> is the ACT half of the collaboration channel (Step Y.2-ACT): it turns "which agent to ask" into an agent-visible, changeable decision. <code>Kernel.AskAgent</code> requires a non-empty target and a wired primitive (fail-loud if absent — never a silent no-op). <strong>Note its semantics are a fire-and-forget send: <code>AskAgentResult.Accepted</code> means "the request was handed to the collaboration primitive", not "an answer is in hand".</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="mermaid"><span class="giallo-l"><span style="color: #CBA6F7;">graph</span><span style="color: #89B4FA;font-style: italic;"> LR</span></span>
+<span class="giallo-l"><span>    LLM</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">LLM Agent</span><span style="color: #CBA6F7;">] --&gt;|</span><span style="color: #A6E3A1;">ask_agent tool call</span><span style="color: #CBA6F7;">|</span><span> Bind</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">BindTools binding</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    Bind </span><span style="color: #CBA6F7;">--&gt;</span><span> K</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Kernel.AskAgent</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    K </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">AskAgentFn: ipc.Send</span><span style="color: #CBA6F7;">|</span><span> BUS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">agentipc Bus.Send</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    BUS </span><span style="color: #CBA6F7;">--&gt;</span><span> H</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">Target agent handler</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    H </span><span style="color: #CBA6F7;">--&gt;|</span><span style="color: #A6E3A1;">receipt</span><span style="color: #CBA6F7;">|</span><span> OBS</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">CollaborationObserver</span><span style="color: #CBA6F7;">]</span></span>
+<span class="giallo-l"><span>    OBS </span><span style="color: #CBA6F7;">--&gt;</span><span> FB</span><span style="color: #CBA6F7;">[</span><span style="color: #A6E3A1;">collaboration feedback source</span><span style="color: #CBA6F7;">]</span></span></code></pre><h2 id="8-single-track-dispatch-the-dual-track-machinery-is-retired">8. Single-Track Dispatch: the dual-track machinery is retired</h2>
+<p><code>ExecutionPolicy</code> / <code>PolicyFlag</code> / shadow mode / <code>Mismatches()</code> and the whole facade in <code>policy.go</code> (<code>Dispatcher</code> / <code>KernelDispatcher</code> / <code>NewPath</code> / <code>SetNewPath</code>) are gone — <code>internal/agentipc</code> no longer carries any "how a task is dispatched" abstraction. <strong>HTTP submits tasks to the Task Fabric directly (<code>submitPeerTask</code> / POST <code>/api/graphs</code>) and the kernelScheduler is the sole executor</strong> (<code>Schedule→Acquire→RunQuantum</code>). The kernel-bridge dispatch layer that only tests ever invoked (<code>wireKernelDispatcher</code> / <code>enableKernelExecution</code> / <code>submitFabricTask</code>) was removed along with it.</p>
+<h2 id="9-summary">9. Summary</h2>
+<table><thead><tr><th>Primitive / Component</th><th>Package</th><th>Responsibility</th></tr></thead><tbody>
+<tr><td><code>Message</code> + <code>Handler</code></td><td><code>internal/agentipc</code></td><td>IPC message unit and delivery callback</td></tr>
+<tr><td><code>Bus</code> (Send/Request/Reply/Delegate/Handoff/Subscribe/Broadcast/Unsubscribe)</td><td><code>internal/agentipc</code></td><td>Peer message bus and the full collaboration primitive set</td></tr>
+<tr><td><code>DeadLetterStore</code></td><td><code>internal/agentipc</code></td><td>Bounded FIFO record of failed deliveries (default 1024)</td></tr>
+<tr><td><code>CollaborationObserver</code></td><td><code>internal/agentipc</code></td><td>Collaboration receipts → feedback source</td></tr>
+<tr><td><code>Kernel</code> (SpawnAgent/CreateTask/AskAgent/CreatePlan)</td><td><code>internal/agentsyscall</code></td><td>LLM-callable syscall tool kernel</td></tr>
+</tbody></table>
+<p><strong>Design line: agents express intent, the Kernel guarantees delivery, and the evolution loop stays observable.</strong> The communication primitives are the peer collaboration layer; task dispatch is the scheduling execution layer — orthogonal. And <code>ask_agent</code> turns a "collaboration intent" into a real, injectable, observable, evolvable tool, wiring the IPC from a library primitive into the agent's cognition loop.</p>
+
+    </div>
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/27-context-management/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Context Management — Three-Layer Context and Checkpointable Cognitive State</span></a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/25-config-yaml-guide-en/"><span class="button__text">ARES config.yaml Guide (English)</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                        </span>
+                    </div>
+            </div>
+        </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 2026 Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

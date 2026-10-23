@@ -2,7 +2,7 @@
 <html lang="en">
 
 <head>
-    <title>Quant Trading Module — The Experiment We Keep Honest About | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <title>The Quant Trading Module — An Honest Statement | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
     <meta name="robots" content="noodp"/>
 
@@ -22,13 +22,13 @@
     <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
 
     
-    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="The module that started as a quick experiment and grew to nearly 10K lines — kept honest in the open.">
-    <meta property="og:description" content="The module that started as a quick experiment and grew to nearly 10K lines — kept honest in the open.">
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="The current repository contains no quantitative trading implementation code — and this article says so plainly.">
+    <meta property="og:description" content="The current repository contains no quantitative trading implementation code — and this article says so plainly.">
     <meta property="og:type" content="article">
     <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/ARES/23-quant-trading/">
 
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:description" content="The module that started as a quick experiment and grew to nearly 10K lines — kept honest in the open.">
+    <meta name="twitter:description" content="The current repository contains no quantitative trading implementation code — and this article says so plainly.">
     <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
     <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/ARES/23-quant-trading/">
                 <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
@@ -73,7 +73,7 @@
         
 <div class="article-layout">
   <article class="post">
-    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/23-quant-trading/">Quant Trading Module — The Experiment We Keep Honest About</a></h1>
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/ARES/23-quant-trading/">The Quant Trading Module — An Honest Statement</a></h1>
     <div class="post-meta-inline">
         <span class="post-date">2026-06-28</span>
     </div>
@@ -83,143 +83,90 @@
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
             <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/quant/">#Quant</a></span>
     <div class="post-content">
-        <h1 id="ares-architecture-deep-dive-xxiii-quant-trading-module-the-experiment-we-keep-honest-about">ares Architecture Deep Dive (XXIII): Quant Trading Module — The Experiment We Keep Honest About</h1>
-<p>Every project has that one module. The one that started as "just a quick experiment" and grew into 9,768 lines of code. For ares, that module is <code>internal/ares_quant/</code> — the quantitative trading system.</p>
-<p>This article is different from the others. It's not "look at this great architecture." It's "here's what we built, why we built it, and why it probably shouldn't be here."</p>
-<hr />
-<h2 id="the-origin-story">The Origin Story</h2>
-<p>The quant module started in v0.2.4 as a side experiment: "Can we use the agent framework to do quantitative trading research?" The answer was yes — and that's the problem.</p>
-<p>Three sub-systems grew in parallel:</p>
-<table><thead><tr><th>Sub-system</th><th>Purpose</th><th>Size</th></tr></thead><tbody>
-<tr><td><code>market/</code></td><td>Data sources (Yahoo, CoinGecko, Polymarket)</td><td>582 lines</td></tr>
-<tr><td><code>marketmaking/</code></td><td>Quote engine, inventory, chaos testing</td><td>1,328 lines</td></tr>
-<tr><td><code>portfolio/</code></td><td>Position tracking, risk metrics</td><td>1,242 lines</td></tr>
-<tr><td><code>research/</code></td><td>Backtesting, evaluation, research agents</td><td>3,562 lines</td></tr>
-<tr><td><code>indicators/</code></td><td>Technical indicators (RSI, MACD, etc.)</td><td>171 lines</td></tr>
-<tr><td><code>dataflow/</code></td><td>Event streaming, pipeline orchestration</td><td>585 lines</td></tr>
-<tr><td><code>store/</code></td><td>Persistence</td><td>382 lines</td></tr>
-<tr><td><code>marketmaking_api/</code></td><td>HTTP API for market making</td><td>1,569 lines</td></tr>
-</tbody></table>
-<p>Total: <strong>9,768 lines</strong>, or about 11% of the entire ares codebase.</p>
-<hr />
-<h2 id="what-it-does">What It Does</h2>
-<h3 id="market-data-market">Market Data (<code>market/</code>)</h3>
-<p>Three data source adapters:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_quant/market/yahoo.go</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> YahooSource</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    client</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">http</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Client</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">y </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">YahooSource</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Fetch</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> symbol</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> range_</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">MarketData</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">)</span></span></code></pre>
-<ul>
-<li><strong>Yahoo Finance</strong> — historical OHLCV data</li>
-<li><strong>CoinGecko</strong> — cryptocurrency prices</li>
-<li><strong>Polymarket</strong> — prediction market odds</li>
-</ul>
-<p>Each implements a common <code>DataSource</code> interface.</p>
-<h3 id="market-making-marketmaking">Market Making (<code>marketmaking/</code>)</h3>
-<p>A complete market making engine:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_quant/marketmaking/</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> QuoteEngine</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    config</span><span style="color: #F9E2AF;font-style: italic;">      QuoteEngineConfig</span></span>
-<span class="giallo-l"><span>    inventory</span><span style="color: #94E2D5;">   *</span><span style="color: #F9E2AF;font-style: italic;">Inventory</span></span>
-<span class="giallo-l"><span>    riskLimit</span><span style="color: #CBA6F7;">   float64</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Inventory</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    cash</span><span style="color: #CBA6F7;">        float64</span></span>
-<span class="giallo-l"><span>    position</span><span style="color: #CBA6F7;">    float64</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // ...</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>The engine:</p>
-<ol>
-<li>Receives <code>MarketDataEvent</code>s</li>
-<li>Computes bid/ask quotes based on inventory and risk</li>
-<li>Adjusts spread based on volatility</li>
-<li>Includes a <code>ChaosExecutor</code> for fault injection testing</li>
-</ol>
-<p><strong>Honest reflection</strong>: The market making engine is genuinely useful — it tests the agent framework under high-frequency, stateful conditions. But it's also 1,328 lines of domain-specific code that 99% of ares users will never touch.</p>
-<h3 id="portfolio-portfolio">Portfolio (<code>portfolio/</code>)</h3>
-<p>Position tracking and risk metrics:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_quant/portfolio/</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Portfolio</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
-<span class="giallo-l"><span>    positions</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Position</span></span>
-<span class="giallo-l"><span>    cash</span><span style="color: #CBA6F7;">      float64</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
-<span class="giallo-l"></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Portfolio</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> SharpeRatio</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> float64</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Portfolio</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> MaxDrawdown</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> float64</span></span>
-<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">p </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">Portfolio</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> VaR</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">confidence</span><span style="color: #CBA6F7;"> float64</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> float64</span></span></code></pre>
-<p>Standard quant finance metrics. The implementation is correct but unremarkable.</p>
-<h3 id="research-research">Research (<code>research/</code>)</h3>
-<p>The largest sub-package (3,562 lines):</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>research/</span></span>
-<span class="giallo-l"><span>├── agents/           # Research agents (base, interface, mock)</span></span>
-<span class="giallo-l"><span>├── evaluation.go     # Evaluator for historical decisions</span></span>
-<span class="giallo-l"><span>├── backtest.go       # Backtesting framework</span></span>
-<span class="giallo-l"><span>└── ...</span></span></code></pre>
-<p>Research agents use the ares LLM client to analyze market data and produce trading recommendations. The <code>Evaluator</code> scores these recommendations against historical outcomes.</p>
-<p><strong>Honest reflection</strong>: The research module is where "experiment" most clearly shows. The agents are powerful but the evaluation is basic — we compare predicted ratings against future returns, but we don't account for market regimes, transaction costs, or selection bias. This is prototype-quality research tooling.</p>
-<hr />
-<h2 id="the-mcp-integration">The MCP Integration</h2>
-<p>The quant module exposes its tools via MCP (Model Context Protocol):</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// internal/ares_quant/tools.go</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// Data sources (Yahoo Finance, Polymarket) and computations (technical indicators)</span></span>
-<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// are wrapped as MCP Tool instances registered in the global tool Registry.</span></span></code></pre>
-<p>This means an ares agent can call quant tools the same way it calls any other tool:</p>
-<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>req</span><span style="color: #94E2D5;"> :=</span><span style="color: #F9E2AF;font-style: italic;"> dashboard</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">AgentRequest</span><span style="color: #9399B2;">{</span></span>
-<span class="giallo-l"><span>    MCPTool</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;financial_data&quot;</span><span style="color: #9399B2;">,</span></span>
-<span class="giallo-l"><span>    MCPArgs</span><span style="color: #9399B2;">:</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">]</span><span style="color: #F9E2AF;font-style: italic;">any</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">&quot;ticker&quot;</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;AAPL&quot;</span><span style="color: #9399B2;">},</span></span>
-<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
-<p>The agent doesn't know it's calling a quant tool — it just sees an MCP tool with a schema and a handler.</p>
-<p><strong>Honest reflection</strong>: The MCP integration is the one part of the quant module that's genuinely well-architected. By exposing quant tools through MCP, we get:</p>
-<ul>
-<li>Schema validation for free</li>
-<li>Tool discovery for free</li>
-<li>Composability with non-quant tools for free</li>
-</ul>
-<p>If we ever extract the quant module into a separate repo, the MCP interface is the clean boundary.</p>
-<hr />
-<h2 id="the-honest-assessment">The Honest Assessment</h2>
-<p>In <code>01-architecture-overview-deep-dive.md</code>, I wrote:</p>
+        <h1 id="ares-architecture-deep-dive-xxiii-the-quant-trading-module-an-honest-statement-it-does-not-exist-in-this-codebase-0-3-x">ares Architecture Deep Dive (XXIII): The "Quant Trading Module" — An Honest Statement: It Does Not Exist in This Codebase (0.3.x)</h1>
 <blockquote>
-<p><strong>坦诚反思</strong>：代码库比需要的大。量化交易模块、面试 demo、MCP dashboard——这些是实验，应该放在独立仓库。核心（Runtime + Workflow + Memory + Events）是扎实的。外围还在找自己的形状。</p>
+<p>This article is different from every other in the series. It's not "look at this great architecture." It's "there was supposed to be an architecture here, and there isn't."
+Plainly: <strong>the current repository contains no quantitative trading implementation code.</strong> Everything you see labeled <code>internal/ares_quant</code>, <code>internal/quant</code>, and <code>examples/quant-trading</code> in the old version of this article, in <code>CAPABILITY-MAP</code>, in <code>ARCHITECTURE</code>, and even in a dedicated <code>docs/en/development/quant-trading.md</code> — <strong>does not exist.</strong></p>
 </blockquote>
-<p>This is still true in v0.2.8. The quant module is:</p>
-<ol>
-<li><strong>Useful for testing</strong> — high-frequency, stateful, error-prone operations stress the agent framework</li>
-<li><strong>Useful for demos</strong> — "watch an agent trade" is compelling</li>
-<li><strong>Not useful for most users</strong> — 99% of ares users don't need a market making engine</li>
-<li><strong>A maintenance burden</strong> — 9,768 lines that need to be kept up to date with Go versions, dependencies, and ares API changes</li>
-</ol>
-<h3 id="the-decision-we-keep-deferring">The Decision We Keep Deferring</h3>
-<p>v0.2.5: "We should extract this."
-v0.2.6: "After the SDK refactor, we'll extract this."
-v0.2.7: "We'll extract this in the next release."
-v0.2.8: "We'll extract this in the next release."</p>
-<p><strong>The honest truth</strong>: We keep not extracting it because:</p>
-<ul>
-<li>The MCP integration makes it genuinely useful for agent testing</li>
-<li>Extracting it means breaking the MCP tool registration</li>
-<li>It's not hurting anything sitting where it is</li>
-</ul>
-<p>But it's wrong that a 9,768-line trading module lives in a general agent framework. It should be a separate <code>ares-quant</code> repo that depends on <code>ares</code>, not a sub-package of <code>ares</code> itself.</p>
 <hr />
-<h2 id="lessons">Lessons</h2>
-<p>The quant module teaches three lessons:</p>
+<h2 id="yi-the-honest-conclusion-up-front">一、The honest conclusion, up front</h2>
+<p>I grepped the entire repository. The result is unambiguous:</p>
+<table><thead><tr><th>What I expected to find</th><th>Actual result</th></tr></thead><tbody>
+<tr><td><code>internal/ares_quant/</code> package</td><td><strong>does not exist</strong></td></tr>
+<tr><td><code>internal/quant/</code> package</td><td><strong>does not exist</strong></td></tr>
+<tr><td><code>examples/quant-trading/</code> demo</td><td><strong>does not exist</strong></td></tr>
+<tr><td><code>plan/quan/quant-implementation-plan.md</code></td><td><strong>does not exist</strong></td></tr>
+<tr><td><code>internal/dashboard/</code> (cited by the old draft)</td><td><strong>does not exist</strong> (deleted; see Deep Dive XVI)</td></tr>
+<tr><td>Any <code>market/</code>, <code>marketmaking/</code>, <code>portfolio/</code>, <code>research/</code>, <code>indicators/</code>, <code>dataflow/</code>, <code>store/</code>, <code>marketmaking_api/</code> sub-package</td><td><strong>does not exist</strong></td></tr>
+</tbody></table>
+<p>If you grep <code>quant</code>, the hits are misleadingly unrelated:</p>
+<ul>
+<li><code>internal/fabric/task/quantum.go</code> and <code>internal/kernel/quantum_hook.go</code> — these are <strong>execution quanta</strong> (a "one execution step" concept in DAG orchestration), nothing to do with trading.</li>
+<li>The word "quanta" in <code>docs/25-config-yaml-guide</code> is the same scheduling concept.</li>
+<li><code>grep position</code> / <code>trading</code> / <code>strategy</code> hits resolve to <code>regex match positions</code>, <code>strategy_adapter.go</code> (an evolution strategy), and <code>progress</code> — all unrelated.</li>
+</ul>
+<p>The old article claimed the quant module had <strong>9,768 lines (~11% of the codebase)</strong>, a market-making engine, portfolio risk metrics, a backtesting framework, research agents, Yahoo/CoinGecko/Polymarket data sources, SQLite storage, MCP tool registration… <strong>None of that is backed by any code.</strong> Those claims should be flagged <strong>unverified（待核实）</strong> — but the truth is stronger than "unverified": it's "verified absent."</p>
+<hr />
+<h2 id="er-so-what-about-quant-actually-survives-in-the-repo">二、So what about "quant" actually survives in the repo?</h2>
+<p>Not much — but one thing is real: <strong>a document, not code.</strong></p>
+<h3 id="2-1-docs-en-development-quant-trading-md-removed-2026-09-14">2.1 <code>docs/en/development/quant-trading.md</code> (removed 2026-09-14)</h3>
+<p>This was a <strong>design guide / implementation plan</strong> — literally titled "ares for Quant — 量化交易开发指南." It describes what <strong>should be built</strong>: 8 agent roles (fundamentals / sentiment / news / technical analysts, bull &amp; bear researchers, trader, risk manager, portfolio manager), plus an architecture for <code>internal/quant/</code> (~1,850 lines) and <code>examples/quant-trading/</code> (~1,710 lines) with <strong>line-count estimates</strong>.</p>
+<p>But the giveaway is that it's a blueprint, not a snapshot of reality: the interfaces it cites are all in deleted or nonexistent packages.</p>
+<table><thead><tr><th>Interface cited in the doc</th><th>Package path (as written)</th><th>Reality</th></tr></thead><tbody>
+<tr><td><code>dashboard.AgentRequest</code> / <code>orch.CreateAgent()</code></td><td><code>ares/internal/dashboard</code></td><td><code>internal/dashboard</code> <strong>was deleted</strong></td></tr>
+<tr><td><code>graph.NewGraph()</code></td><td><code>ares/internal/workflow/graph</code></td><td>real DAG lives in <code>internal/fabric/task</code> style; path is wrong</td></tr>
+<tr><td><code>internal/quant/market/polymarket.go</code> <code>FetchMarket</code></td><td>—</td><td>file does not exist</td></tr>
+<tr><td><code>internal/quant/market/yahoo.go</code></td><td>—</td><td>file does not exist</td></tr>
+</tbody></table>
+<p>The doc also references <code>plan/quan/quant-implementation-plan.md</code> — <strong>that plan file does not exist either.</strong> The best this document can serve as evidence of is: "we planned it, even wrote a blueprint, but either the code was never landed or it has since been removed."</p>
+<h3 id="2-2-the-unverified-dai-he-shi-entries-in-capability-map-and-architecture">2.2 The "unverified（待核实）" entries in <code>CAPABILITY-MAP</code> and <code>ARCHITECTURE</code></h3>
+<ul>
+<li>
+<p><code>docs/reference/CAPABILITY-MAP.md</code> / <code>docs/reference/CAPABILITY-MAP.en.md</code>:</p>
+<blockquote>
+<p>Quantitative trading | <code>internal/ares_quant</code> | Market making, indicators, portfolio management, research</p>
+</blockquote>
+<p>A row that lists <code>internal/ares_quant</code>, yet <strong>no such package exists in any code directory.</strong> (待核实: it may describe an removed or never-merged version.)</p>
+</li>
+<li>
+<p><code>docs/zh/ARCHITECTURE.md</code> (removed 2026-09-14, superseded by the repo-root <code>ARCHITECTURE.md</code>):</p>
+<ul>
+<li>draws <code>QUANT["internal/ares_quant&lt;br/&gt;Portfolio / Market / Research / MarketMaking / Indicators"]</code> in its diagram</li>
+<li>tabulates <code>internal/ares_quant | 量化 | 投资组合模拟、市场数据、研究记忆</code></li>
+</ul>
+<p>These diagrams and tables describe <strong>modules on paper, not implemented modules.</strong> There is no <code>ares_quant</code> in <code>internal/</code>.</p>
+</li>
+</ul>
+<h3 id="2-3-the-old-article-itself-real-but-its-content-is-not">2.3 The old article itself (real, but its content is not)</h3>
+<p><code>docs/articles/zh/23-quant-trading.md</code> and <code>docs/articles/en/23-quant-trading.md</code> exist, but their content is fabricated — they describe a module that doesn't exist. This rewrite (and its Chinese counterpart) exists precisely to correct that.</p>
+<hr />
+<h2 id="san-framework-capabilities-that-genuinely-exist-what-a-quant-build-could-rest-on">三、Framework capabilities that genuinely exist (what a quant build could rest on)</h2>
+<p>To avoid misleading people, let me be precise about which ares capabilities cited by the quant blueprint <strong>are real</strong>:</p>
+<table><thead><tr><th>ares capability</th><th>Real package</th><th>Note</th></tr></thead><tbody>
+<tr><td><code>EventStore</code></td><td><code>internal/ares_events</code></td><td>real, <code>Append/Read/Subscribe</code></td></tr>
+<tr><td>Arena fault injection</td><td><code>internal/runtime/arena</code></td><td>real, wired to the Flight Recorder via <code>FlightBridge</code></td></tr>
+<tr><td>Memory distillation</td><td><code>internal/runtime/memory</code></td><td>real</td></tr>
+<tr><td>MCP tool registry</td><td><code>internal/mcpclient</code> / <code>tools</code></td><td>real</td></tr>
+<tr><td>DAG workflows</td><td><code>internal/fabric/task</code></td><td>real, includes <code>quantum.go</code> (note: execution <em>quanta</em>, not trading)</td></tr>
+</tbody></table>
+<p>In other words: <strong>nothing stops you from building a quant research system on ares — the framework's capabilities are all here — but the ares repo itself ships no trading logic.</strong> To use it you'd build those modules from scratch yourself, not import a ready-made <code>internal/ares_quant</code>.</p>
+<hr />
+<h2 id="si-what-this-says-a-lesson-not-an-excuse">四、What this says (a lesson, not an excuse)</h2>
+<p>I came to write "here's the quant module we built." To write it truthfully I actually went and read the code — and found there was none. That alone is a loud wake-up call, worth writing down:</p>
 <ol>
-<li>
-<p><strong>Experiments should be labeled as experiments.</strong> The quant module grew because we treated it as production code. If we'd labeled it <code>experimental/</code> from day one, we'd have been more ruthless about extracting or deleting it.</p>
-</li>
-<li>
-<p><strong>Domain-specific code leaks.</strong> A market making engine has different requirements than an agent framework (latency, statefulness, error recovery). Mixing them means compromising both.</p>
-</li>
-<li>
-<p><strong>Honesty is a feature.</strong> The architecture overview calls out the quant module as an experiment. This article does the same. Users deserve to know what's production-grade and what's not.</p>
-</li>
+<li><strong>Docs and reality drift apart — faster than you'd think.</strong> <code>CAPABILITY-MAP</code>, <code>ARCHITECTURE</code>, and the old article still talk about a module that was removed or never landed. When the paths those docs cite (<code>internal/dashboard</code>) are also gone, the drift compounds.</li>
+<li><strong>The flip side of "experiments should be labeled as experiments" is this: a module that doesn't exist shouldn't masquerade in the docs as if it does.</strong> Blueprints and current state must be labeled separately. This rewrite strikes the "fake-existent" module off the capability list, restoring it to an honest "planned/removed" state.</li>
+<li><strong>The framework's real value is what deserves the spotlight.</strong> ares' solid core is Runtime + Workflow + Memory + Events + Flight Recorder. Letting a "quant demo" impersonate a core capability only makes people who try to use it come up empty.</li>
 </ol>
-<p><strong>The best codebase is the one that knows what it is and what it isn't.</strong> ares is an agent framework. It's not a quant trading system. The quant module is useful, but it's in the wrong place.</p>
+<p><strong>The most honest closing line</strong>: the current (0.3.x) ares repository <strong>has no quantitative trading module.</strong> If you see <code>internal/ares_quant</code> written anywhere, it's either stale documentation or an as-yet-unlanded blueprint. The codebase has no such thing.</p>
+<hr />
+<h3 id="appendix-verify-it-yourself">Appendix: verify it yourself</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="shellscript"><span class="giallo-l"><span style="color: #F38BA8;font-style: italic;">cd</span><span style="color: #A6E3A1;"> /Users/scc/go/src/goagent</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">find</span><span style="color: #A6E3A1;"> . -type d -name &quot;*quant*&quot;</span><span style="color: #9399B2;font-style: italic;">                              # only quantum.go scheduling code, no ares_quant</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">grep</span><span style="color: #A6E3A1;"> -rli &quot;quant\|marketmaking&quot; internal/ examples/</span><span style="color: #9399B2;font-style: italic;">        # hits are quantization/quantum/unrelated</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">grep</span><span style="color: #A6E3A1;"> -ri &quot;ticker\|sharpe\|drawdown\|backtest\|polymarket\|coingecko&quot; internal/ examples/</span><span style="color: #9399B2;font-style: italic;">  # no trading code</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">ls</span><span style="color: #A6E3A1;"> examples/</span><span style="color: #9399B2;font-style: italic;">   # no quant-trading</span></span></code></pre>
+<p><em>Every other architecture article in this series describes code that actually exists; this one (article 23) is the series' honest-disclaimer exception.</em></p>
 
     </div>
             <div class="pagination">
@@ -229,12 +176,12 @@ v0.2.8: "We'll extract this in the next release."</p>
                 </div>
                 <div class="pagination__buttons">
                         <span class="button previous">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/24-1-ga-deep-dive/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">GA Evolution System — When Strategies Learn to Mate</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/24-1-ga-deep-dive/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">GA Evolution Deep Dive — From a Single Strategy to a Pluggable Population Engine</span></a>
                         </span>
                     
                     
                         <span class="button next">
-                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/22-config-system/"><span class="button__text">Config System — One YAML, Twelve Modules</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                            <a href="https://Timwood0x10.github.io/myblog/log/ARES/22-config-system/"><span class="button__text">Config System — One YAML, Seventeen Sections</span>&nbsp;<span class="button__icon">&#8594;</span></a>
                         </span>
                     </div>
             </div>
