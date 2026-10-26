@@ -1570,7 +1570,7 @@ fat LTO：链接器先拿到<strong>所有</strong> crate 的 LLVM IR → 重新
 </tbody></table>
 <h3 id="tong-su-jie-shi">通俗解释</h3>
 <blockquote>
-<p>想象一个场景（<strong>这个写法才是真正会被拒绝的</strong>）：</p>
+<p>想象一个场景：</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> r</span><span style="color: #9399B2;">;</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">    {</span></span>
@@ -1650,7 +1650,7 @@ fat LTO：链接器先拿到<strong>所有</strong> crate 的 LLVM IR → 重新
 </tbody></table>
 <hr />
 <h2 id="4-ji-ge-rong-yi-gao-hun-de-dian">4. 几个容易搞混的点</h2>
-<h3 id="1-zuo-yong-yu-sheng-ming-zhou-qi">① "作用域" ≠ "生命周期"</h3>
+<h3 id="1-zuo-yong-yu-sheng-ming-zhou-qi">1、 "作用域" ≠ "生命周期"</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> f</span><span style="color: #9399B2;">() {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> x</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">);</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">    {</span></span>
@@ -1664,7 +1664,7 @@ fat LTO：链接器先拿到<strong>所有</strong> crate 的 LLVM IR → 重新
 这就是为什么 Rust 里很多"看起来该报错"的代码<strong>不报错</strong>——NLL 比"词法作用域"更精确。</p>
 <p>再往后是 <strong>Polonius</strong>（基于 Datalog 重写的借用分析），能处理 NLL 目前仍会误报的场景（例如条件分支里提前 return 后的借用），尚未默认启用。</p>
 </blockquote>
-<h3 id="2-drop-x-bu-shi-shou-dong-jie-shu-lifetime-de-kai-guan">② <code>drop(x)</code> 不是"手动结束 lifetime"的开关</h3>
+<h3 id="2-drop-x-bu-shi-shou-dong-jie-shu-lifetime-de-kai-guan">2、 <code>drop(x)</code> 不是"手动结束 lifetime"的开关</h3>
 <p>这里有个容易踩的坑：</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// a. Copy 类型：drop 的是副本，x 依然有效</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> x</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;">;</span></span>
@@ -1684,13 +1684,13 @@ fat LTO：链接器先拿到<strong>所有</strong> crate 的 LLVM IR → 重新
 <p>报错点在 <strong><code>drop(x)</code> 那一行</strong>，原因是"被借用的值不能 move"，<strong>不是</strong> <code>println!</code> 处出现运行时悬空。</p>
 <p>在<strong>安全 Rust 里造不出悬空引用</strong>——这正是 lifetime 的价值。想制造真正悬空，只能进 <code>unsafe</code>（例如 <code>Box::into_raw</code> 后手工释放再解引用）。</p>
 </blockquote>
-<h3 id="3-sheng-ming-zhou-qi-nei-cun-wei-zhi">③ 生命周期 ≠ 内存位置</h3>
+<h3 id="3-sheng-ming-zhou-qi-nei-cun-wei-zhi">3、 生命周期 ≠ 内存位置</h3>
 <blockquote>
 <p><code>&amp;'a T</code> 里的 <code>'a</code> <strong>不告诉你 T 在栈还是堆</strong>。它只说"T 至少活到 <code>'a</code> 结束"。
 具体在栈还是堆，由 <code>let</code>（栈）/ <code>Box</code>（堆）/ <code>static</code>（静态区）决定。
 lifetime 是<strong>时间维度</strong>，不是<strong>空间维度</strong>。</p>
 </blockquote>
-<h3 id="4-suo-you-quan-zhuan-yi-hou-yuan-bian-liang-si-liao">④ 所有权转移后，原变量"死"了</h3>
+<h3 id="4-suo-you-quan-zhuan-yi-hou-yuan-bian-liang-si-liao">4、 所有权转移后，原变量"死"了</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> f</span><span style="color: #9399B2;">() {</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> s</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">);</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> t</span><span style="color: #94E2D5;"> =</span><span> s</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">       // 所有权转移（move）</span></span>
@@ -1701,7 +1701,7 @@ lifetime 是<strong>时间维度</strong>，不是<strong>空间维度</strong>�
 <p>这不是 lifetime 问题，是<strong>所有权</strong>问题：<code>s</code> 被 move 了，不再是"有效变量"。
 但效果类似：<code>&amp;s</code> 在 <code>s</code> 被 move 后无效。注意报错码不同（E0382 vs E0597/E0505），能反过来提示你问题出在哪一层。</p>
 </blockquote>
-<h3 id="5-static-yu-const-bu-shi-yi-hui-shi">⑤ <code>'static</code> 与 <code>const</code> 不是一回事</h3>
+<h3 id="5-static-yu-const-bu-shi-yi-hui-shi">5、 <code>'static</code> 与 <code>const</code> 不是一回事</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> s</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #F9E2AF;font-style: italic;"> str</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;literal&quot;</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">   // 字符串字面量本身就在静态区</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #FAB387;"> N</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> i32</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;">;</span></span>
 <span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> r</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #CBA6F7;"> i32</span><span style="color: #94E2D5;"> = &amp;</span><span style="color: #F9E2AF;font-style: italic;">N</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">          // ✅ 靠 const promotion 提升为 &#39;static</span></span></code></pre>
@@ -1778,12 +1778,6 @@ lifetime 是<strong>时间维度</strong>，不是<strong>空间维度</strong>�
 <p>"Rust 的 lifetime 不是'确保所有变量有效'，而是<strong>专门管引用（borrow）</strong>：借用检查器在 <strong>MIR</strong> 上做 NLL 分析，证明每个 <code>&amp;T</code> 的使用区间不超出 <code>T</code> 的存活区间，同时保证 <code>&amp;mut</code> 独占、<code>&amp;</code> 共享。拥有变量不需要 lifetime——drop 顺序保证它们在作用域内有效。裸指针（<code>unsafe</code>）编译器不管，你自己保证。堆还是栈<strong>不影响</strong> lifetime 语义——lifetime 是时间维度（活多久），不是空间维度（在哪）。编译器能推断（elision）的场景由三条固定规则给出：每个输入引用独立、只有一个输入则输出继承、有 <code>&amp;self</code> 则输出继承 self；规则不足以唯一确定时必须手写，因为语言不允许编译器替你猜。所有检查都在编译期完成，零运行时开销。"</p>
 </blockquote>
 <hr />
-<h2 id="dai-shen-wa">待深挖</h2>
-<ul>
-<li>NLL 的 region inference 细节：liveness constraints → region 约束图 → SCC 压缩求最小解</li>
-<li><code>drop</code> 的精确顺序：嵌套作用域、临时值（temporary lifetime extension）、结构体字段按声明序 drop</li>
-<li><strong>Polonius</strong>：用 Datalog 重写的借用分析，解决 NLL 目前仍存在的误报</li>
-</ul>
 
                         </div>
                 </div>
@@ -2312,7 +2306,7 @@ lifetime 是<strong>时间维度</strong>，不是<strong>空间维度</strong>�
 <li><code>Mutex</code> 负责同步对任务状态的访问。</li>
 <li><code>Send</code> 和 <code>Sync</code> 负责在类型层面约束跨线程使用是否合法。</li>
 </ul>
-<p>不过，如果你的任务对象本身包含非线程安全的资源，例如某些线程绑定的句柄，那么它可能无法直接满足 <code>Send</code>。</p>
+<p>不过，如果任务对象本身包含非线程安全的资源，例如某些线程绑定的句柄，那么它可能无法直接满足 <code>Send</code>。</p>
 <p>这时应当考虑让资源留在所属线程，由其他线程发送消息请求它执行操作，而不是强行把资源跨线程移动。</p>
 <p>这种设计在编译器服务、运行时、事件循环和 Agent Scheduler 中都很常见。</p>
 <hr />
@@ -2333,8 +2327,6 @@ lifetime 是<strong>时间维度</strong>，不是<strong>空间维度</strong>�
 <p><code>Send</code> 保证值可以安全地跨线程转移；<code>Sync</code> 保证共享引用可以安全地跨线程传递。Rust 再通过所有权、借用、自动 Trait 推导和同步原语，把大量线程安全问题提前到编译期检查。</p>
 </blockquote>
 <hr />
-<h2 id="yan-shen">延伸</h2>
-<p>如果想进一步深入底层，下一步最值得研究的是 <code>UnsafeCell</code>、<code>Cell</code>、<code>RefCell</code>、<code>Mutex</code> 和 <code>RwLock</code> 的关系。理解这一组概念后，就能看懂为什么 Rust 允许某些类型在 <code>&amp;self</code> 方法中修改内部状态，同时又能通过 <code>Send</code> 和 <code>Sync</code> 阻止不安全的并发访问。</p>
 
                         </div>
                 </div>
@@ -2396,7 +2388,7 @@ lifetime 是<strong>时间维度</strong>，不是<strong>空间维度</strong>�
 <span class="giallo-l"><span style="color: #94E2D5;">    *</span><span>ptr</span></span>
 <span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
 <p>传入的 <code>ptr</code> 一定有效吗？不一定。调用者可能传入空指针、已释放的地址、未对齐的地址、未初始化的内存，或指向其他类型对象的地址。</p>
-<p>因此这个函数有一个<strong>隐含的安全契约</strong>：调用者必须保证指针满足解引用所需的全部条件。</p>
+<p>因此这个函数有一个<strong>隐含的安全契约</strong>：调用者必须保证<strong>指针满足解引用所需的全部条件</strong>。</p>
 <p>把契约写出来：</p>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// # Safety</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">///</span></span>
@@ -2411,7 +2403,7 @@ lifetime 是<strong>时间维度</strong>，不是<strong>空间维度</strong>�
 <li>函数内部的 <code>unsafe</code> 块：<strong>实现者</strong>确保其中的操作符合要求。</li>
 </ol>
 <p>Rust 2024 Edition 起，<code>unsafe fn</code> 内部的 unsafe 操作需要显式写成 <code>unsafe {}</code> 块（<code>unsafe_op_in_unsafe_fn</code> 在该 edition 默认开启警告），以便把安全边界画清楚。</p>
-<p>面试时的一句话概括：<strong>unsafe 把部分安全责任从编译器转移给程序员，但不会取消这些操作必须满足的安全要求。</strong></p>
+<p>一句话概括：<strong>unsafe 把部分安全责任从编译器转移给程序员，但不会取消这些操作必须满足的安全要求。</strong></p>
 <h3 id="2-1-dui-wai-an-quan-dui-nei-unsafe">2.1 对外安全，对内 unsafe</h3>
 <pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">/// 读取一个有效的 i32。</span></span>
 <span class="giallo-l"><span style="color: #9399B2;font-style: italic;">///</span></span>
@@ -3013,7 +3005,7 @@ lifetime 是<strong>时间维度</strong>，不是<strong>空间维度</strong>�
                     
                         <div class="post-content">
                             <p>Rust 的所有权体系是理解 <code>Drop</code>、<code>Drop Check</code>、<code>PhantomData</code> 与资源管理的基础，也是把生命周期、型变、<code>unsafe</code> 与 FFI 串起来的那条主线。</p>
-<p>这里不只讲普通 Rust 的所有权规则，重点在三件事：编译器如何追踪一个值的所有权、如何决定何时析构，以及自己实现底层容器或 FFI 封装时，如何保证内存只被正确释放一次。</p>
+<p>这里不只讲普通 Rust 的所有权规则，重点在三件事：<strong>编译器如何追踪一个值的所有权、如何决定何时析构，以及自己实现底层容器或 FFI 封装时，如何保证内存只被正确释放一次。</strong></p>
 <p>主线参考 <a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/ownership.html">Rustonomicon: Ownership and Lifetimes</a>，并逐步延伸到后续章节。</p>
 <hr />
 <h2 id="yi-xian-jian-li-zheng-ti-zhi-shi-di-tu">一、先建立整体知识地图</h2>
@@ -4628,7 +4620,6 @@ lifetime 是<strong>时间维度</strong>，不是<strong>空间维度</strong>�
 <p>用 <code>ptr::read()</code> 从容器取出一个 <code>String</code>，但忘了减 <code>len</code>，容器析构时会发生什么？</p>
 <p>三题分别对应：未初始化内存、部分初始化的清理责任、所有权转移与重复析构。</p>
 <hr />
-<p>下一篇我会写 <code>Vec&lt;T&gt;</code> 的真实内存布局与扩容机制：RawVec、分配布局、重新分配、元素移动，以及零大小类型为什么让指针运算变得特殊。</p>
 
                         </div>
                 </div>
