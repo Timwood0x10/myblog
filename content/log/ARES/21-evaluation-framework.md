@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XXI): Evaluation Framework — How We Know If an Agent Is Actually Good (0.3.x)
-
 "How do you know your agent improved?" This question keeps haunting us. The evolution engine generates new strategies and the candidate verification pipeline runs preserved-case regressions — but we need an objective way to say "strategy A is X% better than strategy B."
 
 The evaluation framework (`internal/runtime/eval`, ~3,000 lines) is part of the answer. It turns "looks better to me" into reproducible scores. **A disclaimer up front: it is far from a general-purpose "evaluate anything" platform.** More precisely it's a small library of "score this agent output" evaluators, plus a regression gate that actually compares strategies. This article covers only what really exists in the code.

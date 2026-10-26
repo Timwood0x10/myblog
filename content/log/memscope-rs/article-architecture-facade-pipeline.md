@@ -11,8 +11,6 @@ toc = true
 series = "memscope-rs"
 +++
 
-# Architecture Deep Dive: From Facade to Event Store, Snapshot, Analysis, and Render
-
 `memscope-rs` is not a single monolithic tracker. The project is organized as a set of connected engines:
 
 - capture;

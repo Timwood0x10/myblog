@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (II): Agent IPC — Peer-Mesh Communication Primitives (0.3.x)
-
 > When it comes to multi-Agent systems, most people's first reaction is: "How do Agents talk to each other? Via HTTP or WebSocket? Through a message queue?"
 > ares's answer is **Agent IPC** — a purely in-process peer-mesh message bus with six primitives, no Leader relay.
 

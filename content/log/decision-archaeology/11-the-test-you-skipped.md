@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 你跳过的那条测试
-
 先讲这个模块的由来。我当初测 Agent 稳定性，手动 kill 了一个进程。Agent 自动复活了，还继续干之前没干完的活。我当时挺兴奋——但紧接着想了一句话：
 
 > This was just a manual test. Can I automate it?

@@ -10,8 +10,6 @@ series = ["garbage-code-hunter"]
 series = "garbage-code-hunter"
 +++
 
-# Why Multi-Language Code Quality Analysis Is Hard
-
 > **Problem**: You have a monorepo with Rust services, a Go gateway, Python ML pipelines, a TypeScript frontend, and Java Android code. Your CTO wants "one dashboard for code quality." What do you do?
 
 ## The Landscape of Pain

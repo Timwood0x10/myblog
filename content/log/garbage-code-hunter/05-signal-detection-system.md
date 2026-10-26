@@ -10,8 +10,6 @@ series = ["garbage-code-hunter"]
 series = "garbage-code-hunter"
 +++
 
-# The Signal Detection System
-
 > **Question**: A codebase has 200 different "rules" that each flag a specific pattern. 120 of them fire on every file. Developers ignore the output. Sound familiar?
 
 ## The Rule Explosion Problem

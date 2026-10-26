@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XVII): The SDK Layer — a Package That Wraps the Internals
-
 Every framework has the same last-mile problem. The internals are beautiful — clean interfaces, pluggable providers, composable pipelines. Then the user shows up and asks: "How do I make it go?"
 
 The SDK package (`sdk/`) is that last mile: one import, a handful of functional options, and the LLM, tools, memory, knowledge, evolution, and MCP are all wired up.

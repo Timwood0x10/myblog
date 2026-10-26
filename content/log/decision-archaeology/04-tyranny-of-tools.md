@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 工具的暴政
-
 > **Problem**: garbage-code-hunter 要分析 11 种语言的代码质量。每种语言有自己的 AST 结构、命名规范、惯用模式。工具怎么避免"把所有问题都变成钉子"？
 
 ## 锤子和钉子

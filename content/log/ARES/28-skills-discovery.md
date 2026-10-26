@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XXVIII): Skills Discovery — A Capability Catalog That Never Scans the Disk (0.3.x)
-
 > 0.3.x update: Skills discovery has landed as the **Capability Fabric** in `internal/runtime/protocol/skills` — the framework-native skill discovery, indexing, and loading system. The `Catalog` facade plus `SourceManager` aggregates four declared source kinds (project / user / registered / experience, where registered itself falls into directory, git, and http-oci). `CatalogTools` exposes a quintet of catalog tools (skill_search/load/activate/list/experience). `ExperienceConfidenceSource` adapts the learned prior into a `taskfabric.ConfidenceSource` and feeds it into the Kernel Scheduler's fabric.
 
 > Note: This article is grounded in the actual code (all of `internal/runtime/protocol/skills`: source.go / indexer.go / discovery.go / resolver.go / loader.go / experience.go / experience_store.go / experience_confidence.go / git_source.go / http_source.go / changes.go / config.go / tools.go / types.go / fts5.go / catalog.go) — the dedicated Capability-Fabric discovery-chain article in the docs series.

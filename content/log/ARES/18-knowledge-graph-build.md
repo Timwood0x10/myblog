@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XVIII): Knowledge Graph Build — From Provider Data to a Queryable Graph (AKF/AKG) (0.3.x)
-
 > Note: This article is based on the real code (`internal/knowledge/` core types, the pipeline orchestration in `runtime/runtime.go`, object processing in `pipeline.go`, `planner/`, `provider/`, `linker/`, `relation_extract.go`, `quality.go`, `compiler/`, `store/`, `service/adapter.go`, and `docs_articles_test.go`). Every symbol and every flow was read from the source. Anything I cannot verify, or anything the docs hype up, is marked (待核实) rather than glorified.
 
 ---

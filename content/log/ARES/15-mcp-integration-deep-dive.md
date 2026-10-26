@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XV): MCP Integration — Teaching Agents to Use Tools (0.3.x)
-
 The old way of giving an Agent a tool went like this: write a Go struct that implements the `core.Tool` interface, register it into the `Registry`, done. Every new tool meant writing code, compiling, and deploying again.
 
 Then someone asked: "what if our users want to plug in *their own* tools without you writing any code?" The architecture had never considered "tools that come from outside."

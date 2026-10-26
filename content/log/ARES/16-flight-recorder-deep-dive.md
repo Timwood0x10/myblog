@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XVI): Flight Recorder — Agent Black Box and Execution Trace Replay (0.3.x)
-
 > Ever had this happen…
 > An Agent mysteriously froze in production. You check the logs — nothing. You check the metrics — normal. You stare at the screen and ask yourself: *"What the hell just happened in those few seconds?"*
 > Airplanes have black boxes. Why don't Agents?

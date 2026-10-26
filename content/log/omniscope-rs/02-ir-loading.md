@@ -10,8 +10,6 @@ series = ["omniscope-rs"]
 series = "omniscope-rs"
 +++
 
-# OmniScope Architecture Deep Dive (Part 2): IR Loading — 8 Ways to Wrestle with LLVM IR
-
 > If I had to find one word to describe the LLVM IR loading experience, it would be "Schrödinger's IR file."
 >
 > A `.ll` file, before you read it, is simultaneously likely to load successfully and also likely to have you chasing a core dump at 3 AM.

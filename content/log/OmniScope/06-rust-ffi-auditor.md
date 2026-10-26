@@ -10,8 +10,6 @@ series = ["OmniScope"]
 series = "OmniScope"
 +++
 
-# Rust FFI Auditor: Reconstructing and Checking Cross-Language Ownership Protocols
-
 Rust FFI risk often appears when Rust’s ownership and borrowing protocols cross an ABI boundary. `RustFfiAuditor` maps those protocols back onto LLVM IR patterns that can be inspected statically.
 
 ## Start with the problem: Rust cannot verify what C does later

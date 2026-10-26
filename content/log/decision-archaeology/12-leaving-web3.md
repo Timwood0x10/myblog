@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 离开 Web3 的那天
-
 > **Problem**: 我 fork 了 Evmos 的 ethermint，把 Tendermint 共识移植到 sei-tendermint，写了一条 EVM 兼容链。共识、出块、状态机、EVM 兼容层——全栈都碰过，最后一条提交停在 2023-05-08，共 1465 次提交。然后某个时刻我意识到：这条路上最让我兴奋的，不是"谁先出块"，而是"为什么这段 Rust 代码的内存我看不见"。离开 Web3，是哪个决策？
 
 ## 先说清楚：以太网不是我随手写的玩具

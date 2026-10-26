@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 重写还是演进
-
 先讲一段我自己都觉得好笑的开场。OmniScope 最早选型时，我在 Rust 和 **C++** 之间犹豫。原话是：「I'm sorry, I'm not very good at it」——我不太会写 C++。于是先看 Rust，又嫌 **Rust 编译太慢**，改用了 **Zig** 写下第一个工具，后来才出 **omniscope-rs（Rust 重写）**。
 
 所以 OmniScope 的语言路线是：C++ → Rust（太慢）→ Zig → Rust（omniscope-rs）。这不是朝三暮四，是每一步都在为一个约束投降。

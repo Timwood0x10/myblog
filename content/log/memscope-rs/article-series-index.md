@@ -11,8 +11,6 @@ toc = true
 series = "memscope-rs"
 +++
 
-# memscope-rs Technical Article Series Index
-
 This repository contains a set of pragmatic, source-driven articles that decompose `memscope-rs` by module.
 
 The goal of the series is not to over-market the project, but to explain what the tool actually tracks, how it collects data, where inference starts, and what the current limitations are.

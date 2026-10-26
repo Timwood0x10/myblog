@@ -11,8 +11,6 @@ toc = true
 series = "memscope-rs"
 +++
 
-# Export and Dashboard Pipeline: Turning Memory Events into Reports
-
 Collecting memory data is only useful if developers can inspect it.
 
 `memscope-rs` exports both machine-readable JSON and HTML dashboards. The export pipeline is not a thin wrapper around one report; it combines snapshots, passports, async task data, ownership graphs, system resources, and task graphs.

@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 何时对异步说不
-
 先讲一个让我肉疼的调试故事。ARES 最早的雏形，是一个简单的 chatbot：一个 Leader、两个 Sub、几个工具。开发环境跑得好好的。一上生产，Leader 会在 **20 分钟后静默停止响应**——没报错、没 panic、没崩溃日志。就……沉默。
 
 我花了**三天**才找到根因：LLM 客户端里有个 **goroutine 泄漏**。每个请求泄漏一个 goroutine，最终撞上 OS 的线程上限。修复是一行。但找到它花了 72 小时，因为我对 Agent 内部**发生了什么零可见性**。

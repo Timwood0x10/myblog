@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XII): Security Hardening — The Tool-Trust Gate and Identity Provenance (0.3.x)
-
 > An Agent's actual authority is not determined by how big you *think* it is — it is determined by **whether the tool it receives has passed a trust decision at the moment of binding**. And that decision starts from a four-tier trust level and one plain principle: source determines trust.
 
 ---

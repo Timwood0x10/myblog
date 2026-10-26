@@ -6,8 +6,6 @@ weight = 10
 series = "OmniScope"
 +++
 
-# OmniScope Design Concept
-
 Hi, previously, I only gave a brief overview of this project. Now, I'll break down the architecture and share my design insights.
 
 This project aims to solve memory leak issues in cross-language calls. Unlike general-purpose security detection tools, my design focuses 90% of my effort on analyzing unsafe/ffi code, and only 10% (and perhaps even less) on general security detection.

@@ -10,8 +10,6 @@ series = ["OmniScope"]
 series = "OmniScope"
 +++
 
-# Reporting Pipeline: Issue Objects, JSON, SARIF, and Engineering Integration
-
 Static analysis results need to be reviewable and machine-readable. OmniScope’s reporting path starts with `Issue` objects, then emits text, JSON, or SARIF through `emitOutput`.
 
 ## Start with the problem: plain-text alerts do not integrate well

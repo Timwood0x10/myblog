@@ -10,8 +10,6 @@ series = ["OmniScope"]
 series = "OmniScope"
 +++
 
-# Inside the Pass System: Dependency Ordering, Shared Context, and Graceful Degradation
-
 OmniScope organizes analysis logic as passes rather than one large procedure. The relevant implementation questions are how passes share facts, how execution order is resolved, and how the system behaves when one pass fails.
 
 ## Start with the problem: static analysis is not linear

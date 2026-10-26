@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 用遗传算法给 Agent 选策略
-
 > **Problem**: ARES 要给 Agent 选"最好的策略参数"——temperature、top_k、tool_selector、search_depth…… 你怎么选？网格搜索？手调？还是让进化算法自己选？ARES 选了后者，且一路改了两次架构，还栽过一个让我公开打脸的跟头。
 
 这篇的犀利点不在"GA 多厉害"，而在**我承认自己不知道答案**——包括不知道最佳参数，也包括曾经不知道自己代码里漏了一行。

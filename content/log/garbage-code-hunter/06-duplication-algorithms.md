@@ -10,8 +10,6 @@ series = ["garbage-code-hunter"]
 series = "garbage-code-hunter"
 +++
 
-# Duplication Detection Algorithms
-
 > **Question**: You have a 10,000-line codebase. Somewhere in it, two functions are 95% identical — differing only in variable names. How do you find them without comparing every pair of functions?
 
 ## Why Duplication Is Hard

@@ -10,8 +10,6 @@ series = ["garbage-code-hunter"]
 series = "garbage-code-hunter"
 +++
 
-# StyleIR: The Language-Neutral Intermediate Representation
-
 > **Question**: You have 11 language adapters that each produce raw counts. You have 10 detectors that each need those counts. How do you connect them without coupling detectors to language-specific data structures?
 
 ## The Coupling Problem

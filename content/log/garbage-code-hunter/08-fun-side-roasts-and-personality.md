@@ -10,8 +10,6 @@ series = ["garbage-code-hunter"]
 series = "garbage-code-hunter"
 +++
 
-# The Fun Side: Roasts, Personality, and the Tool Belt
-
 > **Question**: Developers ignore code quality reports. They close linter warnings without reading them. They treat CI checks as gatekeepers, not advisors. How do you make them actually care?
 
 ## The Engagement Problem

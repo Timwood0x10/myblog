@@ -11,8 +11,6 @@ toc = true
 series = "memscope-rs"
 +++
 
-# Benchmark Deep Dive: What the Numbers Actually Say
-
 Performance claims are easy to overstate. This article keeps the interpretation narrow and tied to the benchmark source and log that exist in the repository.
 
 The benchmark suite is in:

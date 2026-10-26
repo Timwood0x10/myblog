@@ -10,8 +10,6 @@ series = ["CodeTribunal"]
 series = "CodeTribunal"
 +++
 
-# Why Code Review Needs Drama
-
 > **Problem**: Your team has ESLint, SonarQube, Semgrep, and CodeQL. Each one sends a daily digest of 47 warnings. Nobody reads them. The tools are technically correct and practically ignored. Why?
 
 ## The Attention Problem

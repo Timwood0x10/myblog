@@ -10,8 +10,6 @@ series = ["CodeTribunal"]
 series = "CodeTribunal"
 +++
 
-# Architecture Overview: Wiring 8 LLM Agents Into a Game Loop
-
 This article traces the data path from code input to debate transcript, and explains why the module boundaries are drawn where they are.
 
 ## Start with the problem: a game loop is not a pipeline

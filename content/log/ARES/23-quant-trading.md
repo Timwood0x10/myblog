@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XXIII): The "Quant Trading Module" — An Honest Statement: It Does Not Exist in This Codebase (0.3.x)
-
 > This article is different from every other in the series. It's not "look at this great architecture." It's "there was supposed to be an architecture here, and there isn't."
 > Plainly: **the current repository contains no quantitative trading implementation code.** Everything you see labeled `internal/ares_quant`, `internal/quant`, and `examples/quant-trading` in the old version of this article, in `CAPABILITY-MAP`, in `ARCHITECTURE`, and even in a dedicated `docs/en/development/quant-trading.md` — **does not exist.**
 

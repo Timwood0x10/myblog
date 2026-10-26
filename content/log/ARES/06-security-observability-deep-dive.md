@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (VI): Security and Observability — Auth, RBAC, Sanitization, and Scheduling Observability (0.3.x)
-
 > The more dangerous a thing an Agent can do, the more you need to decide *before* it does it: who is using it, what it may touch, whether anything it emits leaks secrets — and, at runtime, whether every step it takes is actually visible.
 
 ---

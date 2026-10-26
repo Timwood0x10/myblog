@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 抽象的债务
-
 > **Problem**: ARES 需要对接 OpenRouter、Ollama、OpenAI、Anthropic 四个 LLM 提供商。接口抽象该做到什么程度？做少了，改一个 provider 要动 N 处代码；做多了，接口本身变成维护负担。这篇文章考古的是那条线到底画在哪里。
 
 ## 如果不做抽象，最简单的方案长什么样？

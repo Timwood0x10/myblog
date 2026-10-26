@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Series: Building Your Own Agent Framework When You're Bored (0.3.1)
-
 > I've always believed the best way to learn is to build your own wheel.
 > Not because the wheels out there aren't good enough — but because once you've built one, you'll never get stuck by one again.
 

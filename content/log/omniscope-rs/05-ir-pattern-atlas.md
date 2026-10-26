@@ -10,8 +10,6 @@ series = ["omniscope-rs"]
 series = "omniscope-rs"
 +++
 
-# OmniScope Architecture Deep Dive (Part 5): IR Pattern Atlas — From Evidence Chain to Semantic Suppression
-
 > After scanning 67,337 LLVM IR instructions, I came to a brutal realization: **A static analyzer isn't failing because it's not smart enough — it's failing because it never built a complete evidence chain from "instruction" to "semantics."**
 >
 > FP suppression without an evidence chain is, at its core, guesswork. OmniScope solves this with a four-layer evidence chain: IRPattern → BehaviorPattern → SemanticKind → SemanticFact → Evidence.

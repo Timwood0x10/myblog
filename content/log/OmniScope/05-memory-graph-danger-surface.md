@@ -10,8 +10,6 @@ series = ["OmniScope"]
 series = "OmniScope"
 +++
 
-# MemoryGraph and DangerSurface: From Pointer Facts to Risk Paths
-
 Cross-language memory analysis should not only ask whether `malloc` or `free` exists. It should ask whether a pointer crosses FFI, comes from an unsafe region, or propagates through aliases. OmniScope uses `MemoryGraph` and `DangerSurfacePass` to connect these facts.
 
 ## Start with the problem: memory risk lives on paths, not names

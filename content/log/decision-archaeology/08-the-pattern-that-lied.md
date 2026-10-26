@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 撒谎的设计模式
-
 先讲一个让我肉疼的故事。ARES 最早做多 Agent 通信时，我没用 Go channel，而是花了**整整两天**跟 RabbitMQ 搏斗——第一天装 Erlang、配 vhost、建 exchange、映射 binding key；第二天写了 200 多行胶水代码，就为了把一条消息从 Agent A 送到 Agent B。
 
 等我终于跑完基准测试，端到端延迟从 **<1μs（Go channel）涨到了 2ms+——那是 2000 倍的减速**。而且这还不是网络延迟造成的，因为两个 Agent 就在同一个进程里。纯序列化和路由开销。

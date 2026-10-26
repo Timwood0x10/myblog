@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (V): The Tool Invocation Layer — from "registered" to "actually called by the LLM" (0.3.x)
-
 > I used to think the tool system was simple: define a Tool → put it in the Registry → the LLM can use it.
 > But after following a few invocation chains through the code, I found that the hard part is the **whole pipeline** that carries a tool from a static definition into the LLM's hands and then actually calls it.
 > In this article I review `tools/toolsource`, `tools/resources`, `tools/planner`, `tools/discovery`, `tools/envcap`, and the executors that really run tools in `agentfabric`: `ToolBinder`, `chatCognition`, and `toolCognition`.

@@ -10,8 +10,6 @@ series = ["CodeTribunal"]
 series = "CodeTribunal"
 +++
 
-# WebSocket Layer and Real-Time UI
-
 ## The Problem: A Game That Runs in the Background Is Invisible
 
 If CodeTribunal runs as a batch process — submit code, wait 2 minutes, get a report — the user misses the best part: the debate. The back-and-forth accusations, the evidence citations, the elimination votes — these are the engaging moments. They need to be visible in real time.

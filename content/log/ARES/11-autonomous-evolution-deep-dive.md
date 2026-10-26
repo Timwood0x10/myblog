@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XI): Autonomous Evolution — When Agents Learn to Improve Themselves (0.3.x)
-
 > The honest 0.3.x picture up front: **two evolution engines coexist, and their roles are opposite to intuition.**
 > The one really wired into production bootstrap is **v1** — `internal/runtime/ares_evolution`'s **StrategyLifecycle** (G1 guardrail → G2 shadow → G3 eval → G4 deployment). Every promoted strategy crosses this gate.
 > **v2** — `internal/runtime/evolution`'s **Candidate → Verify → Promote** release closed-loop — is the newer, oft-discussed pipeline. As a library with runnable examples (`examples/`) it's complete, but it **has no production caller today**; it is "code-complete, waiting to be wired."

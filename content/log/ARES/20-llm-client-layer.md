@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XX): LLM Client Layer — Client, Failover, and Multi-Provider Abstraction (0.3.x)
-
 Article V (Tool System) showed how tools get called. But *who* calls the LLM? That's the `internal/llm/` layer — a **single package** (`Client`, `FailoverClient`, ~5.4k lines including tests) that lets ares talk to OpenAI, Ollama, OpenRouter, and Anthropic without caring which one is answering.
 
 > **0.4 deletion record**: the ReAct-era sibling package `internal/llm/output` (per-provider adapters + response parsing, ~5.8k lines) had **zero production callers** since 0.3.1 (independent-review F-07) and was deleted in full. Runtime provider failover lives solely in `internal/llm`'s `FailoverClient` chain; tool-calling message/tool types live in `internal/llmcore` (`ToolCall`, `LLMMessage`, …) and are normalized per provider inside `internal/llm/chat.go`. Historical descriptions of the deleted package remain only in `CHANGELOG.md` and `docs/reviews/`.

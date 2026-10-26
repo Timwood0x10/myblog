@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ARES config.yaml Guide (English) (0.3.x)
-
 > Version: 0.3.x · Field names follow `configs/ares.yaml` and `internal/ares_config`
 > 中文版见 [Chinese Version](../zh/25-config-yaml-guide.zh.md)
 

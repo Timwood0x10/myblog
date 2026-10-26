@@ -10,8 +10,6 @@ series = ["omniscope-rs"]
 series = "omniscope-rs"
 +++
 
-# OmniScope Architecture Deep Dive (Part 3): Noise Reduction — An Epic Optimization from 5,098 to ~45
-
 > I have a body with a peculiar constitution — normal food goes down fine, but anything slightly unclean sends me straight to vomiting and diarrhea. The hospital can never find anything wrong.
 > For five years, I've gotten used to cooking my own meals, packing my own lunch, and drinking only plain water at dinner parties.
 > Building a static analysis tool is the same — the more sensitive your analyzer, the more every "may be problematic" alert sounds like crying wolf.

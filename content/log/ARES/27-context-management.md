@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XXVII): Context Management — Three-Layer Context, Checkpointable Cognitive State, and the Prompt Gate (0.3.x)
-
 > Note: This article is grounded in the actual code (`internal/fabric/agent/context.go` + `agent.go` for the three-layer context and `CognitiveState`, `internal/llm` for the `maxPromptLength` prompt-length gate, `internal/runtime/memory` for session memory), the dedicated context-management article in the docs series.
 
 ## 1. Why Context Management Is the Agent's Lifeline

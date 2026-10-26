@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 错误是设计的镜子
-
 > **Problem**: ARES 的 Leader Agent 崩溃了，整个会话就死了吗？CodeTribunal 的评审者故意说错话，系统该怎么判断？当你的系统出错时，你的第一反应是什么——重启、回滚、还是假装没看见？系统怎么对待失败，暴露了设计者对"信任边界"的定义。
 
 两个项目，两种"失败"。

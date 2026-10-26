@@ -10,8 +10,6 @@ series = ["CodeTribunal"]
 series = "CodeTribunal"
 +++
 
-# Random Events and Game Dynamics
-
 ## The Problem: Deterministic Games Are Predictable
 
 If every CodeTribunal session follows the same script — 8 agents review, debate, vote, done — the experience becomes predictable after a few sessions. Users learn the pattern and stop paying attention.

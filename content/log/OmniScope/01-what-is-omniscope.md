@@ -10,8 +10,6 @@ series = ["OmniScope"]
 series = "OmniScope"
 +++
 
-# Why OmniScope Analyzes Cross-Language Safety at the LLVM IR Layer
-
 Rust ownership, Zig allocators, Go GC, and C++ RAII are language-level safety models. Across FFI, those models are lowered into ABI-level facts: functions, pointers, integers, layouts, and calling conventions. OmniScope works at this layer because many cross-language issues are difficult to cover from a single language AST alone.
 
 ## Start with the problem: language guarantees stop at the boundary

@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (I): The Big Picture — Why Another Agent Framework? (current trunk M0–M1.5)
-
 I didn't set out to build a framework. I set out to solve a problem: **Agents kept dying, and I couldn't figure out why.**
 
 It started with a simple chatbot. One Leader, two Subs, a handful of tools. Worked fine in dev. In production, the Leader would silently stop responding after 20 minutes. No error, no panic, no crash log. Just... silence.

@@ -10,8 +10,6 @@ series = ["CodeTribunal"]
 series = "CodeTribunal"
 +++
 
-# Debate, Cross-Examination, and Voting
-
 ## The Problem: Multi-Agent Debate Usually Diverges
 
 If you let 8 LLM agents debate freely, two things happen:

@@ -10,8 +10,6 @@ series = ["omniscope-rs"]
 series = "omniscope-rs"
 +++
 
-# OmniScope Architecture Deep Dive (Part 6): Reflection — The Architectural Trade-offs You Never Saw
-
 > The first five articles covered "what we did right." This one covers "what we gave up."
 >
 > Every architectural decision has a pile of rejected alternatives. Writing down the roads not taken is more valuable than only describing the chosen path.

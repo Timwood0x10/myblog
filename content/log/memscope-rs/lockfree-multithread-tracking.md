@@ -11,8 +11,6 @@ toc = true
 series = "memscope-rs"
 +++
 
-# Lockfree Tracking: How `memscope-rs` Handles Concurrent Memory Events
-
 Single-thread memory tracking answers the first question: can we collect useful allocation data?
 
 Multithreaded tracking asks a harder one:

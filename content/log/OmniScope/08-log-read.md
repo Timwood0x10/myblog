@@ -6,8 +6,6 @@ weight = 23
 series = "OmniScope"
 +++
 
-# Red/Blue Team Testing Guide
-
 **Version**: v0.1.9
 **Purpose**: Validate OmniScope's detection rate (red team) and false positive rate (blue team) against the `corpus/` test suite.
 

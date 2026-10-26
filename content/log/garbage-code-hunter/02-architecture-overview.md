@@ -10,8 +10,6 @@ series = ["garbage-code-hunter"]
 series = "garbage-code-hunter"
 +++
 
-# Architecture Overview
-
 > **Question**: You have a code analyzer that needs to parse files, detect issues, compute scores, and generate reports. It must support 11 languages, run in CI, and finish in seconds. How do you structure it?
 
 ## The Four-Phase Pipeline

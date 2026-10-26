@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (VII): Runtime & Lifecycle — Birth, Death, and Fresh Birth (0.3.x)
-
 What happens when an Agent dies? Every framework has to answer this, but few do it well. This article walks through the design journey — from "how to prevent crashes" to "how to keep the task alive when the agent dies" and "how to resume interrupted work without wasting tokens." You'll see the disposable-agent state machine, the CognitionFactory injection path, the honest truth about the DAGExecution gate, and the real recovery semantics — including what is and isn't wired into production yet.
 
 > Other Agent frameworks compete on features and flashiness. I have only one obsession: **Bugs I can accept. Crashes I absolutely cannot.**

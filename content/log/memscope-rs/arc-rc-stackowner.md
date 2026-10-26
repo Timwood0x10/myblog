@@ -11,8 +11,6 @@ toc = true
 series = "memscope-rs"
 +++
 
-# Arc/Rc Clone Detection: Why `StackOwner` Matters
-
 `Arc<T>` and `Rc<T>` are safe Rust abstractions, but they make ownership harder to observe.
 
 Cloning an `Arc` or `Rc` usually does not allocate a new user object. It creates another smart pointer that shares ownership of the same heap data.

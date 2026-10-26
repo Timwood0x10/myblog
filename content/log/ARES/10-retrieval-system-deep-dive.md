@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (X): Retrieval System — Vector / Keyword / FTS in Practice, and Its Honest Limits (0.3.x)
-
 > The agent says: "Based on your past experience, I suggest..." — but the suggestion is completely irrelevant.
 > Even worse: the agent solved this exact problem before, but now it's starting from scratch.
 > I realized back then: an agent's memory isn't about whether it has memory — it's about whether it can retrieve the right one.

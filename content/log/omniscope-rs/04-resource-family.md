@@ -10,8 +10,6 @@ series = ["omniscope-rs"]
 series = "omniscope-rs"
 +++
 
-# OmniScope Architecture Deep Dive (Part 4): Resource Families — Breaking Language Barriers: From Effect to Evidence Chain Pipeline
-
 > "A tool that only understands C's malloc/free, yet must analyze resource transfers across Rust, C++, Python, and Java. Eventually I realized: the problem isn't the language — it's the Resource Family. This is the fact pipeline that connects the Effect enum, the ownership state machine, the memory graph, and evidence fusion."
 
 ---

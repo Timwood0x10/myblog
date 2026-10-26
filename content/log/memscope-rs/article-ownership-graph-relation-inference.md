@@ -11,8 +11,6 @@ toc = true
 series = "memscope-rs"
 +++
 
-# Ownership Graph and Relation Inference: From Memory Events to Rust Semantics
-
 The previous articles focused on data collection:
 
 - single-thread tracking records allocation facts and Rust-level metadata;

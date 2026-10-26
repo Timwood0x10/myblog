@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (VIII): Event System — Append-Only Event Log, Compaction, and the Task Lifecycle (0.3.x)
-
 > 0.3.x update: `internal/fabric/task` now carries a full Task lifecycle event set (created/ready/acquired/started/yielded/checkpointed/preempted/released/completed/failed/expired/stolen). Task Fabric appends every state transition to an in-memory log and, when an `EventStore` is attached, writes to the durable layer so Scheduler/Task/Lease state can be rebuilt across restarts. Note: "events directly drive scheduling" is over-hyped — the scheduler is capability+priority work-stealing scoring, NOT event-driven dispatch where `task.completed → dependent becomes Ready`.
 
 > Agent startup is an event, a task state transition is an event, a tool call is an event, an LLM response is an event, an Agent crash leaves an event too.

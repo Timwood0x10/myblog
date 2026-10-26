@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XXII): Config System — One YAML, Seventeen Sections (0.3.x)
-
 Every module needs configuration. LLM needs provider and model. Memory needs history size. Evolution needs population size. Storage needs host and port. Too many modules, and configs scatter everywhere — unless you have a config system.
 
 `internal/ares_config/config.go` (1,084 lines) + `config_defaults.go` + `config_validate.go` are that system, bridged on the SDK side by `sdk/config.go` (430 lines).

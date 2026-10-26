@@ -11,8 +11,6 @@ toc = true
 series = "memscope-rs"
 +++
 
-# Async Task Memory Attribution: Tracking Memory Beyond Threads
-
 Rust async applications often run many logical tasks on a small number of runtime worker threads.
 
 That makes thread-level memory tracking insufficient. A thread can execute many tasks, and a task may resume on different worker threads after an `.await`.

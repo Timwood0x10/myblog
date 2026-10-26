@@ -11,8 +11,6 @@ toc = true
 series = "memscope-rs"
 +++
 
-# Single-Thread Tracking: From `GlobalAlloc` to Rust-Level Memory Semantics
-
 Rust gives us strong memory safety guarantees, but memory safety does not automatically mean memory behavior is transparent.
 
 In real Rust applications, developers still need answers to questions like:

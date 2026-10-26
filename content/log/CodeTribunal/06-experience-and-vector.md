@@ -10,8 +10,6 @@ series = ["CodeTribunal"]
 series = "CodeTribunal"
 +++
 
-# The Experience System: Learning from Past Sessions
-
 ## The Problem: Each Session Starts from Zero
 
 Without memory, every CodeTribunal session is independent. The agents review code, debate, vote, and forget everything. Session 1000 has no advantage over session 1.

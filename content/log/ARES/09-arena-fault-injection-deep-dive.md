@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (IX): Arena / Fault Injection — Deliberately Break It, Then Watch It Rise Again (0.3.x)
-
 > Other agent frameworks show you how smart an agent is: fluent dialogue, strong reasoning, slick tool use.
 > ares wants to show something else: **break it deliberately, and see whether it gets up on its own.**
 > You click a button and kill a working agent to watch whether it recovers.

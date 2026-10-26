@@ -10,8 +10,6 @@ series = ["garbage-code-hunter"]
 series = "garbage-code-hunter"
 +++
 
-# Tree-sitter and the LanguageAdapter Pattern
-
 > **Question**: You need to detect "debug print statements" in 11 languages. Each language has different syntax, different function names, and different conventions. Do you write 11 separate detection functions, or is there a better way?
 
 ## The Naive Approach: 11 Detectors

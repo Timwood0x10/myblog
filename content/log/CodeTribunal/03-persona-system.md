@@ -10,8 +10,6 @@ series = ["CodeTribunal"]
 series = "CodeTribunal"
 +++
 
-# The Persona System: 8 Reviewers From One LLM
-
 ## The Problem: LLMs Are Agreeable by Default
 
 If you ask GPT-4 to review code 8 times with the same prompt, you get 8 nearly identical reviews. LLMs are trained to be helpful and consistent — which is the opposite of what a debate needs.

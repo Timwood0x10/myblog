@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 把代码评审变成一场戏
-
 > **Problem**: 你的团队有 ESLint、SonarQube、Semgrep、CodeQL。每个每天都发一堆 warning。没人看。工具在技术上全对，在实践上全被忽略。为什么？
 
 这篇是我最"不正经"的一个项目，但它解决的问题特别真实：**再准的工具，只要人不读，准确率就等于零。** CodeTribunal 干脆放弃"更准"，转去解决"让人愿意读"。

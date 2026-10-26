@@ -11,8 +11,6 @@ toc = true
 series = "memscope-rs"
 +++
 
-# Unsafe and FFI Memory Passport: Tracking Memory Across Rust’s Trust Boundary
-
 Rust is safe until you cross the boundary.
 
 That boundary may be:

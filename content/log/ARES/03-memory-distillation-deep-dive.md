@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (III): Memory Distillation — How Experience Is Extracted, Ranked, Reused, and Forgotten
-
 > Ever run an agent that, after a few hours, tries to remember every task / input / output it ever saw, and the memory only grows while the thing actually worth remembering — "I hit this trap last time" — gets lost in the noise?
 > I kept thinking: **instead of remembering "what happened," remember "what it means and what to do next time."**
 > And that produced this whole pile: one pipeline that distills task results into reusable `Experience`, one that distills conversations into `Memory`, and one that records task-pattern → skill relevance priors as `Experience`. They're all named "experience," but they're three different jobs.

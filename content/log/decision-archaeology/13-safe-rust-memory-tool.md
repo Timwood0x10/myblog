@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 在"以安全著称的 Rust"里做内存工具
-
 > **Problem**: Rust 的卖点就是内存安全——编译器保证没有 use-after-free、没有 data race。那在一个"已经安全"的语言里做一个内存追踪工具，是不是多此一举？memscope-rs 存在的理由，恰恰藏在 Rust 安全模型的盲区里。
 
 ## Rust 的安全，保的是"不 UB"，不是"可观测"

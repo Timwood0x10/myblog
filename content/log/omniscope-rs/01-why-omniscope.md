@@ -10,8 +10,6 @@ series = ["omniscope-rs"]
 series = "omniscope-rs"
 +++
 
-# Why OmniScope — Cross-language FFI Safety Analysis: Call Graphs, State Machines, Semantic Trees, This Combo Took Two Years
-
 > It started with me staring blankly at Rust's `CString::into_raw`.
 >
 > After that pointer is sent out, who is supposed to free it? Rust's allocator? C's `free`? Or some third-party library I've never even heard of?

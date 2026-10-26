@@ -10,8 +10,6 @@ series = ["CodeTribunal"]
 series = "CodeTribunal"
 +++
 
-# The Troublemaker Mechanic: Subtle Sabotage as a Feature
-
 ## The Problem: Obvious Sabotage Is Boring
 
 If the Troublemaker says "this SQL injection is fine, ship it," every player catches it immediately. The game is over in one round. The challenge is making the Troublemaker **subtly wrong** — wrong enough to be dangerous, but convincing enough that other agents (and the user) need to think carefully.

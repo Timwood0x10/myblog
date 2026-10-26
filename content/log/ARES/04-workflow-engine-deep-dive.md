@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (IV): Workflow Engine -- The DAG is the Source of Truth; Event-Driven Reactive Compilation (0.3.x)
-
 > I used to hardcode workflows. If step 1 finishes, run step 2. If step 2 finishes, run step 3.
 > Then requirements changed, and I arrived at a plain but important truth: **the graph is the source of truth, and execution is just a projection.**
 > So in 0.3.x I shifted focus from "how to run a DAG" to "when the DAG mutates at runtime, how do I project that change onto the task set."

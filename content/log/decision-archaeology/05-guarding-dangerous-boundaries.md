@@ -10,8 +10,6 @@ series = ["decision-archaeology"]
 series = "decision-archaeology"
 +++
 
-# 危险边界的守卫
-
 > **Problem**: Rust 的 borrow checker 保证了 safe 代码的内存安全，但 unsafe 块和 FFI 调用打破了这个保证。一块内存从 Rust 交给 C，再从 C 交回 Rust——中间发生了什么？谁能保证这段旅程是安全的？
 
 Rust 的内存安全模型建立在一个清晰的信任边界上：safe 代码由编译器担保，unsafe 代码由程序员担保。问题在于，真实世界的 Rust 程序不可能只用 safe 代码。系统编程必然涉及 unsafe 块，跨语言交互必然经过 FFI 边界。当一块 `Vec<u8>` 通过 `into_raw()` 交到 C 库手上时，borrow checker 的管辖权就到此为止了。

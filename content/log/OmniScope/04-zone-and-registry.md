@@ -10,8 +10,6 @@ series = ["OmniScope"]
 series = "OmniScope"
 +++
 
-# Zone Classification and Semantic Registry: Avoiding Blacklist-Style Reporting
-
 A static analyzer without semantic layers can easily become a dangerous-function list. OmniScope separates region classification from function semantics before deciding whether a path should be analyzed in depth.
 
 ## Start with the problem: the same function name means different things in context

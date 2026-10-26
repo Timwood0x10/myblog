@@ -10,8 +10,6 @@ series = ["garbage-code-hunter"]
 series = "garbage-code-hunter"
 +++
 
-# Building garbage-code-hunter: A Deep Dive into Multi-Language Code Quality Analysis in Rust
-
 > **Series: In-Depth Technical Breakdown of garbage-code-hunter**
 
 ## What Is This?

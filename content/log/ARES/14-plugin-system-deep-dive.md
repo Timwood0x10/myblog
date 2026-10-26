@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XIV): The Plugin System — Honestly, It's Not "Load a .so Without Code Changes" (0.3.x)
-
 > Let me be brutally honest first: **the "plugin system" in the current code is not dynamic loading.** No `go:plugin`, no `.so` hot-loading, no "inject external plugins without changing code". It is a **compiled-in Go interface + registry** — at startup assembly you `Register` structs that implement the interface into a `PluginBus`, which then owns lifecycles and calls the defined extension points.
 
 ---

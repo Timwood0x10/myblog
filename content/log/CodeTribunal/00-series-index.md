@@ -10,8 +10,6 @@ series = ["CodeTribunal"]
 series = "CodeTribunal"
 +++
 
-# CodeTribunal Deep-Dive Series: When LLM Agents Hold a Code Review Trial
-
 This series walks through CodeTribunal, a Go project where multiple LLM agents debate and critique code in a roundtable format — with one secret saboteur among them. It covers persona engineering, game mechanics, debate protocols, and the vector-based experience system that makes each session smarter than the last.
 
 CodeTribunal asks one question: **if you put 8 LLM agents with different reviewing philosophies in a room and told one of them to secretly sabotage the review, could the others catch them?**

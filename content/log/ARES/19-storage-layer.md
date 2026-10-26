@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XIX): Storage Layer — The Foundation Under Everything (0.3.x)
-
 > Note: This article is based on the real code (`internal/storage/` as a whole, the DDL in `internal/storage/postgres/migrate*.go`, `internal/storage/postgres/{pool,circuit_breaker,write_buffer,timeout,embedding_queue,base_repository}.go`, `internal/storage/postgres/embedding/` and `internal/storage/postgres/repositories/`, and `internal/ares_events/pg_store.go`). Every symbol and every flow was read from the source. Anything I cannot verify or that is configured but not actually wired is marked (待核实) rather than glorified.
 
 ---

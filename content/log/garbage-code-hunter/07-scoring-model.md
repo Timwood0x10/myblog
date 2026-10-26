@@ -10,8 +10,6 @@ series = ["garbage-code-hunter"]
 series = "garbage-code-hunter"
 +++
 
-# The Scoring Model
-
 > **Question**: You have 10 signal detectors, each producing a violation count. Some signals are severe (deep nesting), some are noisy (magic numbers). How do you combine them into a single, fair score?
 
 ## The Problem with Linear Scoring

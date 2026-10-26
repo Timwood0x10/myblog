@@ -10,8 +10,6 @@ series = ["ARES"]
 series = "ARES"
 +++
 
-# ares Architecture Deep Dive (XXVI): Agent Communication — Agent IPC Primitives and the Syscall Tool Layer (0.3.x)
-
 > Note: This article is grounded in the actual code (`internal/agentipc` — `bus.go` / `primitives.go` / `policy.go` / `deadletter.go` / `collaboration_observer.go` — and `internal/agentsyscall` — `syscall.go` / `plan.go`), the dedicated Agent-communication article in the docs series. Agents are peer cognitive processes (A ≡ B ≡ C); communication runs over a peer-mesh message bus, no Leader relay required.
 
 ## 1. Why Agent Communication Matters

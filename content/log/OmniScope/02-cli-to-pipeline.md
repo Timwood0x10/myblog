@@ -10,8 +10,6 @@ series = ["OmniScope"]
 series = "OmniScope"
 +++
 
-# Lifecycle of an Analysis Run: CLI, IRLoader, Pipeline, and Output
-
 This article follows one OmniScope run from command-line arguments to structured findings. The important part is how the code turns user input into a `PassContext`, runs analysis passes, and emits reports.
 
 ## Start with the problem: an analyzer run is not one rule execution
