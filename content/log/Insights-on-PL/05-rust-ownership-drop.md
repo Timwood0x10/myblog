@@ -12,7 +12,7 @@ series = "Insights-on-PL"
 
 Rust 的所有权体系是理解 `Drop`、`Drop Check`、`PhantomData` 与资源管理的基础，也是把生命周期、型变、`unsafe` 与 FFI 串起来的那条主线。
 
-这里不只讲普通 Rust 的所有权规则，重点在三件事：编译器如何追踪一个值的所有权、如何决定何时析构，以及自己实现底层容器或 FFI 封装时，如何保证内存只被正确释放一次。
+这里不只讲普通 Rust 的所有权规则，重点在三件事：**编译器如何追踪一个值的所有权、如何决定何时析构，以及自己实现底层容器或 FFI 封装时，如何保证内存只被正确释放一次。**
 
 主线参考 [Rustonomicon: Ownership and Lifetimes](https://doc.rust-lang.org/nomicon/ownership.html)，并逐步延伸到后续章节。
 
