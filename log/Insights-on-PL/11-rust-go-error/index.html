@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Rust 与 Go 的错误处理与故障恢复 | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Result 与 error 的差异只是表层。真正决定系统可靠性的，是错误分类、传播路径、重试预算、取消语义和故障恢复策略。">
+    <meta property="og:description" content="Result 与 error 的差异只是表层。真正决定系统可靠性的，是错误分类、传播路径、重试预算、取消语义和故障恢复策略。">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/11-rust-go-error/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Result 与 error 的差异只是表层。真正决定系统可靠性的，是错误分类、传播路径、重试预算、取消语义和故障恢复策略。">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/11-rust-go-error/">
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <nav class="menu">
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/11-rust-go-error/">Rust 与 Go 的错误处理与故障恢复</a></h1>
+    <div class="post-meta-inline">
+        <span class="post-date">2026-10-25</span>
+    </div>
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/error-handling/">#Error Handling</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/reliability/">#Reliability</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    <div class="post-content">
+        <p>这篇比起比较 <code>Result</code> 和 <code>error</code> 的语法，我更想聊后者背后的问题：一门语言怎么表达失败、怎么传播失败、谁来决策，以及系统在部分组件挂掉之后还能不能继续跑。</p>
+<p>两种语言的倾向差异很明显：</p>
+<ul>
+<li><strong>Rust</strong> 倾向于把失败编码进类型系统，让调用者明确面对失败的可能性。</li>
+<li><strong>Go</strong> 倾向于把错误当普通返回值，让调用者用显式分支决定怎么处理。</li>
+</ul>
+<p>两种都强调显式，但类型系统、传播机制、异常策略和资源管理的实现方式差别很大。</p>
+<hr />
+<h2 id="yi-cuo-wu-chu-li-he-gu-zhang-hui-fu-bu-shi-yi-hui-shi">一、错误处理和故障恢复不是一回事</h2>
+<p>这是整篇的起点。</p>
+<p>假设一个 Agent 任务要经过：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>接收任务</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>解析任务</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>调用 LLM</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>调用工具</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>保存结果</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>任务完成</span></span></code></pre>
+<p>现在 LLM 调用失败了。系统至少要回答四个问题：</p>
+<ol>
+<li>怎么表示这个错误？</li>
+<li>怎么把它传给调用者？</li>
+<li>谁来决定接下来怎么办？</li>
+<li>系统能不能恢复到一个有效状态？</li>
+</ol>
+<p>这四个问题对应四个层次：</p>
+<table><thead><tr><th>层次</th><th>关注的问题</th><th>典型机制</th></tr></thead><tbody>
+<tr><td>错误表示</td><td>失败是什么？</td><td><code>Result&lt;T, E&gt;</code>、<code>error</code></td></tr>
+<tr><td>错误传播</td><td>失败怎么传给上层？</td><td><code>?</code>、<code>return err</code></td></tr>
+<tr><td>错误处理</td><td>当前层应该怎么应对？</td><td>降级、转换、记日志</td></tr>
+<tr><td>故障恢复</td><td>系统怎么继续运行？</td><td>重试、检查点、补偿、恢复执行</td></tr>
+</tbody></table>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> load_config</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Config</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> ConfigError</span><span style="color: #89DCEB;">&gt;</span></span></code></pre>
+<p>这行代码表达的是「加载配置可能失败，调用者要处理这种可能」。</p>
+<p>但它<strong>没有</strong>规定：</p>
+<ul>
+<li>要不要重试；</li>
+<li>要不要用默认配置；</li>
+<li>要不要终止程序；</li>
+<li>要不要通知管理员；</li>
+<li>要不要回滚已经执行的操作。</li>
+</ul>
+<p>Go 的 <code>func LoadConfig() (Config, error)</code> 同样没有。</p>
+<p>语言提供的是<strong>表达和传播</strong>机制，业务系统还得自己定义处理策略。这是理解两种设计的第一把钥匙。</p>
+<hr />
+<h2 id="er-liang-chong-yu-yan-de-cuo-wu-zhe-xue">二、两种语言的错误哲学</h2>
+<h3 id="2-1-rust-shi-bai-shi-lei-xing-de-yi-bu-fen">2.1 Rust：失败是类型的一部分</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> divide</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">a</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> i32</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> b</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> i32</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">i32</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> b</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;division by zero&quot;</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(</span><span>a</span><span style="color: #94E2D5;"> /</span><span> b</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>Result</code> 就是个枚举：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">enum</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> E</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">E</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Result&lt;i32, String&gt;</span></span>
+<span class="giallo-l"><span>       │</span></span>
+<span class="giallo-l"><span>       ├── Ok(i32)</span></span>
+<span class="giallo-l"><span>       │</span></span>
+<span class="giallo-l"><span>       └── Err(String)</span></span></code></pre>
+<p>在安全 Rust 里，你不能把 <code>Result&lt;i32, String&gt;</code> 直接当 <code>i32</code> 用，必须先处理或明确提取：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">match</span><span style="color: #89B4FA;font-style: italic;"> divide</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #89B4FA;font-style: italic;"> println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">value</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Err</span><span style="color: #9399B2;">(</span><span>error</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #89B4FA;font-style: italic;"> println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;error: </span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">error</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这里的倾向是：<strong>函数签名会明确暴露它可能发生的、通过返回值表达的失败。</strong></p>
+<p>但要注意，这不等于 Rust 能保证业务流程的失败都被妥善恢复。你完全可以这么写：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> result</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> divide</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">result:?</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>它把返回值消费掉了，但没做任何有意义的恢复。<strong>Rust 约束的是类型和控制流，不是业务策略。</strong></p>
+<h3 id="2-2-go-cuo-wu-shi-pu-tong-fan-hui-zhi">2.2 Go：错误是普通返回值</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Divide</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">a</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> b</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> b</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;division by zero&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> a</span><span style="color: #94E2D5;"> /</span><span> b</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>value</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> Divide</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p><code>error</code> 是个接口：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type error interface</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Error</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>所以任何类型都能实现它：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ValidationError</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Field</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span>    Msg</span><span style="color: #CBA6F7;">   string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">e </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">ValidationError</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Error</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> e</span><span style="color: #9399B2;">.</span><span>Field</span><span style="color: #94E2D5;"> +</span><span style="color: #A6E3A1;"> &quot;: &quot;</span><span style="color: #94E2D5;"> +</span><span> e</span><span style="color: #9399B2;">.</span><span>Msg</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>和 Rust 的关键区别：Rust 把成功和失败放进<strong>同一个枚举值</strong>，Go 把它们拆成<strong>两个返回值</strong>。</p>
+<p>这不代表 Go 的错误没有类型——自定义错误类型、错误接口、错误链一样能表达丰富信息。区别只在建模方式。</p>
+<h3 id="2-3-zhen-zheng-de-qu-bie">2.3 真正的区别</h3>
+<table><thead><tr><th>维度</th><th>Rust</th><th>Go</th></tr></thead><tbody>
+<tr><td>典型返回类型</td><td><code>Result&lt;T, E&gt;</code></td><td><code>(T, error)</code></td></tr>
+<tr><td>失败怎么表达</td><td>枚举的 <code>Err</code> 分支</td><td><code>error</code> 接口值，<code>nil</code> 表示无错</td></tr>
+<tr><td>忽略失败会怎样</td><td>编译<strong>警告</strong>（<code>unused_must_use</code>），可以显式忽略</td><td>编译器完全不管，只能靠 linter</td></tr>
+<tr><td>传播方式</td><td><code>?</code></td><td><code>return err</code></td></tr>
+<tr><td>常用错误类型</td><td>枚举、自定义结构体、trait object</td><td>自定义类型、接口、错误链</td></tr>
+<tr><td>错误匹配</td><td><code>match</code>、<code>matches!</code></td><td><code>errors.Is</code>、<code>errors.As</code>、类型断言</td></tr>
+<tr><td>异常机制</td><td>没有与 panic/recover 等价的日常模型</td><td><code>panic/recover</code> 处理非局部控制流</td></tr>
+<tr><td>资源清理</td><td>所有权 + RAII / <code>Drop</code></td><td><code>defer</code>、显式 close、GC</td></tr>
+</tbody></table>
+<p><strong>这里必须纠正一个常见误解</strong>：「Rust 强制你处理 <code>Result</code>」。</p>
+<p>不是的。Rust 给 <code>Result</code> 标了 <code>#[must_use]</code>，忽略它只是<strong>警告</strong>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> returns_result</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">(), ()</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;font-style: italic;"> Ok</span><span style="color: #9399B2;">(()) }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    returns_result</span><span style="color: #9399B2;">();</span><span style="color: #9399B2;font-style: italic;">   // warning: unused `Result` that must be used</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>我实测过：能编译、能跑，只有一个 warning。而且加个 <code>let _ = returns_result();</code> 就连 warning 都没了。</p>
+<p>真正的差异在于<strong>默认行为的倾向</strong>：</p>
+<ul>
+<li>Rust：忽略 → 有噪音（warning），逼你至少承认一下。</li>
+<li>Go：忽略 <code>err</code> → 世界安静，什么都不说。</li>
+</ul>
+<p>Rust 强的地方不是「自动处理错误」，而是在类型层面让失败路径无法被<strong>无意识地</strong>当成成功值使用。</p>
+<hr />
+<h2 id="san-cuo-wu-chuan-bo-yu-return-err">三、错误传播：<code>?</code> 与 <code>return err</code></h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Handler</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>Service</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>Repository</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>数据库</span></span></code></pre>
+<p>数据库访问失败，我们希望底层返回错误、中间层决定是否转换、最上层决定怎么向用户反馈。</p>
+<h3 id="3-1-rust-de">3.1 Rust 的 <code>?</code></h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span>fs</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span>io</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> load_config</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> io</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Error</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> content</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> fs</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">read_to_string</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;config.toml&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(</span><span>content</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> initialize</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">(),</span><span style="color: #EBA0AC;"> io</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Error</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> config</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> load_config</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">config</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>let config = load_config()?;</code> 大致等价于：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> config</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> match</span><span style="color: #89B4FA;font-style: italic;"> load_config</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span> value</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Err</span><span style="color: #9399B2;">(</span><span>error</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span>error</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">into</span><span style="color: #9399B2;">()),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">};</span></span></code></pre>
+<p>（简化展开，实际走 <code>Try</code> trait。）</p>
+<p><code>?</code> 的语义就两条：</p>
+<ul>
+<li>成功 → 取出值继续；</li>
+<li>失败 → <strong>把错误转换成当前函数能返回的类型</strong>，提前返回。</li>
+</ul>
+<p>第二条很容易被忽略：<code>?</code> 不是无条件原样返回错误。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> read_data</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> AppError</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> content</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">fs</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">read_to_string</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;config.toml&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(</span><span>content</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这里能编过，前提是 <code>AppError: From&lt;std::io::Error&gt;</code>。否则报错。</p>
+<p>这个机制允许你在底层保留具体错误，到上层再逐步归一化成应用错误。</p>
+<h3 id="3-2-go-de-xian-shi-jian-cha">3.2 Go 的显式检查</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> LoadConfig</span><span style="color: #9399B2;">() (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    content</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> os</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ReadFile</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;config.toml&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return string</span><span style="color: #9399B2;">(</span><span>content</span><span style="color: #9399B2;">),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> Initialize</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    config</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> LoadConfig</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span>config</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>每一层都写着：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>看起来啰嗦，但好处是每个检查点都能插入局部逻辑：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>config</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> LoadConfig</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    metrics</span><span style="color: #9399B2;">.</span><span>ConfigLoadFailure</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Inc</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Errorf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;initialize service: %w&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>%w</code> 是关键——它保留底层错误链，让上层还能用 <code>errors.Is</code> / <code>errors.As</code> 回溯。</p>
+<p>Rust 用 <code>map_err</code> 做同样的事：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> content</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">fs</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">read_to_string</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;config.toml&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    .</span><span style="color: #89B4FA;font-style: italic;">map_err</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>err</span><span style="color: #94E2D5;">|</span><span style="color: #F9E2AF;"> AppError</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">ConfigLoad</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">))</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span></code></pre><h3 id="3-3-liang-chong-chuan-bo-de-zhen-zheng-chai-yi">3.3 两种传播的真正差异</h3>
+<p>Rust 的 <code>?</code> 把传播压缩成语言级语法，正常路径干净。</p>
+<p>Go 把检查留在普通控制流里，每一层都容易插东西。</p>
+<p>没有绝对优劣。但要说一句：<strong>Rust 不是不能显式处理错误，Go 也不是不能封装传播</strong>。两种风格两边都能写，只是默认写法的手感不同。</p>
+<hr />
+<h2 id="si-cuo-wu-lei-xing-she-ji">四、错误类型设计</h2>
+<p>这块我觉得最值得细看。</p>
+<p>假设在写一个 Agent Runtime，失败原因包括：</p>
+<ul>
+<li>参数不合法；</li>
+<li>LLM 服务不可用；</li>
+<li>工具调用失败；</li>
+<li>任务超时；</li>
+<li>任务被取消；</li>
+<li>数据库写入失败；</li>
+<li>内部状态不一致。</li>
+</ul>
+<h3 id="4-1-rust-yong-mei-ju-miao-shu-yi-zhi-lei-bie">4.1 Rust：用枚举描述已知类别</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">time</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">#</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">derive</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Debug</span><span style="color: #9399B2;">)]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">enum</span><span style="color: #F9E2AF;font-style: italic;"> AgentError</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    InvalidInput</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    LlmUnavailable</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    ToolFailed</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Timeout</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Cancelled</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Storage</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>枚举描述了系统<strong>认可</strong>的一组错误类别，调用者可以精确匹配：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> handle_error</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">error</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> AgentError</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">InvalidInput</span><span style="color: #9399B2;">(</span><span>message</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            eprintln!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;invalid input: </span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">message</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">LlmUnavailable</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            eprintln!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;LLM unavailable&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">ToolFailed</span><span style="color: #9399B2;">(</span><span>message</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            eprintln!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;tool failed: </span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">message</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Timeout</span><span style="color: #9399B2;">(</span><span>duration</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            eprintln!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;timed out after </span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">duration:?</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cancelled</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            eprintln!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;cancelled&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Storage</span><span style="color: #9399B2;">(</span><span>message</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            eprintln!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;storage error: </span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">message</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>代价是耦合：每加一个类别，所有 <code>match</code> 都要改（除非用 <code>_</code> 兜底，但那样就失去了穷尽性检查）。</p>
+<p>缓解手段有的是：<code>#[non_exhaustive]</code>、<code>Box&lt;dyn Error&gt;</code>、分层错误类型。应用内部用枚举表示稳定的领域错误，通常是最优解。</p>
+<h3 id="4-2-go-cuo-wu-jie-kou-cuo-wu-lian">4.2 Go：错误接口 + 错误链</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> ErrorCode</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ErrInvalidInput</span><span style="color: #F9E2AF;font-style: italic;">   ErrorCode</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;invalid_input&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ErrLlmUnavailable</span><span style="color: #F9E2AF;font-style: italic;"> ErrorCode</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;llm_unavailable&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ErrToolFailed</span><span style="color: #F9E2AF;font-style: italic;">     ErrorCode</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;tool_failed&quot;</span></span>
+<span class="giallo-l"><span style="color: #FAB387;">    ErrTimeout</span><span style="color: #F9E2AF;font-style: italic;">        ErrorCode</span><span style="color: #94E2D5;"> =</span><span style="color: #A6E3A1;"> &quot;timeout&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> AgentError</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Code</span><span style="color: #F9E2AF;font-style: italic;">    ErrorCode</span></span>
+<span class="giallo-l"><span>    Message</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span>    Cause</span><span style="color: #CBA6F7;">   error</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">e </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">AgentError</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Error</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">  {</span><span style="color: #CBA6F7;"> return</span><span> e</span><span style="color: #9399B2;">.</span><span>Message</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;"> (</span><span style="color: #EBA0AC;font-style: italic;">e </span><span style="color: #94E2D5;">*</span><span style="color: #F9E2AF;font-style: italic;">AgentError</span><span style="color: #9399B2;">)</span><span style="color: #89B4FA;font-style: italic;"> Unwrap</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">  {</span><span style="color: #CBA6F7;"> return</span><span> e</span><span style="color: #9399B2;">.</span><span>Cause</span><span style="color: #9399B2;"> }</span></span></code></pre>
+<p>三个字段各自负责一件事：</p>
+<ul>
+<li><code>Code</code>：稳定的错误类别，给程序判断用；</li>
+<li><code>Message</code>：给人看的描述；</li>
+<li><code>Cause</code>：底层原因，串成错误链。</li>
+</ul>
+<p>调用者：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> agentErr</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">AgentError</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">As</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> &amp;</span><span>agentErr</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    switch</span><span> agentErr</span><span style="color: #9399B2;">.</span><span>Code</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> ErrInvalidInput</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // 拒绝请求</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> ErrLlmUnavailable</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // 考虑重试或降级</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    case</span><span> ErrTimeout</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">        // 执行超时策略</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>errors.As</code> 会沿 <code>Unwrap()</code> 逐层查找，所以哪怕错误被 <code>fmt.Errorf("%w")</code> 包了好几层，也能挖出目标类型。我实测过：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>errors.As: true llm_unavailable</span></span>
+<span class="giallo-l"><span>errors.Is(inner): true</span></span></code></pre>
+<p><code>errors.Is</code> 同理，它走 <code>Unwrap</code> 链做相等比较。</p>
+<p>Go 1.20 之后还有一个 <code>errors.Join</code>，用来把多个错误合成一个：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>err</span><span style="color: #94E2D5;"> :=</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Join</span><span style="color: #9399B2;">(</span><span>errA</span><span style="color: #9399B2;">,</span><span> errB</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>它的 <code>Unwrap()</code> 返回 <code>[]error</code>，<code>errors.Is</code> / <code>errors.As</code> 会遍历全部成员。我实测了一下：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>a failed</span></span>
+<span class="giallo-l"><span>b: inner b</span></span>
+<span class="giallo-l"><span>Is(e1): true</span></span>
+<span class="giallo-l"><span>Unwrap() []error 长度: 2</span></span></code></pre>
+<p>适合「多个子任务都失败了，我要一起报上去」的场景——这在并发 fan-out 里很常见。</p>
+<p>一个容易踩的坑：<code>errors.As</code> 的第二个参数必须是指向「实现了 <code>error</code> 的类型」的指针。传值进去会直接 panic：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>panic: errors: target must be a non-nil pointer</span></span></code></pre><h3 id="4-3-zen-me-xuan">4.3 怎么选</h3>
+<p>我的判断是：</p>
+<ul>
+<li><strong>Rust</strong>：领域内部用清晰的枚举，跨模块或需要开放扩展的边界再上动态错误类型。</li>
+<li><strong>Go</strong>：内部模块用稳定的自定义错误类型，对外通过接口、错误码和错误链提供契约。</li>
+</ul>
+<p>但别把这两条当铁律。Rust 一样可以 <code>Box&lt;dyn std::error::Error&gt;</code>，Go 一样可以定义封闭的错误类别。</p>
+<p>真正的判断标准是：<strong>调用者需要知道多少信息？</strong></p>
+<ul>
+<li>只需要知道成功与否 → 错误消息可能够了。</li>
+<li>需要决定要不要重试 → 错误类型必须携带可决策的信息。</li>
+<li>需要区分「用户输入错」和「基础设施挂」→ 这种区别必须出现在类型或分类里，不能靠解析字符串。</li>
+</ul>
+<hr />
+<h2 id="wu-cuo-wu-xiao-xi-bu-neng-dai-ti-cuo-wu-lei-xing">五、错误消息不能代替错误类型</h2>
+<p>这是生产代码里最常见的一类脆弱设计。</p>
+<p>数据库返回：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>connection refused</span></span></code></pre>
+<p>上层看到字符串，猜是数据库不可用。然后写成：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> strings</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Contains</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Error</span><span style="color: #9399B2;">(),</span><span style="color: #A6E3A1;"> &quot;connection refused&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    retry</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Rust 里也一样会犯：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> error</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">contains</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;connection refused&quot;</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    retry</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>两种都不行。<strong>错误消息会随版本、库实现、操作系统、协议变化。</strong> 拿它当控制流条件，等于把稳定性押在别人的文案上。</p>
+<p>正确做法是转换成稳定的类别：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">enum</span><span style="color: #F9E2AF;font-style: italic;"> RetryClass</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Retryable</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Permanent</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Unknown</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> classify_error</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">error</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">AgentError</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> RetryClass</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span> error</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">LlmUnavailable</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> RetryClass</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Retryable</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">InvalidInput</span><span style="color: #9399B2;">(</span><span>_</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> RetryClass</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Permanent</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">ToolFailed</span><span style="color: #9399B2;">(</span><span>_</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> RetryClass</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Unknown</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Timeout</span><span style="color: #9399B2;">(</span><span>_</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> RetryClass</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Retryable</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Cancelled</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> RetryClass</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Permanent</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        AgentError</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">Storage</span><span style="color: #9399B2;">(</span><span>_</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #F9E2AF;font-style: italic;"> RetryClass</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Unknown</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Error</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ▼</span></span>
+<span class="giallo-l"><span>Error Classifier</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ├── Retryable</span></span>
+<span class="giallo-l"><span>  ├── Permanent</span></span>
+<span class="giallo-l"><span>  ├── Cancelled</span></span>
+<span class="giallo-l"><span>  ├── DeadlineExceeded</span></span>
+<span class="giallo-l"><span>  └── Unknown</span></span></code></pre>
+<p>但分类只是决策输入，不是重试的充分条件。一个错误「可以重试」，还得问：</p>
+<ul>
+<li>当前任务还成立吗？</li>
+<li>剩余截止时间够吗？</li>
+<li>会不会重复产生副作用？</li>
+<li>下游是不是已经在过载？</li>
+<li>重试会不会放大故障？</li>
+</ul>
+<hr />
+<h2 id="liu-panic-yu-recover">六、panic 与 recover</h2>
+<p>前面聊的都是普通错误。两种语言都还有另一套失败机制：</p>
+<p>Go 有 <code>panic()</code>，Rust 有 <code>panic!()</code>。看起来像，但不能等同。</p>
+<h3 id="6-1-rust-de-panic">6.1 Rust 的 panic</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> value</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>unwrap()</code> 遇到 <code>None</code> 就 panic。</p>
+<p>panic 一般用于：</p>
+<ul>
+<li>不该发生的状态；</li>
+<li>违反程序假设；</li>
+<li>无法正常恢复的错误；</li>
+<li>断言失败。</li>
+</ul>
+<p>区分标准其实很简单：<strong>可预期、需要向调用者报告的失败用 <code>Result</code>；违反程序不变量的才考虑 panic。</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> parse_port</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">input</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u16</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #EBA0AC;">num</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">ParseIntError</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    input</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">parse</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>解析用户输入失败是完全正常的，不该因为用户手抖就 panic。</p>
+<p>panic 的行为取决于策略：默认 <code>unwind</code> 会栈展开并跑析构；<code>abort</code> 直接终止进程。</p>
+<p><strong>即使展开，也不能保证所有资源都被恢复，更不能保证已发生的外部副作用被撤销。</strong></p>
+<h3 id="6-2-go-de-panic-yu-recover">6.2 Go 的 panic 与 recover</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> parsePort</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">input</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">uint16</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    value</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> strconv</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ParseUint</span><span style="color: #9399B2;">(</span><span>input</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 16</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">,</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return uint16</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">),</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这里用普通错误。</p>
+<p>如果 <code>panic("unexpected state")</code>，就进入 panic 流程。<code>recover()</code> 可以在 <code>defer</code> 里捕获：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> runSafely</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> r</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> recover</span><span style="color: #9399B2;">();</span><span> r</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>            log</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Printf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;panic recovered: %v&quot;</span><span style="color: #9399B2;">,</span><span> r</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }()</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    panic</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;unexpected failure&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>但 <code>recover</code> 不是普通的错误传播机制。它处理的是 panic 引发的非局部控制流，而且只能在符合规则的 deferred 函数里生效。</p>
+<p>更重要的一句：<strong>捕获 panic 不等于状态已经恢复。</strong></p>
+<p>出了 panic 的地方可能已经改了共享内存、发了外部请求、或者只完成了多步操作的一部分。recover 只是让控制流继续，不会回滚任何事。</p>
+<h3 id="6-3-shen-me-shi-hou-gai-yong-panic">6.3 什么时候该用 panic</h3>
+<table><thead><tr><th>场景</th><th>Rust</th><th>Go</th></tr></thead><tbody>
+<tr><td>用户输入不合法</td><td><code>Result::Err</code></td><td><code>error</code></td></tr>
+<tr><td>文件不存在</td><td><code>Result::Err</code></td><td><code>error</code></td></tr>
+<tr><td>网络请求失败</td><td><code>Result::Err</code></td><td><code>error</code></td></tr>
+<tr><td>外部服务暂时不可用</td><td>返回错误，上层决策</td><td>返回错误，上层决策</td></tr>
+<tr><td>内部不变量被破坏</td><td>视情况 panic 或返回错误</td><td>视情况 panic 或返回错误</td></tr>
+<tr><td>插件发生意外 panic</td><td>按边界和策略考虑隔离</td><td>按边界和策略考虑 recover</td></tr>
+<tr><td>进程内存已损坏、状态不可信</td><td>不能假定恢复安全</td><td>不能假定恢复安全</td></tr>
+</tbody></table>
+<p>最后一行最关键。不是所有 panic 都意味着内存坏了，但如果程序的不变量已经无法确认，那么「捕获异常继续跑」很可能把小问题放大成大问题。</p>
+<p>对插件系统、脚本引擎、多租户任务执行器来说，<strong>故障隔离往往比盲目恢复更重要</strong>。</p>
+<hr />
+<h2 id="qi-zi-yuan-qing-li-drop-yu-defer">七、资源清理：Drop 与 defer</h2>
+<p>错误处理如果只管返回值不管资源，就是不完整的。</p>
+<h3 id="7-1-rust-de-raii">7.1 Rust 的 RAII</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">fs</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">File</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">io</span><span style="color: #94E2D5;">::</span><span style="color: #9399B2;">{</span><span style="color: #F38BA8;">self</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Read</span><span style="color: #9399B2;">};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> read_file</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">path</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;"> io</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> file</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> File</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">open</span><span style="color: #9399B2;">(</span><span>path</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> content</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span>    file</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">read_to_string</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span> content</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(</span><span>content</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>read_to_string</code> 失败就提前返回，<code>file</code> 离开作用域时照样析构，文件句柄照样关闭。</p>
+<p>这就是 RAII：资源清理绑在所有权和作用域上，而不是绑在控制流上。</p>
+<p>但这<strong>不代表外部副作用能回滚</strong>。已经写进数据库的数据，不会因为 Rust 对象析构而消失。</p>
+<h3 id="7-2-go-de-defer">7.2 Go 的 defer</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> ReadFileContent</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">path</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">) ([]</span><span style="color: #CBA6F7;">byte</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span>    file</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> os</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Open</span><span style="color: #9399B2;">(</span><span>path</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span> file</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Close</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    content</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> io</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">ReadAll</span><span style="color: #9399B2;">(</span><span>file</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;">,</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> content</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>defer</code> 会在函数返回时执行，包括所有错误返回路径。</p>
+<p>三点注意：</p>
+<ul>
+<li><code>defer</code> 不等于事务回滚；</li>
+<li>进程被强杀时 <code>defer</code> 不保证执行；</li>
+<li>如果 <code>Close()</code> 本身可能失败且影响业务正确性，就不能无条件忽略。</li>
+</ul>
+<p>Rust 有对称的问题：<code>Drop</code> 不能返回错误。需要报告错误的清理，得设计显式的 <code>close()</code> / <code>commit()</code>。</p>
+<p>所以数据库事务这种必须显式收尾的东西，两边都不能交给通用清理机制：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>开始事务</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>执行修改</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ├── 失败 ──► 回滚</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   └── 成功 ──► 提交</span></span></code></pre>
+<p><strong>提交还是回滚是业务决策，通用资源清理机制不可能替你猜。</strong></p>
+<hr />
+<h2 id="ba-yi-bu-li-de-cuo-wu-chuan-bo">八、异步里的错误传播</h2>
+<h3 id="8-1-result-yu-future-shi-liang-ge-ceng-ci">8.1 Result 与 Future 是两个层次</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">async fn</span><span style="color: #89B4FA;font-style: italic;"> fetch_data</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> FetchError</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 异步请求</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;data&quot;</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">to_string</span><span style="color: #9399B2;">())</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这个函数返回 Future，Future 完成后的输出类型是 <code>Result&lt;String, FetchError&gt;</code>。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Future 的执行</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>Future 完成</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>Result&lt;String, FetchError&gt;</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ├── Ok(data)</span></span>
+<span class="giallo-l"><span>      └── Err(error)</span></span></code></pre>
+<p>要分清：「Future 有没有完成」是执行状态，「异步操作成不成功」是业务结果。</p>
+<p><code>Result</code> 不会让操作变异步，<code>Future</code> 也不会自动定义业务错误类型。</p>
+<h3 id="8-2-joinhandle-de-shuang-ceng-result">8.2 JoinHandle 的双层 Result</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> handle</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> tokio</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">spawn</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">async</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Err</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">(),</span><span style="color: #94E2D5;"> &amp;</span><span style="color: #F9E2AF;font-style: italic;">str</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;operation failed&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">});</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> result</span><span style="color: #94E2D5;"> =</span><span> handle</span><span style="color: #94E2D5;">.</span><span style="color: #CBA6F7;">await</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p><code>handle.await</code> 的类型是：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Result&lt;Result&lt;(), &amp;str&gt;, tokio::task::JoinError&gt;</span></span></code></pre>
+<p>为什么两层？</p>
+<p>外层 <code>Result&lt;_, JoinError&gt;</code>：任务<strong>本身</strong>有没有正常完成——panic 了？被取消了？</p>
+<p>内层 <code>Result&lt;(), &amp;str&gt;</code>：任务里的<strong>业务</strong>成功了吗？</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>JoinHandle.await</span></span>
+<span class="giallo-l"><span>       │</span></span>
+<span class="giallo-l"><span>       ▼</span></span>
+<span class="giallo-l"><span>Result&lt;业务结果, JoinError&gt;</span></span>
+<span class="giallo-l"><span>       │</span></span>
+<span class="giallo-l"><span>       ├── Err(JoinError)</span></span>
+<span class="giallo-l"><span>       │      └── 任务层面的失败</span></span>
+<span class="giallo-l"><span>       │</span></span>
+<span class="giallo-l"><span>       └── Ok(业务结果)</span></span>
+<span class="giallo-l"><span>                 │</span></span>
+<span class="giallo-l"><span>                 ▼</span></span>
+<span class="giallo-l"><span>           Result&lt;T, E&gt;</span></span>
+<span class="giallo-l"><span>                 │</span></span>
+<span class="giallo-l"><span>                 ├── Ok(T)</span></span>
+<span class="giallo-l"><span>                 └── Err(E)</span></span></code></pre>
+<p>这不是设计冗余。它把两种责任分开了：运行时报告任务执行状态，业务函数报告业务结果。</p>
+<p>写 Agent Runtime 时这个区分特别有用：</p>
+<ul>
+<li>工具调用失败 → 业务错误；</li>
+<li>任务里 panic → 任务执行层故障；</li>
+<li>任务被主动取消 → 生命周期事件；</li>
+<li>工作线程被阻塞 → 调度和运行时问题。</li>
+</ul>
+<p>这四种不该被压成同一个字符串。</p>
+<h3 id="8-3-go-de-goroutine-bu-hui-ba-cuo-wu-chuan-hui-lai">8.3 Go 的 goroutine 不会把错误传回来</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">go func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> doWork</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        log</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Printf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;worker failed: %v&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}()</span></span></code></pre>
+<p>错误只在 goroutine 内部处理，启动它的函数<strong>收不到任何东西</strong>。</p>
+<p>要传出去就得自己搭路：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>resultCh</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">chan error</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">go func</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>    resultCh</span><span style="color: #94E2D5;"> &lt;-</span><span style="color: #89B4FA;font-style: italic;"> doWork</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}()</span></span>
+<span class="giallo-l"><span>err</span><span style="color: #94E2D5;"> := &lt;-</span><span>resultCh</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>或者用 <code>errgroup</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>g</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #94E2D5;"> :=</span><span> errgroup</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithContext</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Go</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">func</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;"> {</span><span style="color: #CBA6F7;"> return</span><span style="color: #89B4FA;font-style: italic;"> doWork</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">) })</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> err</span><span style="color: #94E2D5;"> :=</span><span> g</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Wait</span><span style="color: #9399B2;">();</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>两种语言在这点上是共通的：<strong>并发任务的错误必须有明确的传递路径，不会因为「是某个函数启动的」就自动回流。</strong></p>
+<p>区别只在接口形态：</p>
+<ul>
+<li>Tokio：<code>JoinHandle</code> 返回双层 <code>Result</code>；</li>
+<li>Go：channel、共享状态或 <code>errgroup</code>。</li>
+</ul>
+<hr />
+<h2 id="jiu-shen-me-cuo-wu-gai-zhong-shi">九、什么错误该重试</h2>
+<p>从这里开始，从语言机制进入系统设计。</p>
+<p>假设一次 LLM 请求失败了。最简单的写法：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">loop</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    match</span><span style="color: #89B4FA;font-style: italic;"> call_llm</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #CBA6F7;">await</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Ok</span><span style="color: #9399B2;">(</span><span>result</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> break</span><span> result</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">        Err</span><span style="color: #9399B2;">(</span><span>_</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> continue</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Go 也容易写成一样：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">for</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    result</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> callLLM</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span> result</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>两段都是坑。服务持续不可用时就是无限重试，资源被持续烧掉。</p>
+<p>所以「要不要重试」之外，还得问：</p>
+<ol>
+<li>这个错误暂时可恢复吗？</li>
+<li>重试会不会重复执行副作用？</li>
+<li>最大重试几次？</li>
+<li>有没有整体截止时间？</li>
+<li>要不要退避？</li>
+<li>要不要熔断？</li>
+<li>服务过载时该不该直接拒绝新请求？</li>
+</ol>
+<h3 id="9-1-cuo-wu-fen-lei">9.1 错误分类</h3>
+<table><thead><tr><th>类别</th><th>例子</th><th>典型处理</th></tr></thead><tbody>
+<tr><td>Validation</td><td>参数不合法</td><td>直接返回</td></tr>
+<tr><td>Authentication</td><td>凭证无效</td><td>返回错误，必要时刷新凭证</td></tr>
+<tr><td>RateLimited</td><td>触发限流</td><td>退避后重试，遵守服务端策略</td></tr>
+<tr><td>Transient</td><td>暂时性网络故障</td><td>有界重试</td></tr>
+<tr><td>Timeout</td><td>操作超过期限</td><td>根据操作状态决定是否重试</td></tr>
+<tr><td>Cancelled</td><td>主动取消</td><td>停止继续执行</td></tr>
+<tr><td>Permanent</td><td>永久性业务失败</td><td>终止当前操作</td></tr>
+<tr><td>Internal</td><td>内部状态异常</td><td>记录诊断，必要时隔离任务</td></tr>
+</tbody></table>
+<p>这只是个基础分类。实际要按具体协议和业务语义来定。</p>
+<p>比如 HTTP 500 不代表重试一定有用（可能是确定性 bug）；HTTP 429 必须遵守服务端给的 <code>Retry-After</code>，不能自己想退避多少就多少。</p>
+<h3 id="9-2-zhong-shi-bi-xu-you-bian-jie">9.2 重试必须有边界</h3>
+<p>生产级重试至少要这几样：</p>
+<ul>
+<li>最大尝试次数；</li>
+<li>指数退避；</li>
+<li>随机抖动；</li>
+<li>总体截止时间；</li>
+<li>取消检查；</li>
+<li>错误分类；</li>
+<li>幂等性保障。</li>
+</ul>
+<p>指数退避：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>d_n = min(d_max, d_0 × 2^n)</span></span></code></pre>
+<p>其中 <code>d_0</code> 是初始等待，<code>n</code> 是第几次重试，<code>d_max</code> 是等待上限。</p>
+<p>实际还要加随机抖动，否则所有客户端会在同一时刻一起重试，形成「同步重试风暴」。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>第一次失败：等待约 100ms</span></span>
+<span class="giallo-l"><span>第二次失败：等待约 200ms</span></span>
+<span class="giallo-l"><span>第三次失败：等待约 400ms</span></span>
+<span class="giallo-l"><span>第四次失败：等待约 800ms</span></span></code></pre>
+<p>这些只是示例，不是推荐值。</p>
+<h3 id="9-3-zhong-shi-bu-shi-hui-gun">9.3 重试不是回滚</h3>
+<p>这个原则比前面所有技巧都重要。</p>
+<p>假设 Agent 通过工具向外部系统转账，请求发出后超时。可能是两种情况：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>情况 A：请求没到达服务端  → 没转账</span></span>
+<span class="giallo-l"><span>情况 B：服务端已完成转账  → 响应丢了</span></span></code></pre>
+<p><strong>客户端看到的都是超时。</strong></p>
+<p>直接重试，情况 B 就变成重复转账。</p>
+<p>所以重试之前必须确认两件事：操作是否幂等，以及能不能查到上一次操作的最终状态。</p>
+<p>常见解法：</p>
+<ul>
+<li>幂等键；</li>
+<li>服务端去重；</li>
+<li>操作 ID；</li>
+<li>查询操作状态；</li>
+<li>事务；</li>
+<li>补偿机制。</li>
+</ul>
+<p>这在支付、任务调度、工具调用、Agent 执行框架里都是必修课。</p>
+<hr />
+<h2 id="shi-zhong-shi-zhi-wai-jian-cha-dian-bu-chang-ge-chi">十、重试之外：检查点、补偿、隔离</h2>
+<p>假设一个任务分三步：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Task</span></span>
+<span class="giallo-l"><span> │</span></span>
+<span class="giallo-l"><span> ▼</span></span>
+<span class="giallo-l"><span>Step A：读取数据</span></span>
+<span class="giallo-l"><span> │</span></span>
+<span class="giallo-l"><span> ▼</span></span>
+<span class="giallo-l"><span>Step B：调用外部工具</span></span>
+<span class="giallo-l"><span> │</span></span>
+<span class="giallo-l"><span> ▼</span></span>
+<span class="giallo-l"><span>Step C：保存结果</span></span></code></pre>
+<p>Step C 失败了。这时候不能只问「要不要整个重试」，得先看 Step A 和 Step B 做了什么、有没有副作用。</p>
+<h3 id="10-1-jian-cha-dian-hui-fu">10.1 检查点恢复</h3>
+<p>保存任务执行状态：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Task State</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ├── Step A: Completed</span></span>
+<span class="giallo-l"><span>   ├── Step B: Completed</span></span>
+<span class="giallo-l"><span>   └── Step C: Failed</span></span></code></pre>
+<p>恢复时从 Step C 继续，不重跑全部。</p>
+<p>这要求系统明确持久化：</p>
+<ul>
+<li>已完成步骤；</li>
+<li>每步的输出；</li>
+<li>任务版本；</li>
+<li>当前状态；</li>
+<li>已执行的外部副作用；</li>
+<li>重试次数；</li>
+<li>恢复所需上下文。</li>
+</ul>
+<h3 id="10-2-bu-chang-cao-zuo">10.2 补偿操作</h3>
+<p>有些操作没法回滚：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>创建资源</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>发送通知</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>后续步骤失败</span></span></code></pre>
+<p>通知已经发出去，撤不回来。这时只能补偿：更新状态、发更正通知、或者转人工处理。</p>
+<p>这类设计就是 Saga 模式在干的事。</p>
+<h3 id="10-3-ge-chi-yu-rong-duan">10.3 隔离与熔断</h3>
+<p>某个下游工具连续失败，继续往里灌请求只会让情况更糟。这时候可以考虑：</p>
+<ul>
+<li>暂停对该工具的请求；</li>
+<li>限制并发；</li>
+<li>暂时拒绝任务；</li>
+<li>用降级实现；</li>
+<li>等健康检查恢复。</li>
+</ul>
+<p>到这一步，讨论已经从「单个错误怎么处理」升级成「系统级故障治理」。</p>
+<p>一句话区分：</p>
+<blockquote>
+<p><strong>错误传播负责告诉系统发生了什么；故障恢复负责决定系统接下来怎么做。</strong></p>
+</blockquote>
+<hr />
+<h2 id="shi-yi-sheng-chan-ji-cuo-wu-mo-xing-de-san-ceng-jie-gou">十一、生产级错误模型的三层结构</h2>
+<p>我不会把所有错误塞进一个巨大的字符串。合理的做法是分层。</p>
+<h3 id="11-1-di-ceng-ji-shu-cuo-wu">11.1 底层技术错误</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>IO Error</span></span>
+<span class="giallo-l"><span>HTTP Error</span></span>
+<span class="giallo-l"><span>Database Error</span></span>
+<span class="giallo-l"><span>Serialization Error</span></span></code></pre>
+<p>这一层尽量保留原始信息，方便定位。</p>
+<h3 id="11-2-ying-yong-cuo-wu">11.2 应用错误</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>InvalidTask</span></span>
+<span class="giallo-l"><span>ToolUnavailable</span></span>
+<span class="giallo-l"><span>ExecutionTimeout</span></span>
+<span class="giallo-l"><span>StorageFailure</span></span>
+<span class="giallo-l"><span>PermissionDenied</span></span></code></pre>
+<p>这一层负责把不同的技术错误映射成应用能理解的类别。</p>
+<h3 id="11-3-diao-du-jue-ce">11.3 调度决策</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Retry</span></span>
+<span class="giallo-l"><span>Fail</span></span>
+<span class="giallo-l"><span>Cancel</span></span>
+<span class="giallo-l"><span>Degrade</span></span>
+<span class="giallo-l"><span>Wait</span></span>
+<span class="giallo-l"><span>Escalate</span></span></code></pre>
+<p>这一层<strong>不能</strong>只看错误字符串，要综合：</p>
+<ul>
+<li>错误类别；</li>
+<li>剩余截止时间；</li>
+<li>任务当前状态；</li>
+<li>是否允许重试；</li>
+<li>重试预算；</li>
+<li>外部副作用；</li>
+<li>当前系统负载。</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>底层错误</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>错误归一化</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>应用错误类型</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>调度策略</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ├── Retry</span></span>
+<span class="giallo-l"><span>    ├── Fail</span></span>
+<span class="giallo-l"><span>    ├── Cancel</span></span>
+<span class="giallo-l"><span>    ├── Degrade</span></span>
+<span class="giallo-l"><span>    └── Escalate</span></span></code></pre>
+<p>这个分层最大的价值是：<strong>不让底层 HTTP 客户端去决定整个 Agent 任务该怎么恢复。</strong></p>
+<p>底层只负责提供准确的错误信息和分类依据；恢复策略交给了解任务语义和资源预算的上层。</p>
+<hr />
+<h2 id="shi-er-yi-ge-wan-zheng-li-zi">十二、一个完整例子</h2>
+<p>有界重试的外部请求。为了聚焦错误处理，省略 HTTP 配置、日志、指标、取消传播等生产细节。</p>
+<h3 id="12-1-rust-ban">12.1 Rust 版</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">time</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Duration</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> tokio</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">time</span><span style="color: #94E2D5;">::</span><span>sleep</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">#</span><span style="color: #9399B2;">[</span><span style="color: #F9E2AF;font-style: italic;">derive</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Debug</span><span style="color: #9399B2;">)]</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">enum</span><span style="color: #F9E2AF;font-style: italic;"> AppError</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    InvalidInput</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    TemporaryFailure</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    PermanentFailure</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">async fn</span><span style="color: #89B4FA;font-style: italic;"> call_service</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> AppError</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 模拟一次外部调用</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">AppError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">TemporaryFailure</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">async fn</span><span style="color: #89B4FA;font-style: italic;"> execute_with_retry</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">max_attempts</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Result</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> AppError</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> max_attempts</span><span style="color: #94E2D5;"> ==</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">AppError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">InvalidInput</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> attempt</span><span style="color: #CBA6F7;"> in</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;">..</span><span>max_attempts</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        match</span><span style="color: #89B4FA;font-style: italic;"> call_service</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #CBA6F7;">await</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            Ok</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> Ok</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">AppError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">TemporaryFailure</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> if</span><span> attempt</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #94E2D5;"> &lt;</span><span> max_attempts</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                let</span><span> delay</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Duration</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from_millis</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">100</span><span style="color: #94E2D5;"> *</span><span style="color: #9399B2;"> (</span><span style="color: #FAB387;">1</span><span style="color: #CBA6F7;">u64</span><span style="color: #94E2D5;"> &lt;&lt;</span><span> attempt</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">min</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">)));</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">                sleep</span><span style="color: #9399B2;">(</span><span>delay</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #CBA6F7;">await</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">            Err</span><span style="color: #9399B2;">(</span><span>error</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> Err</span><span style="color: #9399B2;">(</span><span>error</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Err</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">AppError</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PermanentFailure</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>几个设计点：</p>
+<ol>
+<li>错误类别显式；</li>
+<li>只对暂时性错误重试；</li>
+<li>重试次数有上限；</li>
+<li>退避等待本身是异步的（不阻塞线程）；</li>
+<li>最终失败以 <code>Err</code> 返回。</li>
+</ol>
+<p>实测跑一下：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>retry result: Err(TemporaryFailure)</span></span></code></pre>
+<p>注意 <code>sleep(delay).await</code> 这一行：它让出执行权，其他任务可以继续跑。如果换成 <code>std::thread::sleep</code>，整个 worker 线程就被卡住了。</p>
+<p>这只是教学示例。真实实现还要加随机抖动、总截止时间、取消令牌、重试预算和幂等控制。</p>
+<h3 id="12-2-go-ban">12.2 Go 版</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">package</span><span style="color: #F9E2AF;font-style: italic;"> main</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">import</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;context&quot;</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;errors&quot;</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;fmt&quot;</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">    &quot;time&quot;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">var</span><span style="color: #9399B2;"> (</span></span>
+<span class="giallo-l"><span>    ErrTemporary</span><span style="color: #94E2D5;"> =</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;temporary failure&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    ErrPermanent</span><span style="color: #94E2D5;"> =</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;permanent failure&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> callService</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 模拟一次外部调用</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> ErrTemporary</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> executeWithRetry</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">ctx</span><span style="color: #F9E2AF;font-style: italic;"> context</span><span style="color: #9399B2;">.</span><span style="color: #F9E2AF;font-style: italic;">Context</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> maxAttempts</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">) (</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> error</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> maxAttempts</span><span style="color: #94E2D5;"> &lt;=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">New</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;maxAttempts must be positive&quot;</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> attempt</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span><span> attempt</span><span style="color: #94E2D5;"> &lt;</span><span> maxAttempts</span><span style="color: #9399B2;">;</span><span> attempt</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        value</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> callService</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> err</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span> value</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span>errors</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Is</span><span style="color: #9399B2;">(</span><span>err</span><span style="color: #9399B2;">,</span><span> ErrTemporary</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span> attempt</span><span style="color: #94E2D5;">+</span><span style="color: #FAB387;">1</span><span style="color: #94E2D5;"> ==</span><span> maxAttempts</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> err</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>        delay</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 100</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span>Millisecond</span><span style="color: #94E2D5;"> *</span><span> time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Duration</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #94E2D5;">&lt;&lt;</span><span style="color: #89B4FA;font-style: italic;">min</span><span style="color: #9399B2;">(</span><span>attempt</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span>        timer</span><span style="color: #94E2D5;"> :=</span><span> time</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">NewTimer</span><span style="color: #9399B2;">(</span><span>delay</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        case</span><span style="color: #94E2D5;"> &lt;-</span><span>ctx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Done</span><span style="color: #9399B2;">():</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            if</span><span style="color: #94E2D5;"> !</span><span>timer</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Stop</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                select</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                case</span><span style="color: #94E2D5;"> &lt;-</span><span>timer</span><span style="color: #9399B2;">.</span><span>C</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">                default</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">                }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> ctx</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Err</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        case</span><span style="color: #94E2D5;"> &lt;-</span><span>timer</span><span style="color: #9399B2;">.</span><span>C</span><span style="color: #9399B2;">:</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #A6E3A1;"> &quot;&quot;</span><span style="color: #9399B2;">,</span><span> ErrPermanent</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>    ctx</span><span style="color: #9399B2;">,</span><span> cancel</span><span style="color: #94E2D5;"> :=</span><span> context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">WithTimeout</span><span style="color: #9399B2;">(</span><span>context</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Background</span><span style="color: #9399B2;">(),</span><span style="color: #FAB387;"> 5</span><span style="color: #94E2D5;">*</span><span>time</span><span style="color: #9399B2;">.</span><span>Second</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    defer</span><span style="color: #89B4FA;font-style: italic;"> cancel</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>    value</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> executeWithRetry</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 3</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> err</span><span style="color: #94E2D5;"> !=</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;failed:&quot;</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        return</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span>    fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这里展示了：</p>
+<ol>
+<li>用 <code>error</code> 返回失败；</li>
+<li>用 <code>errors.Is</code> 判断类别；</li>
+<li>用 <code>context.Context</code> 传播取消；</li>
+<li>用 <code>select</code> 让退避等待也能被取消；</li>
+<li>限制重试次数。</li>
+</ol>
+<p>那个 <code>timer.Stop()</code> + 二次 <code>select</code> 的写法是 Go 的标准模式：如果 <code>Stop</code> 返回 <code>false</code>，说明 timer 已经触发，通道里可能还有值，要先排空再返回，否则会泄漏。</p>
+<h3 id="12-3-zhen-zheng-de-chai-bie">12.3 真正的差别</h3>
+<p>Rust：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">match</span><span style="color: #89B4FA;font-style: italic;"> call_service</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #CBA6F7;">await</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Ok</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #CBA6F7;"> return</span><span style="color: #F9E2AF;font-style: italic;"> Ok</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Err</span><span style="color: #9399B2;">(</span><span>error</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =&gt;</span><span style="color: #9399B2;"> {</span><span style="color: #9399B2;font-style: italic;"> /* 分类与处理 */</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Go：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>value</span><span style="color: #9399B2;">,</span><span> err</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> callService</span><span style="color: #9399B2;">(</span><span>ctx</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">if</span><span> err</span><span style="color: #94E2D5;"> ==</span><span style="color: #F38BA8;"> nil</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> value</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> nil</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>表面上一个用 <code>Result</code> 一个用 <code>error</code>。但两者真正的架构是一样的：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>调用外部服务</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>获得成功或失败结果</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>判断错误类别</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>检查重试预算</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>等待退避时间</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>重新尝试或返回错误</span></span></code></pre>
+<p><strong>决定系统可靠性的，不是 <code>Result</code> 和 <code>error</code> 哪个更漂亮，而是错误分类、重试预算、取消传播、幂等性和恢复策略有没有设计对。</strong></p>
+<hr />
+<h2 id="shi-san-zong-jie">十三、总结</h2>
+<p>七条：</p>
+<ol>
+<li><strong>Rust 强调错误的类型化表达。</strong> <code>Result&lt;T, E&gt;</code> 把成功和失败放进一个显式类型，配合 <code>?</code>、<code>match</code> 和自定义错误类型，能建立清晰的传播链。</li>
+<li><strong>Go 强调普通控制流里的显式检查。</strong> <code>(T, error)</code> 加 <code>if err != nil</code>，灵活直接，也方便在每个点插入局部逻辑。</li>
+<li><strong>Rust 的类型系统能约束形式，但保证不了业务正确。</strong> 调用者照样能 <code>unwrap()</code>，或者返回个错误却没有恢复策略。</li>
+<li><strong>两边的 panic 都不该代替日常错误返回。</strong> 可预期的失败用 <code>Result</code> / <code>error</code>；意外状态要先判断能不能安全恢复，而不是一律捕获后继续跑。</li>
+<li><strong>任务取消不等于外部操作回滚。</strong> 无论是 drop Future 还是 <code>context</code> 取消，都撤不回已经发出的请求和已提交的事务。</li>
+<li><strong>重试必须建立在分类、预算、幂等性之上。</strong> 不能因为出错了就盲目重跑。</li>
+<li><strong>故障恢复是系统设计问题，不是语言特性。</strong> 对 Agent Runtime 来说，真正重要的是让任务在失败、取消、超时和进程重启后，仍然有明确的状态和可预测的恢复行为。</li>
+</ol>
+<p>一句话收尾：</p>
+<blockquote>
+<p>Rust 和 Go 都提供了显式的错误传播机制，但生产系统的可靠性，最终取决于你怎么把错误类型、任务状态、重试策略、取消语义和恢复机制组合起来。</p>
+</blockquote>
+<p>下一篇可以接着聊错误分类、错误链、重试策略和任务状态机怎么协同——那才是把语言层面的错误处理真正接到生产级运行时架构上的地方。</p>
+
+    </div>
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/12-rust-go-memory/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Rust 与 Go 的内存管理：GC、所有权与分配</span></a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/10-rust-async-vs-go/"><span class="button__text">Rust 与 Go 的异步体系对比</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                        </span>
+                    </div>
+            </div>
+        </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 2026 Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

@@ -1,0 +1,1119 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Rust 与 Go 的内存管理：GC、所有权与分配 | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="Go 用运行时可达性分析回收内存，Rust 用编译期所有权约束生命周期。这篇从标记清除、写屏障讲到逃逸分析、对象布局与分配器，落到实际代码的分配行为。">
+    <meta property="og:description" content="Go 用运行时可达性分析回收内存，Rust 用编译期所有权约束生命周期。这篇从标记清除、写屏障讲到逃逸分析、对象布局与分配器，落到实际代码的分配行为。">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/12-rust-go-memory/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="Go 用运行时可达性分析回收内存，Rust 用编译期所有权约束生命周期。这篇从标记清除、写屏障讲到逃逸分析、对象布局与分配器，落到实际代码的分配行为。">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/12-rust-go-memory/">
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <nav class="menu">
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/12-rust-go-memory/">Rust 与 Go 的内存管理：GC、所有权与分配</a></h1>
+    <div class="post-meta-inline">
+        <span class="post-date">2026-10-25</span>
+    </div>
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/gc/">#GC</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/go/">#Go</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory/">#Memory</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    <div class="post-content">
+        <p>有个说法我觉得得先破掉：</p>
+<blockquote>
+<p>Rust 不是「用所有权实现了一套没有 GC 的垃圾回收器」，而是<strong>从根上换了内存管理的模型</strong>。</p>
+</blockquote>
+<p>Go 靠运行时的垃圾回收器，在执行过程中识别不可达对象并回收。Rust 靠所有权、借用、生命周期和确定性析构，在编译期约束内存的使用方式，运行时通过所有权转移、作用域结束和 <code>Drop</code> 来管理资源。</p>
+<p>两者解决的是同一个大问题——<strong>怎么让程序安全地管理内存，又不要求开发者手动追踪每一块内存的释放时机</strong>——但路线完全不同。</p>
+<p>这篇从内存管理的基本问题出发，讲到 Go GC 的工作原理、Rust 的所有权机制、循环引用、并发、性能，最后落到「一行代码到底会不会分配」这个最实际的问题上。</p>
+<hr />
+<h2 id="yi-gc-dao-di-jie-jue-shen-me-wen-ti">一、GC 到底解决什么问题</h2>
+<p>先不谈语言。C 里分配一块内存：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="c"><span class="giallo-l"><span style="color: #CBA6F7;">int</span><span style="color: #94E2D5;"> *</span><span>p </span><span style="color: #94E2D5;">=</span><span style="color: #89B4FA;font-style: italic;"> malloc</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">sizeof</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">*</span><span>p </span><span style="color: #94E2D5;">=</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">free</span><span style="color: #9399B2;">(</span><span>p</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>开发者要负责两件事：申请，以及在<strong>适当的时候</strong>释放。</p>
+<p>什么叫适当的时候？看这段：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="c"><span class="giallo-l"><span style="color: #CBA6F7;">int</span><span style="color: #94E2D5;"> *</span><span>p </span><span style="color: #94E2D5;">=</span><span style="color: #89B4FA;font-style: italic;"> malloc</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">sizeof</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">*</span><span>p </span><span style="color: #94E2D5;">=</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">int</span><span style="color: #94E2D5;"> *</span><span>q </span><span style="color: #94E2D5;">=</span><span> p</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">free</span><span style="color: #9399B2;">(</span><span>p</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">printf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;%d</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> *</span><span style="color: #EBA0AC;font-style: italic;">q</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p><code>p</code> 和 <code>q</code> 指向同一块内存。释放 <code>p</code> 不会让 <code>q</code> 失效，于是 <code>q</code> 成了悬垂指针。</p>
+<p>再看这段：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="c"><span class="giallo-l"><span style="color: #CBA6F7;">int</span><span style="color: #94E2D5;"> *</span><span>p </span><span style="color: #94E2D5;">=</span><span style="color: #89B4FA;font-style: italic;"> malloc</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">sizeof</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">*</span><span>p </span><span style="color: #94E2D5;">=</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span>p </span><span style="color: #94E2D5;">=</span><span style="color: #F38BA8;"> NULL</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p>原来那块内存已经没有任何指针能访问，但我们没 <code>free</code>。这就是泄漏。</p>
+<p>手动管理内存的核心风险：</p>
+<table><thead><tr><th>问题</th><th>原因</th><th>后果</th></tr></thead><tbody>
+<tr><td>Use-after-free</td><td>内存释放后仍在使用</td><td>内存安全问题</td></tr>
+<tr><td>Double-free</td><td>同一块内存被释放多次</td><td>内存破坏</td></tr>
+<tr><td>Memory leak</td><td>不再需要的内存没释放</td><td>内存持续增长</td></tr>
+<tr><td>Dangling pointer</td><td>指针指向已失效对象</td><td>非法访问</td></tr>
+<tr><td>Data race</td><td>多线程不安全地访问共享数据</td><td>数据竞争、UB 或逻辑错误</td></tr>
+</tbody></table>
+<p>这里要划一条边界：</p>
+<blockquote>
+<p><strong>GC 主要解决对象生命周期与内存回收，不自动解决并发安全问题。</strong></p>
+</blockquote>
+<p>Go 有 GC，多个 Goroutine 照样能同时改同一个对象造成数据竞争。Rust 的所有权系统也不只是管内存——它还通过借用规则约束引用，再配合 <code>Send</code>/<code>Sync</code> 支持线程安全。</p>
+<hr />
+<h2 id="er-go-de-lu-xian-dui-xiang-zi-you-gong-xiang-kao-ke-da-xing-hui-shou">二、Go 的路线：对象自由共享，靠可达性回收</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">package</span><span style="color: #F9E2AF;font-style: italic;"> main</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">import</span><span style="color: #A6E3A1;"> &quot;fmt&quot;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    Name</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>    u</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">User</span><span style="color: #9399B2;">{</span><span>Name</span><span style="color: #9399B2;">:</span><span style="color: #A6E3A1;"> &quot;Alice&quot;</span><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span>    v</span><span style="color: #94E2D5;"> :=</span><span> u</span></span>
+<span class="giallo-l"><span>    fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span>u</span><span style="color: #9399B2;">.</span><span>Name</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span>v</span><span style="color: #9399B2;">.</span><span>Name</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>u</code> 和 <code>v</code> 指向同一个 <code>User</code>。Go 不要求你在最后一次使用 <code>u</code> 之后手动释放它。</p>
+<p>当程序不再需要这个对象，并且<strong>从 GC 根集合出发已经没有引用路径能到达它</strong>时，GC 会在后续回收过程中释放它的内存。</p>
+<p>关键点在这：</p>
+<blockquote>
+<p>Go 不需要知道「哪个变量是唯一所有者」，因为它用的是<strong>可达性分析</strong>，不是 Rust 那种单一所有权模型。</p>
+</blockquote>
+<p>这让 Go 里构建共享对象、缓存、树、图、复杂对象关系都很自然。代价是运行时得干活：</p>
+<ul>
+<li>追踪对象之间的引用关系；</li>
+<li>判断对象是否可达；</li>
+<li>在合适时机执行回收；</li>
+<li>控制 GC 对 CPU、内存和延迟的影响。</li>
+</ul>
+<p>GC 不是免费的。</p>
+<hr />
+<h2 id="san-biao-ji-qing-chu-yu-xie-ping-zhang">三、标记-清除与写屏障</h2>
+<p>理解 Go 的 GC，从经典的 Mark-and-Sweep 开始。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>       Root</span></span>
+<span class="giallo-l"><span>         |</span></span>
+<span class="giallo-l"><span>         v</span></span>
+<span class="giallo-l"><span>      Object A</span></span>
+<span class="giallo-l"><span>       /    \</span></span>
+<span class="giallo-l"><span>      v      v</span></span>
+<span class="giallo-l"><span>  Object B  Object C</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>  Object D</span></span>
+<span class="giallo-l"><span>  Object E</span></span></code></pre>
+<p>假设从根集合能到 A、B、C，到不了 D、E。GC 通过可达性分析识别出哪些对象还活着。</p>
+<p><strong>Mark：标记存活对象</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Root</span></span>
+<span class="giallo-l"><span> │</span></span>
+<span class="giallo-l"><span> ▼</span></span>
+<span class="giallo-l"><span>Object A  [marked]</span></span>
+<span class="giallo-l"><span> ├── Object B  [marked]</span></span>
+<span class="giallo-l"><span> └── Object C  [marked]</span></span></code></pre>
+<p>D、E 不可达，没被标记。</p>
+<p><strong>Sweep：回收未标记对象</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Object A  保留</span></span>
+<span class="giallo-l"><span>Object B  保留</span></span>
+<span class="giallo-l"><span>Object C  保留</span></span>
+<span class="giallo-l"><span>Object D  可回收</span></span>
+<span class="giallo-l"><span>Object E  可回收</span></span></code></pre>
+<p>这是最基本的模型。但 Go 的实际实现远比「停下来、遍历、清除」复杂：它用<strong>并发标记-清除</strong>，让应用在 GC 标记的同时继续跑。</p>
+<p>并发就带来一个问题。</p>
+<p><strong>为什么需要写屏障</strong></p>
+<p>假设 GC 正在标记，同时程序修改了对象之间的引用：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>原来是：  A ──► B</span></span>
+<span class="giallo-l"><span>改成：    A ──► C</span></span></code></pre>
+<p>如果 GC 只在开始时观察一次关系，就会出错——可能把 C 当作不可达回收掉，而 A 还指着它。</p>
+<p>写屏障就是干这个的：程序修改特定指针关系时，额外执行一些操作，让 GC 能正确维护可达性信息。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>程序运行</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ├── 创建和修改对象</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ├── GC 触发</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ├── 并发标记</span></span>
+<span class="giallo-l"><span>   │      └── 结合写屏障维护对象关系</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ├── 标记终止阶段</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   └── 清除不可达对象</span></span></code></pre>
+<p>实际实现还有别的阶段和优化，这是核心思路不是完整状态机。</p>
+<p>Go 用的是<strong>混合写屏障</strong>（hybrid write barrier），具体实现在不同版本持续演进。参考 <a rel="noopener external" target="_blank" href="https://go.dev/doc/gc-guide">The Go GC Guide</a> 和 Go 源码里的 GC 文档。</p>
+<p>一句话总结这条路：<strong>Go 把内存管理成本放到运行时，换来程序不需要手动决定大多数对象何时释放。</strong></p>
+<hr />
+<h2 id="si-gc-shen-me-shi-hou-gong-zuo">四、GC 什么时候工作</h2>
+<p>这是个经常被误解的点：<strong>Go 的 GC 不是等内存耗尽才动。</strong></p>
+<p>它有自己的触发策略，会综合考虑堆内存增长、配置参数（<code>GOGC</code>、<code>GOMEMLIMIT</code>）、分配压力等因素。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> processRequest</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>    data</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">byte</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 1024</span><span style="color: #94E2D5;">*</span><span style="color: #FAB387;">1024</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    _</span><span style="color: #94E2D5;"> =</span><span> data</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>每次调用申请约 1 MiB 的底层存储（实际取决于编译器优化和逃逸分析）。频繁调用就会持续产生分配，其中一部分对象很快不可达。</p>
+<p>但这里有个重要区别——<strong>三件事并不等价</strong>：</p>
+<ol>
+<li>对象是否已经可以被回收；</li>
+<li>对应的堆空间是否已经可以重新用于分配；</li>
+<li>堆内存是否已经归还给操作系统。</li>
+</ol>
+<p>所以观察 Go 程序内存时，不能只看某一刻的进程 RSS 就断定 GC 是否正常。</p>
+<p>另外，Go 也不是所有数据都在堆上：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> add</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">a</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> b</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> a</span><span style="color: #94E2D5;"> +</span><span> b</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这种函数通常不需要为返回值创建堆对象。<strong>GC 只管需要回收的堆对象，不是每个变量都被它追踪。</strong></p>
+<hr />
+<h2 id="wu-rust-de-lu-xian-kao-suo-you-quan-bu-kao-zhui-zong">五、Rust 的路线：靠所有权，不靠追踪</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> user</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Alice&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> user</span><span style="color: #94E2D5;">.</span><span>name</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>user</code> 离开作用域就被析构：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>创建 user</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>使用 user</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>离开作用域</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>调用 Drop</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>释放 User 持有的资源</span></span></code></pre>
+<p>这里没有后台 GC 线程定期扫描对象是否可达。Rust 用所有权规则在编译时约束：</p>
+<ul>
+<li>哪个值拥有资源；</li>
+<li>什么时候所有权转移；</li>
+<li>哪些地方可以借用；</li>
+<li>借用能持续多久；</li>
+<li>哪些资源要在生命周期结束时清理。</li>
+</ul>
+<p><strong>Rust 把许多传统上需要运行时追踪的问题，转化成了编译期的静态约束。</strong></p>
+<p>但这不代表 Rust 不需要运行时内存管理。它仍然可以：</p>
+<ul>
+<li>在堆上分配内存；</li>
+<li>用 <code>Box&lt;T&gt;</code>、<code>Vec&lt;T&gt;</code>、<code>String</code>；</li>
+<li>用引用计数；</li>
+<li>用自定义分配器；</li>
+<li>通过 <code>unsafe</code> 实现底层数据结构。</li>
+</ul>
+<p>Rust 没有默认的追踪式 GC，但它既不是不分配内存，也不是没有运行时成本。</p>
+<hr />
+<h2 id="liu-suo-you-quan-jie-yong-sheng-ming-zhou-qi-zen-me-pei-he">六、所有权、借用、生命周期怎么配合</h2>
+<p><strong>所有权解决「谁负责释放」</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> b</span><span style="color: #94E2D5;"> =</span><span> a</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">b</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>let b = a;</code> 之后，<code>String</code> 的所有权从 <code>a</code> 转到 <code>b</code>，<code>a</code> 不能再用。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>a ──► String</span></span>
+<span class="giallo-l"><span>       │</span></span>
+<span class="giallo-l"><span>       │ move</span></span>
+<span class="giallo-l"><span>       ▼</span></span>
+<span class="giallo-l"><span>b ──► String</span></span></code></pre>
+<p>为什么要这么设计？假设 Rust 允许两个变量都当所有者，那程序结束时两边都可能去释放同一块缓冲区。</p>
+<p>注意关键点不是「Rust 只能有一个指针」——Rust 允许多个引用指向同一个值。关键是：<strong>对于普通拥有型值，所有权转移不会自动产生第二个独立的所有者。</strong> 真需要共享所有权，有 <code>Rc</code>/<code>Arc</code>。</p>
+<p><strong>借用与生命周期解决「引用能用多久」</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> r</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>        r</span><span style="color: #94E2D5;"> = &amp;</span><span>value</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">r</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>value</code> 在内部作用域结束时销毁，<code>r</code> 还想在外面用它。编译器直接拒绝。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>外部作用域</span></span>
+<span class="giallo-l"><span>┌──────────────────────────┐</span></span>
+<span class="giallo-l"><span>│ r                        │</span></span>
+<span class="giallo-l"><span>│                          │</span></span>
+<span class="giallo-l"><span>│  内部作用域              │</span></span>
+<span class="giallo-l"><span>│  ┌──────────────────┐    │</span></span>
+<span class="giallo-l"><span>│  │ value            │    │</span></span>
+<span class="giallo-l"><span>│  └──────────────────┘    │</span></span>
+<span class="giallo-l"><span>│        ▲                 │</span></span>
+<span class="giallo-l"><span>│        │                 │</span></span>
+<span class="giallo-l"><span>│        r 试图继续引用它   │</span></span>
+<span class="giallo-l"><span>└──────────────────────────┘</span></span></code></pre>
+<p>生命周期标注不是「手动控制内存释放的命令」，而是描述引用约束的一种方式：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> longest</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">x</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #F9E2AF;font-style: italic;"> str</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> y</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #F9E2AF;font-style: italic;"> str</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt; &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #F9E2AF;font-style: italic;"> str</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    if</span><span> x</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">len</span><span style="color: #9399B2;">()</span><span style="color: #89DCEB;"> &gt;</span><span> y</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">len</span><span style="color: #9399B2;">() {</span><span> x</span><span style="color: #9399B2;"> }</span><span style="color: #CBA6F7;"> else</span><span style="color: #9399B2;"> {</span><span> y</span><span style="color: #9399B2;"> }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>'a</code> 不表示「编译器要分配一段名为 'a 的内存」，它表达的是：返回的引用不能比输入引用满足的共同生命周期约束更长。</p>
+<p>生命周期本身通常不会成为运行时对象，也不会产生一个追踪引用的 GC。它主要参与编译器的静态分析。</p>
+<p>两个容易搞混的点：</p>
+<ul>
+<li><strong>生命周期不等于对象的实际存活时间</strong>，它是编译器检查引用有效性的约束；</li>
+<li>反过来，标注也不会让一个已经被销毁的对象复活。</li>
+</ul>
+<p><strong>三者组合起来</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Buffer</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    data</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u8</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> process</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> buffer</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Buffer</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        data</span><span style="color: #94E2D5;">:</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 3</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    };</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> view</span><span style="color: #94E2D5;"> = &amp;</span><span>buffer</span><span style="color: #94E2D5;">.</span><span>data</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">view:?</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><table><thead><tr><th>机制</th><th>负责什么</th></tr></thead><tbody>
+<tr><td>所有权</td><td>谁负责管理资源</td></tr>
+<tr><td>借用与生命周期</td><td>引用能在什么范围内有效</td></tr>
+<tr><td><code>Drop</code></td><td>资源生命周期结束时怎么清理</td></tr>
+</tbody></table>
+<p>不过要说清楚：<strong>Rust 的生命周期系统不是通用的内存回收算法。</strong> 它不会在运行时扫描堆、找不可达对象。它的作用是约束引用关系，让很多资源的清理时机能由所有权和作用域确定下来。</p>
+<hr />
+<h2 id="qi-arc-shi-bu-shi-yi-chong-xiao-xing-gc">七、Arc 是不是一种小型 GC</h2>
+<p>Rust 没有默认的追踪式 GC，但提供了引用计数类型：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Arc</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> b</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>a</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">a</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">b</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>a ──┐</span></span>
+<span class="giallo-l"><span>    ├──► Arc 管理的对象</span></span>
+<span class="giallo-l"><span>b ──┘</span></span></code></pre>
+<p><code>Arc</code> 维护引用计数，计数归零时析构内部对象并释放分配。所以它确实提供了某种自动管理共享对象生命周期的机制。</p>
+<p>但和 Go 的 GC 有根本区别。</p>
+<p><strong>区别一：Arc 依赖显式引用计数</strong></p>
+<p>每次 <code>clone</code> 增加强引用计数，每个 <code>Arc</code> 析构时减少。最后一个强引用消失，对象才被析构。</p>
+<p><strong>区别二：Arc 不追踪任意对象图的可达性</strong></p>
+<p>假设两个对象互相引用：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>A ──► B</span></span>
+<span class="giallo-l"><span>▲     │</span></span>
+<span class="giallo-l"><span>└─────┘</span></span></code></pre>
+<p>如果两条边都是强 <code>Arc</code>，即使外部已经没有引用，内部计数还是非零，两个对象都释放不掉。这就是引用循环。</p>
+<p>Go 的追踪式 GC 通常能回收这种对象图——只要整体从根集合不可达就行。</p>
+<p>但这里也有个细节：如果 Go 对象仍然能从某个根到达，即使业务上已经不要了，GC 也不会自动知道。</p>
+<blockquote>
+<p><strong>GC 判断的是可达性，不是业务意义上的「还需不需要」。</strong></p>
+</blockquote>
+<p><strong>Rust 怎么破环？</strong></p>
+<p>用 <code>Weak&lt;T&gt;</code>，它不增加强引用计数：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #9399B2;">{</span><span style="color: #F9E2AF;font-style: italic;">Arc</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Weak</span><span style="color: #9399B2;">};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Node</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    parent</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Weak</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Node</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>（简化片段，完整树结构还得有子节点集合，并在创建时建立正确的引用关系。）</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">if let</span><span style="color: #F9E2AF;font-style: italic;"> Some</span><span style="color: #9399B2;">(</span><span>node</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> =</span><span> weak</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">upgrade</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 对象仍然存活</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>对象已释放时 <code>upgrade()</code> 返回 <code>None</code>。</p>
+<p>所以：</p>
+<ul>
+<li><code>Arc&lt;T&gt;</code> 适合共享所有权；</li>
+<li><code>Weak&lt;T&gt;</code> 适合「不应维持对象存活」的关联；</li>
+<li><code>Rc&lt;T&gt;</code> 是单线程版；</li>
+<li><code>Rc&lt;T&gt;</code> 也有对应的 <code>Weak</code>。</li>
+</ul>
+<p>但<strong>引用计数不等于追踪式 GC</strong>：</p>
+<table><thead><tr><th></th><th>判断依据</th></tr></thead><tbody>
+<tr><td>引用计数</td><td>强引用数量</td></tr>
+<tr><td>追踪式 GC</td><td>从根集合出发的可达性</td></tr>
+</tbody></table>
+<hr />
+<h2 id="ba-drop-yu-finalizer">八、Drop 与 Finalizer</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;dropping </span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>id</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> resource</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span><span> id</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;"> };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;using resource&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>resource</code> 离开作用域就被析构。对普通的、没被遗忘的拥有型值，资源释放和所有权、作用域绑得很紧。</p>
+<p>但也不保证总执行：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #F9E2AF;">std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">forget</span><span style="color: #9399B2;">(</span><span>resource</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p><code>forget</code> 消耗这个值，但不跑析构。所以 Rust 的安全抽象不能假定所有 <code>Drop</code> 一定执行。</p>
+<p>Go 这边：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;"> int</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>如果一个对象只是普通堆对象，GC 不会因为它不可达就调用一个类 Rust <code>Drop</code> 的方法。Go 有 <code>runtime.SetFinalizer</code>，但<strong>终结器不是确定性析构机制</strong>，不适合承担必须及时执行的资源释放或业务逻辑。</p>
+<p>文件、数据库连接这类，通常还是靠显式 <code>Close()</code>、<code>defer</code> 或专门的资源管理接口。</p>
+<table><thead><tr><th>维度</th><th>Rust</th><th>Go</th></tr></thead><tbody>
+<tr><td>普通资源释放</td><td>通常由所有权和析构决定</td><td>显式关闭 + GC 共同管理</td></tr>
+<tr><td>Drop / Finalizer</td><td><code>Drop</code> 通常在值被析构时运行</td><td>Finalizer 不保证及时执行</td></tr>
+<tr><td>是否依赖后台追踪</td><td>默认不依赖</td><td>堆对象依赖 GC 回收</td></tr>
+<tr><td>清理确定性</td><td>普通析构路径通常更确定</td><td>重要资源需要显式关闭</td></tr>
+<tr><td>业务事务回滚</td><td>需要显式实现</td><td>同样需要显式实现</td></tr>
+</tbody></table>
+<p>Rust 的确定性析构也有边界：进程被强杀、系统崩溃、用 abort 时，不能依赖普通析构完成清理。而且 <code>Drop</code> 不能撤销已经发生的外部副作用。</p>
+<p><strong>RAII 特别适合管文件句柄、锁、内存分配，但不能理解成自动回滚系统。</strong></p>
+<hr />
+<h2 id="jiu-rust-shi-bu-shi-yi-ding-bi-go-kuai">九、Rust 是不是一定比 Go 快</h2>
+<p>不能这么下结论。</p>
+<p>Rust 没有默认追踪式 GC，确实不用承担同样的追踪回收工作。在分配量很大、对象生命周期短、延迟要求严格的程序里，避免追踪式 GC 有利于控制尾延迟。</p>
+<p>但 Rust 也不是零成本。</p>
+<p><strong>Rust 仍然会分配堆内存</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> data</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u8</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">with_capacity</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1024</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>这里可能发生堆分配。分配器本身有成本，<code>Vec</code> 扩容要重新分配和复制，<code>String</code> 也可能重分配，<code>Arc</code> 要维护引用计数。锁、channel、异步任务、动态分发同样有开销。</p>
+<p><strong>没有 GC，不代表没有内存管理成本。</strong></p>
+<p><strong>Go 也不是每个对象都在堆上</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> sum</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">a</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> b</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;">)</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> a</span><span style="color: #94E2D5;"> +</span><span> b</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这里一般不需要创建堆对象。编译器会分析变量用法决定放哪。</p>
+<p>所以：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Rust = 栈分配</span></span>
+<span class="giallo-l"><span>Go   = 堆分配</span></span></code></pre>
+<p>这个说法是错的。</p>
+<p><strong>Go 的 GC 换来的是工程便利</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Cache</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    data</span><span style="color: #CBA6F7;"> map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">][]</span><span style="color: #CBA6F7;">byte</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>缓存可以被多个组件持有。开发者要考虑并发安全、淘汰策略、内存占用，但一般不用手动算每个缓存条目的引用计数。</p>
+<p>Rust 也能构建同样的缓存，但要先想清楚：谁拥有缓存、怎么借用、要不要 <code>Arc</code>、要不要 <code>Mutex</code>/<code>RwLock</code>、条目什么时候移除。</p>
+<p>这些机制提供了明确的所有权和同步关系，但设计工作量更多。</p>
+<p><strong>比较两种语言要看完整系统，不能只盯着 GC。</strong></p>
+<hr />
+<h2 id="shi-yan-chi-nei-cun-zhan-yong-yi-ji-sheng-ming-zhou-qi-xi-tong-de-bian-jie">十、延迟、内存占用，以及生命周期系统的边界</h2>
+<p><strong>尾延迟</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>解析请求</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>创建任务对象</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>执行调度</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>调用工具</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>保存结果</span></span></code></pre>
+<p>整个过程产生临时对象。Go 可能在分配积累到一定程度后触发 GC。</p>
+<p>Rust 不会因为普通堆对象不可达就启动追踪式扫描，但仍受这些因素影响：</p>
+<ul>
+<li>分配器竞争；</li>
+<li>堆分配与释放成本；</li>
+<li>引用计数的原子操作；</li>
+<li>锁竞争；</li>
+<li>内存碎片；</li>
+<li>数据结构的局部性；</li>
+<li>异步任务和队列的开销。</li>
+</ul>
+<p>所以不能这么推：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Rust 没有 GC</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>Rust 的尾延迟必然更低</span></span></code></pre>
+<p>更准确的结论：<strong>Rust 避免了追踪式 GC 这一类运行时成本，但最终延迟还取决于分配行为、数据结构、调度、同步、I/O 和系统负载。</strong></p>
+<p>同样，Go 的 GC 也不是单纯的「性能损失」——它降低了内存管理的编程负担，很多业务场景下这是非常合理的工程选择。</p>
+<p><strong>为什么没有 GC 也会占很多内存</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">collections</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">HashMap</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> cache</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u8</span><span style="color: #89DCEB;">&gt;&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> HashMap</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span></code></pre>
+<p>如果只往里插不删除，内存就会一直涨。Rust 没有 GC，但这个问题照样存在。</p>
+<p>原因很简单：这些对象仍然被 <code>cache</code> 持有。从所有权角度看，它们仍是有效资源。Rust 不会擅自推断「这个缓存条目业务上已经没价值了，删了吧」。</p>
+<p>你得自己定策略：什么时候淘汰、最大容量多少、要不要 TTL、按访问频率还是按时间、允不允许后台清理。</p>
+<p>Go 一模一样：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> globalCache</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">][]</span><span style="color: #CBA6F7;">byte</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>只要缓存还存着这些数据，GC 就认为对象可达。</p>
+<blockquote>
+<p><strong>GC 能回收不可达对象，但判断不了一个仍然可达的对象是否已经失去业务价值。</strong></p>
+</blockquote>
+<p>这也是为什么内存泄漏不是 GC 语言独有的问题。GC 语言照样会遇到：缓存无限增长、Goroutine 泄漏、订阅者没退出、channel 里积压、全局变量意外保留对象、闭包长期捕获不再需要的数据。</p>
+<p>Rust 也会出现逻辑层面的泄漏，尤其是用引用计数、全局状态或故意泄漏资源时。</p>
+<p><strong>生命周期系统的边界</strong></p>
+<p>Rust 的所有权和生命周期能在安全 Rust 里静态排除很多内存错误，但不保证：</p>
+<ul>
+<li>不会发生逻辑内存泄漏；</li>
+<li>不会资源使用过度；</li>
+<li>不会死锁；</li>
+<li>不会算法错误；</li>
+<li>不会业务上的资源泄漏；</li>
+<li>不会因为 <code>unsafe</code> 出现内存安全问题。</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Arc</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> cloned</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>value</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>如果把 <code>Arc</code> 存进一个长期存活的全局结构，相关对象就一直活着。这是所有权关系的正常结果，不是编译器有问题。</p>
+<p><code>unsafe</code> 更要小心：用裸指针、手动管理初始化状态、实现自定义容器时，可能绕过部分静态保证。自己写一个类 <code>Vec</code> 的结构，得处理内存布局、分配释放、初始化状态、元素析构、指针有效性、别名规则、<code>Send</code>/<code>Sync</code> 的实现条件。这些不变量写错了，外围 API 再漂亮也可能有 UB。</p>
+<p>所以 Rust 的优势是<strong>让安全抽象能建立在严格的静态约束之上</strong>，而不是让程序从此不需要内存管理设计。</p>
+<hr />
+<h2 id="shi-yi-bing-fa-nei-cun-guan-li">十一、并发内存管理</h2>
+<p>Agent Runtime 有很多并发任务，每个任务都要维护状态、记录事件、调用工具、保存检查点、更新统计。这些会产生大量临时对象。</p>
+<p>Go 的优势是对象能自然地在 Goroutine 之间传递和共享，GC 管堆内存，但数据竞争和同步还得自己处理：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">var</span><span> counter</span><span style="color: #CBA6F7;"> int</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">go func</span><span style="color: #9399B2;">() {</span><span> counter</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> }()</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">go func</span><span style="color: #9399B2;">() {</span><span> counter</span><span style="color: #94E2D5;">++</span><span style="color: #9399B2;"> }()</span></span></code></pre>
+<p>这里存在数据竞争，GC 不会解决它。</p>
+<p>Rust 用类型系统约束线程间共享：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">atomic</span><span style="color: #94E2D5;">::</span><span style="color: #9399B2;">{</span><span style="color: #F9E2AF;font-style: italic;">AtomicUsize</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Ordering</span><span style="color: #9399B2;">};</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Arc</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> counter</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">AtomicUsize</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>counter</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> b</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>counter</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> t1</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">thread</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">spawn</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">move</span><span style="color: #94E2D5;"> ||</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    a</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">fetch_add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;"> Ordering</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Relaxed</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">});</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> t2</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">thread</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">spawn</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">move</span><span style="color: #94E2D5;"> ||</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    b</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">fetch_add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;"> Ordering</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Relaxed</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">});</span></span>
+<span class="giallo-l"><span>t1</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">join</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span>t2</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">join</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap</span><span style="color: #9399B2;">();</span></span></code></pre>
+<ul>
+<li><code>Arc</code> 管共享所有权；</li>
+<li><code>AtomicUsize</code> 提供原子计数；</li>
+<li><code>Ordering::Relaxed</code> 保证这个计数操作本身是原子的，但不提供其他内存访问之间的同步顺序；</li>
+<li><code>join</code> 等两个线程结束。</li>
+</ul>
+<p>这些原子操作不需要 GC 也能工作。Go 也有 <code>sync/atomic</code>、<code>sync.Mutex</code>、channel。</p>
+<p>所以主要区别不是「Go 有 GC 所以不安全」：</p>
+<ul>
+<li>Go 用 GC 管对象内存，通过同步原语和运行时检测工具帮助管理并发访问；</li>
+<li>Rust 用所有权、借用、<code>Send</code>/<code>Sync</code> 与同步原语共同约束内存和线程安全。</li>
+</ul>
+<p><strong>两个体系都需要正确设计任务状态、共享数据和同步关系。</strong></p>
+<hr />
+<h2 id="shi-er-box-rc-arc-zen-me-xuan">十二、Box、Rc、Arc 怎么选</h2>
+<p>想真正理解 Rust 为什么不用 GC，得先理解这几个类型的分工。</p>
+<table><thead><tr><th>类型</th><th>核心用途</th><th>所有权模式</th><th>特点</th></tr></thead><tbody>
+<tr><td><code>T</code></td><td>普通值</td><td>直接拥有</td><td>通常按值存储</td></tr>
+<tr><td><code>Box&lt;T&gt;</code></td><td>堆分配</td><td>单一所有者</td><td>管理一块堆分配</td></tr>
+<tr><td><code>Rc&lt;T&gt;</code></td><td>单线程共享</td><td>引用计数</td><td>共享所有权，不保证线程安全</td></tr>
+<tr><td><code>Arc&lt;T&gt;</code></td><td>多线程共享</td><td>原子引用计数</td><td>能否跨线程仍取决于 <code>T</code></td></tr>
+<tr><td><code>Weak&lt;T&gt;</code></td><td>非拥有式关联</td><td>弱引用</td><td>不增加强引用计数</td></tr>
+<tr><td><code>&amp;T</code></td><td>只读借用</td><td>不拥有</td><td>受生命周期和借用规则约束</td></tr>
+<tr><td><code>&amp;mut T</code></td><td>可变借用</td><td>不拥有</td><td>受独占可变借用规则约束</td></tr>
+</tbody></table>
+<p>特别强调：<strong><code>Arc&lt;T&gt;</code> 不意味着内部的 <code>T</code> 可以被任意多个线程同时修改。</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #9399B2;">{</span><span style="color: #F9E2AF;font-style: italic;">Arc</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Mutex</span><span style="color: #9399B2;">};</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">Mutex</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">));</span></span></code></pre>
+<p><code>Arc</code> 解决共享所有权，<code>Mutex</code> 解决互斥访问——两个不同问题。只有 <code>T</code> 本身满足相应的 <code>Send</code>/<code>Sync</code> 条件，<code>Arc&lt;T&gt;</code> 才能满足跨线程使用要求。</p>
+<p>Rust 的内存管理从来不是单靠生命周期标注，而是多种机制共同作用。</p>
+<hr />
+<h2 id="shi-san-nei-cun-sheng-ming-zhou-qi-ye-wu-dui-xiang-sheng-ming-zhou-qi">十三、内存生命周期 ≠ 业务对象生命周期</h2>
+<p>这个区别我觉得比前面所有技术细节都重要。</p>
+<p>一个任务被创建，业务生命周期是：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Created</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>Ready</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>Running</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>Completed</span></span></code></pre>
+<p>业务状态可能要持久化，但内存里的结构体可能早就释放了：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>数据库中的 Task 记录：仍然存在</span></span>
+<span class="giallo-l"><span>内存中的 Task 对象：已经释放</span></span></code></pre>
+<p>这完全合理。</p>
+<p>反过来也一样：任务在数据库里已经 <code>Completed</code>，但某个监控组件还持有内存对象——因为它正在读最终统计信息。也合理。</p>
+<p>所以要区分四种生命周期：</p>
+<table><thead><tr><th>生命周期</th><th>代表什么</th></tr></thead><tbody>
+<tr><td>内存生命周期</td><td>对象何时创建、持有、释放</td></tr>
+<tr><td>任务生命周期</td><td>任务何时创建、执行、完成、失败或取消</td></tr>
+<tr><td>进程生命周期</td><td>运行时何时启动和退出</td></tr>
+<tr><td>持久化生命周期</td><td>数据何时写入、保留、归档或删除</td></tr>
+</tbody></table>
+<p><strong>GC 只处理第一种，Rust 的所有权和析构也只处理第一种。</strong></p>
+<p>它们都不能单独保证任务执行正确、检查点一致或故障恢复成功。这对分布式系统尤其重要：内存对象被释放不等于业务任务被取消，业务任务完成也不意味着所有内存对象立即消失。</p>
+<hr />
+<h2 id="shi-si-yi-xing-dai-ma-zen-me-bian-cheng-nei-cun-fen-pei">十四、一行代码怎么变成内存分配</h2>
+<p>从这里开始进入第二块：分配本身。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">package</span><span style="color: #F9E2AF;font-style: italic;"> main</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">   int64</span></span>
+<span class="giallo-l"><span>    Name</span><span style="color: #CBA6F7;"> string</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> NewUser</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">id</span><span style="color: #CBA6F7;"> int64</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;font-style: italic;"> name</span><span style="color: #CBA6F7;"> string</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #F9E2AF;font-style: italic;">User</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    u</span><span style="color: #94E2D5;"> :=</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span>        ID</span><span style="color: #9399B2;">:</span><span>   id</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>        Name</span><span style="color: #9399B2;">:</span><span> name</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span>u</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>NewUser</code> 返回一个指向局部变量 <code>u</code> 的指针。C 里这行是错的——函数返回后栈帧就失效了。Go 却允许。</p>
+<p>因为 Go 编译器会分析 <code>u</code> 的用法。如果它需要在函数返回后继续存在，编译器就把它放到堆上。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>源代码</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ▼</span></span>
+<span class="giallo-l"><span>编译器分析</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ├── 对象布局</span></span>
+<span class="giallo-l"><span>  ├── 逃逸分析</span></span>
+<span class="giallo-l"><span>  ├── 栈与堆分配决策</span></span>
+<span class="giallo-l"><span>  └── 代码生成</span></span>
+<span class="giallo-l"><span>          │</span></span>
+<span class="giallo-l"><span>          ▼</span></span>
+<span class="giallo-l"><span>运行时内存管理</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ├── 栈空间</span></span>
+<span class="giallo-l"><span>  ├── 堆分配器</span></span>
+<span class="giallo-l"><span>  └── GC</span></span></code></pre>
+<p>这是概念图，不是精确执行顺序。</p>
+<p>编译器还会做内联、死代码消除、寄存器分配。<strong>内联尤其重要</strong>：一个函数单独看可能有堆分配，被内联后分配可能被消除，或者变量留在调用者的栈上。</p>
+<p>所以不能只看源码里的 <code>&amp;</code>、<code>new</code>、<code>make</code> 就判断一定在堆上。</p>
+<p>Rust 里写了 <code>Box::new</code> 也不绝对——编译器可能在不影响可观察行为的前提下消除某些分配。</p>
+<hr />
+<h2 id="shi-wu-go-tao-yi-fen-xi-dao-di-fen-xi-shen-me">十五、Go 逃逸分析到底分析什么</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> f</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> *</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    x</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 42</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> &amp;</span><span>x</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>x</code> 在哪？</p>
+<p>很多人会直接回答「因为返回了 <code>&amp;x</code>，所以 <code>x</code> 一定在堆上」。这作为直觉可以，但不够严谨。</p>
+<p>更准确的说法：<strong>返回的指针可能在函数返回后继续被使用，所以编译器必须保证它指向的对象在需要时仍然有效。</strong> 在常见编译结果里，<code>x</code> 会被放到堆上。</p>
+<p>编译器并不是逐个查找所有 <code>&amp;</code> 然后机械决定，它分析指针和引用之间的流动关系，结合上下文和其他优化作决定。</p>
+<p>我实测了几种写法，<code>go build -gcflags="-m=2"</code> 的输出很能说明问题。</p>
+<p><strong>返回指针 → 逃逸</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>./main.go:10:2: x escapes to heap in f:</span></span>
+<span class="giallo-l"><span>./main.go:10:2: moved to heap: x</span></span></code></pre>
+<p><strong>只在内部用 → 没有逃逸记录</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> sum</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    x</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 42</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> x</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>编译器可能直接算出结果，连 <code>x</code> 都不保留。</p>
+<p><strong>取地址但只在内部用 → 也不逃逸</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> readValue</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    x</span><span style="color: #94E2D5;"> :=</span><span style="color: #FAB387;"> 42</span></span>
+<span class="giallo-l"><span>    p</span><span style="color: #94E2D5;"> := &amp;</span><span>x</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span style="color: #94E2D5;"> *</span><span>p</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>输出里根本没有 <code>x</code> 的逃逸记录。虽然写了 <code>&amp;x</code>，但 <code>p</code> 只在当前函数用，编译器有机会把 <code>x</code> 留在栈上，甚至把指针和内存访问一起消掉。</p>
+<p>所以要分清四件事：</p>
+<ol>
+<li>源码里是否声明了变量；</li>
+<li>编译器是否保留这个变量；</li>
+<li>这个变量是否需要具体的内存位置；</li>
+<li>如果需要，是否分配在堆上。</li>
+</ol>
+<p><strong>这四件事并不等价。</strong></p>
+<hr />
+<h2 id="shi-liu-new-make-qu-di-zhi-wei-shen-me-bu-deng-tong-yu-dui-fen-pei">十六、new、make、取地址为什么不等同于堆分配</h2>
+<p>这是分析 Go 分配时最实用的一部分，我全部实测了。</p>
+<p><strong><code>new</code> 不保证堆分配</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> newLocal</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>    p</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> new</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">    *</span><span>p</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 10</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">*</span><span>p</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>实测输出：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>./main.go:46:10: new(int) does not escape</span></span></code></pre>
+<p><code>new(int)</code> 得到的是指向零值 <code>int</code> 的指针。但编译器能证明它只在本函数用，就有机会放栈上，甚至消除分配。</p>
+<blockquote>
+<p><code>new</code> 表示「创建并返回指针」，不表示「强制堆分配」。</p>
+</blockquote>
+<p><strong><code>make</code> 也不一定</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> makeValues</span><span style="color: #9399B2;">() []</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    values</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 3</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    values</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 10</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> values</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>因为切片被返回，底层数组要在函数外继续存在：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>./main.go:53:16: make([]int, 3) escapes to heap in makeValues:</span></span></code></pre>
+<p>但如果切片不外传，比如只取第一个元素返回：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> f</span><span style="color: #9399B2;">()</span><span style="color: #CBA6F7;"> int</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    values</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 3</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    values</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 10</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    return</span><span> values</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">]</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>实测里这条是 <code>does not escape</code>——底层数组可以留在栈上。</p>
+<p>切片本身只是个描述符：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>slice</span></span>
+<span class="giallo-l"><span> ├── data pointer</span></span>
+<span class="giallo-l"><span> ├── length</span></span>
+<span class="giallo-l"><span> └── capacity</span></span></code></pre>
+<p><strong>接口值也不一定导致分配</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> printValue</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;font-style: italic;">v</span><span style="color: #F9E2AF;font-style: italic;"> any</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println</span><span style="color: #9399B2;">(</span><span>v</span><span style="color: #9399B2;">.(</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>调用 <code>printValue(42)</code> 时，实测：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>./main.go:59:17: v does not escape</span></span></code></pre>
+<p>接口值需要保存动态类型信息和数据，但具体表示和是否需要额外分配，取决于值的类型、大小、用法和编译器优化。</p>
+<p>所以「传入接口就会分配」也是过于绝对的结论。</p>
+<p><strong>一个有意思的现象</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">func</span><span style="color: #89B4FA;font-style: italic;"> cacheExample</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #94E2D5;"> :=</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">map</span><span style="color: #9399B2;">[</span><span style="color: #CBA6F7;">string</span><span style="color: #9399B2;">][]</span><span style="color: #CBA6F7;">byte</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    m</span><span style="color: #9399B2;">[</span><span style="color: #A6E3A1;">&quot;k&quot;</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> make</span><span style="color: #9399B2;">([]</span><span style="color: #CBA6F7;">byte</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 128</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span>    _</span><span style="color: #94E2D5;"> =</span><span> m</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>实测：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>./main.go:65:11: make(map[string][]byte) does not escape</span></span>
+<span class="giallo-l"><span>./main.go:66:15: make([]byte, 128) escapes to heap</span></span></code></pre>
+<p>map 本身没逃逸（因为整个函数里它就没出去），但塞进去的 128 字节切片逃逸了——<strong>map 的底层存储必须能在增长时重新分配，所以数据会被放到堆上</strong>。</p>
+<p>这类细节只能实测，光看源码猜不出来。</p>
+<hr />
+<h2 id="shi-qi-zen-me-qin-zi-guan-cha-tao-yi-fen-xi">十七、怎么亲自观察逃逸分析</h2>
+<p>这一步别省。逃逸分析不能只靠理论推断。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">go</span><span style="color: #A6E3A1;"> build -gcflags=&quot;-m=2&quot; .</span></span></code></pre>
+<p>输出编译器优化诊断，包括内联和逃逸信息。你可能会看到：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>u escapes to heap</span></span>
+<span class="giallo-l"><span>moved to heap: u</span></span></code></pre>
+<p>两点注意：</p>
+<ol>
+<li>诊断内容会随 Go 版本、优化和调用上下文变化；</li>
+<li>有诊断<strong>不代表</strong>最终机器码里确实有一次堆分配。</li>
+</ol>
+<p>还可以用基准测试看实际分配统计：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">go</span><span style="color: #A6E3A1;"> test -bench=. -benchmem</span></span></code></pre>
+<p>输出格式类似：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>BenchmarkExample-8    1000000    120 ns/op    32 B/op    1 allocs/op</span></span></code></pre>
+<p>（这是格式示例，不是某个真实程序的结果。）</p>
+<ul>
+<li><code>ns/op</code>：每次操作耗时；</li>
+<li><code>B/op</code>：每次操作平均分配字节数；</li>
+<li><code>allocs/op</code>：每次操作平均分配次数。</li>
+</ul>
+<p>对 Agent Runtime 这种服务，这些指标能帮你定位高频路径上的分配压力。</p>
+<hr />
+<h2 id="shi-ba-rust-shi-bu-shi-mo-ren-zhan-fen-pei">十八、Rust 是不是「默认栈分配」</h2>
+<p>很多人把 Rust 总结成「默认栈分配，Go 默认堆分配」。这个说法不准确。</p>
+<p>Rust 没有一条简单规则规定所有普通变量都在栈上，也没有一条规则规定所有拥有型对象都在堆上。更准确的理解是：</p>
+<ul>
+<li>局部值通常由编译器根据使用方式安排存储；</li>
+<li><code>Box&lt;T&gt;</code> 等类型通过分配器管理堆内存；</li>
+<li><code>Vec&lt;T&gt;</code> 和 <code>String</code> 通常在堆上管理动态数据；</li>
+<li>编译器可能优化掉不必要的存储和分配；</li>
+<li><strong>对象在哪，不能仅凭类型名字判断。</strong></li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> user</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> User</span><span style="color: #9399B2;"> {</span><span> id</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;"> };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span> user</span><span style="color: #94E2D5;">.</span><span>id</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>user</code> 是普通值，不需要像 <code>Box&lt;User&gt;</code> 那样通过堆分配器管理主体存储。常见情况下作为局部值存储；优化后编译器甚至可能把字段直接放寄存器里。</p>
+<p>所以即使 Rust 没有默认追踪式 GC，也不能认为所有值都一定拥有可观察的栈内存位置。</p>
+<hr />
+<h2 id="shi-jiu-box-yu-vec">十九、Box 与 Vec</h2>
+<p><strong>Box：把值放堆上，但不引入 GC</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> user</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">user</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>栈上的 Box&lt;i32&gt;</span></span>
+<span class="giallo-l"><span>       │</span></span>
+<span class="giallo-l"><span>       ▼</span></span>
+<span class="giallo-l"><span>堆上的 i32</span></span></code></pre>
+<p>要区分两个对象：</p>
+<ol>
+<li><code>Box</code> 这个拥有型指针值；</li>
+<li><code>Box</code> 管理的堆分配里的 <code>T</code>。</li>
+</ol>
+<p><code>Box</code> 的指针值本身通常很小，被管理的 <code>T</code> 在堆上。这只是概念模型，编译器仍可能优化掉不影响可观察行为的操作。</p>
+<p><code>Box</code> 最常见的用途是构造递归类型：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">enum</span><span style="color: #F9E2AF;font-style: italic;"> List</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    Cons</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">i32</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">List</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;font-style: italic;">    Nil</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>不用间接存储，递归类型的大小无法有限确定。<code>Box&lt;List&gt;</code> 提供了一个已知大小的间接引用，让整个 <code>List</code> 有有限大小。这和 GC 无关，只是让数据结构能在堆上组织。</p>
+<p><strong>Box 与 Go 指针的区别</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>p</span><span style="color: #94E2D5;"> := &amp;</span><span style="color: #F9E2AF;font-style: italic;">User</span><span style="color: #9399B2;">{</span><span>ID</span><span style="color: #9399B2;">:</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> p</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">User</span><span style="color: #9399B2;"> {</span><span> id</span><span style="color: #94E2D5;">:</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;"> });</span></span></code></pre>
+<p>看起来都是拿到指向数据的指针，语义不同：</p>
+<ul>
+<li>Go 的 <code>*User</code> 是普通指针，不表达独占所有权；</li>
+<li>Rust 的 <code>Box&lt;User&gt;</code> 表达对所管理值的所有权。</li>
+</ul>
+<p>所以 Rust 能在类型系统里追踪所有权转移：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> b</span><span style="color: #94E2D5;"> =</span><span> a</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// a 不再拥有该 Box</span></span></code></pre>
+<p><code>b</code> 析构时负责释放资源。Go 的普通指针不会在类型系统里提供同样的独占语义——当然 Go 可以通过 API 约定和封装建立所有权规则，只是这些规则不由 <code>*T</code> 本身表达。</p>
+<p><strong>Vec：栈上的管理对象 + 堆上的元素缓冲区</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> values</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">with_capacity</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">4</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>values</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>values</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">20</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>values</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">30</span><span style="color: #9399B2;">);</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Vec&lt;i32&gt;</span></span>
+<span class="giallo-l"><span> ├── pointer ──────────────┐</span></span>
+<span class="giallo-l"><span> ├── length = 3            │</span></span>
+<span class="giallo-l"><span> └── capacity = 4          │</span></span>
+<span class="giallo-l"><span>                           ▼</span></span>
+<span class="giallo-l"><span>                       堆分配</span></span>
+<span class="giallo-l"><span>                       ┌─────────┐</span></span>
+<span class="giallo-l"><span>                       │   10    │</span></span>
+<span class="giallo-l"><span>                       ├─────────┤</span></span>
+<span class="giallo-l"><span>                       │   20    │</span></span>
+<span class="giallo-l"><span>                       ├─────────┤</span></span>
+<span class="giallo-l"><span>                       │   30    │</span></span>
+<span class="giallo-l"><span>                       ├─────────┤</span></span>
+<span class="giallo-l"><span>                       │ 未初始化 │</span></span>
+<span class="giallo-l"><span>                       └─────────┘</span></span></code></pre>
+<p>图里「未初始化」只是为了说明 <code>len</code> 和 <code>capacity</code> 的差别：剩余容量不代表那里已经构造了可用的 <code>T</code>。</p>
+<p><code>Vec</code> 的堆内存不由 GC 决定何时释放，而是由 <code>Vec</code> 的所有权和析构逻辑管理。</p>
+<p>扩容时：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> values</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">with_capacity</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">4</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> i</span><span style="color: #CBA6F7;"> in</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;">..</span><span style="color: #FAB387;">1000</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    values</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span>i</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>容量不足就重新分配，可能移动元素数据。这意味着：</p>
+<ul>
+<li><code>Vec</code> 自己的管理信息可以留在原位；</li>
+<li>但元素缓冲区可能换地址。</li>
+</ul>
+<p>这正好接上 Pin 那一篇：<strong>固定外层对象的地址，不等于固定它拥有的所有堆分配。</strong></p>
+<p><strong>Go 切片 vs Rust Vec</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Go slice        Rust Vec</span></span>
+<span class="giallo-l"><span> ├── data         ├── pointer</span></span>
+<span class="giallo-l"><span> ├── len          ├── len</span></span>
+<span class="giallo-l"><span> └── cap          └── capacity</span></span></code></pre>
+<p>结构相似，所有权语义不同：</p>
+<ul>
+<li>Go 切片是对底层数组的<strong>描述</strong>，多个切片可以共享同一个数组；</li>
+<li>Rust <code>Vec&lt;T&gt;</code> <strong>拥有</strong>底层缓冲区。</li>
+</ul>
+<p>Rust 的 <code>&amp;[T]</code>、<code>&amp;mut [T]</code> 才更接近 Go 的切片视图，但它们受借用规则约束。这直接影响数据共享、缓冲区复用和零拷贝设计。</p>
+<hr />
+<h2 id="er-shi-dui-xiang-bu-ju-rust-zi-dong-zhong-pai-go-yao-shou-dong-zhong-pai">二十、对象布局：Rust 自动重排，Go 要手动重排</h2>
+<p>这块的实测结果我觉得最有意思。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Example</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    a</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u8</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    b</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    c</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> u8</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>直觉是 <code>1 + 8 + 1 = 10</code> 字节。实际不是。</p>
+<p><strong>Rust 的情况（实测）</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>repr(Rust): size = 16, align = 8</span></span>
+<span class="giallo-l"><span>repr(C)   : size = 24, align = 8</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>repr(Rust) 的字段偏移：b = 0, a = 8, c = 9</span></span></code></pre>
+<p>默认 <code>repr(Rust)</code> 下编译器<strong>重排了字段</strong>：把 <code>u64</code> 放前面，两个 <code>u8</code> 紧凑排在后面，总大小 16。</p>
+<p>加上 <code>#[repr(C)]</code> 后必须保持声明顺序，于是 <code>a</code> 占 1 字节 + 7 字节填充 + <code>b</code> 8 字节 + <code>c</code> 1 字节 + 7 字节尾部填充 = <strong>24</strong>。</p>
+<p><strong>Go 的情况（实测）</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Example</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;"> byte</span></span>
+<span class="giallo-l"><span>    B</span><span style="color: #CBA6F7;"> uint64</span></span>
+<span class="giallo-l"><span>    C</span><span style="color: #CBA6F7;"> byte</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>size=24 align=8</span></span>
+<span class="giallo-l"><span>  A offset=0  B offset=8  C offset=16</span></span></code></pre>
+<p>Go <strong>不重排</strong>，严格按声明序，结果和 Rust 的 <code>repr(C)</code> 一样是 24。</p>
+<p>手动把字段从大到小排：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Packed</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    B</span><span style="color: #CBA6F7;"> uint64</span></span>
+<span class="giallo-l"><span>    A</span><span style="color: #CBA6F7;"> byte</span></span>
+<span class="giallo-l"><span>    C</span><span style="color: #CBA6F7;"> byte</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>size=16 align=8</span></span>
+<span class="giallo-l"><span>  B offset=0  A offset=8  C offset=9</span></span></code></pre>
+<p><strong>16</strong> —— 和 Rust 的默认布局完全一致。</p>
+<p>这个对照挺能说明问题：</p>
+<blockquote>
+<p><strong>Rust 的 <code>repr(Rust)</code> 自动做了 Go 需要手动做的事；而 Rust 的 <code>repr(C)</code> 才等价于 Go 的默认行为。</strong></p>
+</blockquote>
+<p>所以「Go 结构体布局更省内存」或「Rust 布局更紧凑」都是错的——取决于你有没有加 <code>repr(C)</code>、有没有手动排字段。</p>
+<p><strong>怎么观察</strong></p>
+<p>Rust：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #9399B2;">{</span><span>align_of</span><span style="color: #9399B2;">,</span><span> size_of</span><span style="color: #9399B2;">};</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;size = </span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> size_of</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Example</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;align = </span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> align_of</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Example</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>Go：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;size:&quot;</span><span style="color: #9399B2;">,</span><span> unsafe</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Sizeof</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Example</span><span style="color: #9399B2;">{}))</span></span>
+<span class="giallo-l"><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;align:&quot;</span><span style="color: #9399B2;">,</span><span> unsafe</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Alignof</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Example</span><span style="color: #9399B2;">{}))</span></span>
+<span class="giallo-l"><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;A offset:&quot;</span><span style="color: #9399B2;">,</span><span> unsafe</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Offsetof</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Example</span><span style="color: #9399B2;">{}.</span><span>A</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;B offset:&quot;</span><span style="color: #9399B2;">,</span><span> unsafe</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Offsetof</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Example</span><span style="color: #9399B2;">{}.</span><span>B</span><span style="color: #9399B2;">))</span></span>
+<span class="giallo-l"><span>fmt</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Println</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;C offset:&quot;</span><span style="color: #9399B2;">,</span><span> unsafe</span><span style="color: #9399B2;">.</span><span style="color: #89B4FA;font-style: italic;">Offsetof</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;font-style: italic;">Example</span><span style="color: #9399B2;">{}.</span><span>C</span><span style="color: #9399B2;">))</span></span></code></pre>
+<p>注意：<code>size_of::&lt;T&gt;()</code> 只告诉你总大小，<strong>不告诉你每个字段的偏移</strong>。默认 Rust 布局下字段顺序不被语言保证，不能靠推断。</p>
+<p>Go 这边 <code>unsafe.Offsetof</code> 是能用的，因为 Go 保证字段按声明序排列。</p>
+<p><strong>布局优化的前提</strong></p>
+<p>调整字段顺序确实能减少填充，但不能因为「少占几个字节」就断定程序会更快。还得看：</p>
+<ul>
+<li>缓存局部性；</li>
+<li>数据访问模式；</li>
+<li>分配数量；</li>
+<li>结构体是否被复制；</li>
+<li>并发访问模式；</li>
+<li>ABI 和序列化兼容性。</li>
+</ul>
+<p><strong>先测量，再调整。</strong></p>
+<hr />
+<h2 id="er-shi-yi-fen-pei-qi">二十一、分配器</h2>
+<p><strong>Rust 侧</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> values</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">with_capacity</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1000</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>两者都可能向堆分配器请求内存：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Box / Vec</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>Rust 标准库的分配接口</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>当前配置的全局分配器</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>底层分配实现</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    ▼</span></span>
+<span class="giallo-l"><span>操作系统提供的虚拟内存</span></span></code></pre>
+<p>注意实际分配可能被优化掉，或被分配器内部缓存复用。这张图描述的是典型的资源管理路径，<strong>不是每次 <code>Box::new</code> 都触发一次系统调用</strong>。</p>
+<p>分配器要处理：按大小和对齐分配、释放、管理不同大小的块、适当时候向 OS 要更多内存、适当时候归还、处理碎片和内部元数据。</p>
+<p>操作系统通常不会为每个小对象单独执行系统调用——分配器管理较大的区域，再从中划分小块。</p>
+<p>Rust 允许自定义全局分配器，但<strong>自定义不意味着更快</strong>。不同分配器在小对象速度、多线程竞争、碎片、峰值内存、大块分配、归还策略上表现不同，而且换全局分配器会影响整个程序和所有依赖库。</p>
+<p>先确认分配真是瓶颈，再在真实负载下比较。</p>
+<p><strong>Go 侧</strong></p>
+<p>Go 运行时也有自己的堆分配器，为高效处理大量小对象，它管理不同大小类别的内存块，并尽量复用已取得的内存。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Go 程序</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ▼</span></span>
+<span class="giallo-l"><span>Go runtime allocator</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ├── 小对象分配路径</span></span>
+<span class="giallo-l"><span>   ├── 较大对象分配路径</span></span>
+<span class="giallo-l"><span>   ├── 堆空间管理</span></span>
+<span class="giallo-l"><span>   └── 与 GC 协同</span></span></code></pre>
+<p>具体路径取决于对象大小、对齐、运行时实现和版本。但肯定不是「每次 new 就调一次操作系统」。</p>
+<p><strong>为什么 Go 特别关注分配速率</strong></p>
+<p>假设服务每秒 10 万请求，每个请求平均分配 20 个小对象：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>100,000 requests/sec × 20 allocations/request</span></span>
+<span class="giallo-l"><span>= 2,000,000 allocations/sec</span></span></code></pre>
+<p>（假设数字，用来说明量级。）</p>
+<p>即使每个对象很小，持续产生也可能增加：分配器工作量、GC 要处理的对象数、扫描工作、CPU 使用率、内存占用。</p>
+<p>所以 Go 性能优化里常关注 <code>allocs/op</code>、<code>B/op</code>、<code>alloc_space</code>、<code>alloc_objects</code>。</p>
+<p>但也不能因为分配次数多就断定代码有问题。某些分配是合理的，硬优化可能让代码难维护。<strong>测真实负载，再决定要不要减。</strong></p>
+<hr />
+<h2 id="er-shi-er-fen-pei-cheng-ben-dao-di-chai-zai-na">二十二、分配成本到底差在哪</h2>
+<p>假设两边都要创建任务对象：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="go"><span class="giallo-l"><span style="color: #CBA6F7;">type</span><span style="color: #F9E2AF;font-style: italic;"> Task</span><span style="color: #CBA6F7;"> struct</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ID</span><span style="color: #CBA6F7;">    string</span></span>
+<span class="giallo-l"><span>    State</span><span style="color: #CBA6F7;"> int</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Task</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    id</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    state</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> i32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>如果两边都要把任务放堆上，那就都得承担某种形式的内存分配成本。区别主要在：</p>
+<ol>
+<li>对象怎么分配；</li>
+<li>生命周期怎么管理；</li>
+<li>何时释放；</li>
+<li>是否需要运行时追踪；</li>
+<li>是否存在引用计数；</li>
+<li>对象之间怎么共享；</li>
+<li>分配器怎么复用内存；</li>
+<li>编译器怎么优化。</li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Go：                        Rust：</span></span>
+<span class="giallo-l"><span>分配对象                     分配对象</span></span>
+<span class="giallo-l"><span>   │                            │</span></span>
+<span class="giallo-l"><span>   ▼                            ▼</span></span>
+<span class="giallo-l"><span>运行时管理                   某个值拥有资源</span></span>
+<span class="giallo-l"><span>   │                            │</span></span>
+<span class="giallo-l"><span>   ▼                            ▼</span></span>
+<span class="giallo-l"><span>对象变得不可达              所有权转移或继续使用</span></span>
+<span class="giallo-l"><span>   │                            │</span></span>
+<span class="giallo-l"><span>   ▼                            ▼</span></span>
+<span class="giallo-l"><span>GC 后续回收                 资源生命周期结束</span></span>
+<span class="giallo-l"><span>                                │</span></span>
+<span class="giallo-l"><span>                                ▼</span></span>
+<span class="giallo-l"><span>                            析构与释放</span></span></code></pre>
+<p>这不意味着 Rust 每次释放都没成本，也不意味着 Go 的 GC 一定在某个固定时间点回收对象。两者都要管理分配器和内存空间。</p>
+<p><strong>主要差别是默认的生命周期管理模型不同。</strong></p>
+<hr />
+<h2 id="er-shi-san-dui-agent-runtime-lai-shuo-gai-jian-shao-shen-me">二十三、对 Agent Runtime 来说该减少什么</h2>
+<p>三个层次。</p>
+<p><strong>第一层：减少不必要的对象分配</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>READY</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ▼</span></span>
+<span class="giallo-l"><span>LEASED</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ▼</span></span>
+<span class="giallo-l"><span>RUNNING</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ▼</span></span>
+<span class="giallo-l"><span>COMPLETED</span></span></code></pre>
+<p>如果每次状态变化都构造大量临时对象，分配成本会累积。</p>
+<p>Go 用基准测试、逃逸分析、CPU/内存剖析找热点；Rust 用分配剖析、基准测试、数据结构分析找热点。</p>
+<p>但别为了省几个小对象就把代码改成复杂的手动内存池。</p>
+<p><strong>第二层：控制对象生命周期</strong></p>
+<p>事件流和任务上下文可能比单次执行活得更久。某个事件缓存了很久，相关对象也就长期占内存。</p>
+<ul>
+<li>Go：长期引用会阻止 GC 回收；</li>
+<li>Rust：长期持有 <code>Arc</code> 或放全局结构里，资源同样持续存活。</li>
+</ul>
+<p>要控制：缓存大小、事件保留量、任务历史、临时上下文的释放、长期订阅、不再使用的共享引用。</p>
+<p>这一层是<strong>业务生命周期管理</strong>，不只是语言层面的内存管理。</p>
+<p><strong>第三层：降低大规模并发下的分配与同步成本</strong></p>
+<p>多个任务同时更新共享状态时：</p>
+<p>Go 可能需要互斥锁、channel、对象复用、有界队列、GC 指标监控。</p>
+<p>Rust 可能需要所有权转移、借用、<code>Arc</code>、锁、有界 channel、缓冲区复用。</p>
+<p>两边都能构建高效系统。真正的差别要通过具体负载衡量。</p>
+<hr />
+<h2 id="er-shi-si-yi-zhang-dui-zhao-biao">二十四、一张对照表</h2>
+<table><thead><tr><th>维度</th><th>Go</th><th>Rust</th></tr></thead><tbody>
+<tr><td>主要内存管理模型</td><td>追踪式 GC</td><td>所有权 + 确定性析构</td></tr>
+<tr><td>逃逸分析</td><td>编译器的重要优化，判断对象是否要超出当前栈帧存活</td><td>也有生命周期、别名与优化分析，但没有 Go 那种统一的堆逃逸模型作为默认 GC 决策机制</td></tr>
+<tr><td>栈/堆分配</td><td>编译器结合逃逸分析和其他优化决定</td><td>编译器根据使用方式、类型和优化决定</td></tr>
+<tr><td><code>new</code> / <code>make</code></td><td>不保证堆分配</td><td>没有直接对应的统一语义</td></tr>
+<tr><td><code>Box&lt;T&gt;</code></td><td>无等价的所有权类型</td><td>管理堆分配并表达所有权</td></tr>
+<tr><td><code>Vec&lt;T&gt;</code> / 切片</td><td><code>Vec&lt;T&gt;</code> 拥有缓冲区；Go 切片是共享底层数组的视图</td><td>Rust 切片是受借用约束的视图</td></tr>
+<tr><td>对象回收</td><td>GC 根据可达性回收堆对象</td><td>所有权与析构规则管理释放</td></tr>
+<tr><td>共享所有权</td><td>指针和引用天然可共享，GC 追踪可达性</td><td>需借用、<code>Rc</code>、<code>Arc</code> 明确表达</td></tr>
+<tr><td>循环引用</td><td>不可达的环通常能被 GC 回收</td><td>强引用环可能泄漏，需要 <code>Weak</code> 或重构</td></tr>
+<tr><td>字段布局</td><td>严格按声明序，需手动优化填充</td><td>默认重排，<code>repr(C)</code> 才按声明序</td></tr>
+<tr><td>分配器</td><td>运行时堆分配器（大小分级 + 复用）</td><td>可替换的全局分配器</td></tr>
+<tr><td>优化重点</td><td>逃逸分析、减少分配、控制 GC 工作量</td><td>数据结构设计、减少分配、优化所有权与共享</td></tr>
+<tr><td>内存安全</td><td>GC 不解决并发与业务资源问题</td><td>安全 Rust 提供较强静态约束，<code>unsafe</code> 仍需自查</td></tr>
+</tbody></table>
+<p>最后一个认识我想强调：</p>
+<blockquote>
+<p><strong>Go 不是把内存管理交给 GC 之后就完事，Rust 也不是没有 GC 就自动拿到最优性能。</strong></p>
+</blockquote>
+<p>Go 要关注分配速率、逃逸、GC 工作量和长期引用。Rust 要关注所有权结构、堆分配、引用计数、数据布局和资源生命周期。</p>
+<p>真正值得问的问题不是「这段代码会不会分配内存」，而是：</p>
+<p><strong>为什么它会分配？分配在哪里？谁负责释放？对象为什么还活着？这部分成本能不能通过编译器优化或数据结构设计消掉？</strong></p>
+<p>这才是分析系统内存性能的核心能力。</p>
+
+    </div>
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/11-rust-go-error/"><span class="button__text">Rust 与 Go 的错误处理与故障恢复</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                        </span>
+                    </div>
+            </div>
+        </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 2026 Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

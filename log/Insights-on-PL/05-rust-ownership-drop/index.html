@@ -1,0 +1,874 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Rust 所有权、Drop 与 Drop Check | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="从所有权与移动语义出发，拆解 Drop 的执行顺序、内存泄漏为何是安全的、Drop Check 如何约束析构期生命周期，以及 PhantomData 与 FFI 封装的正确写法。">
+    <meta property="og:description" content="从所有权与移动语义出发，拆解 Drop 的执行顺序、内存泄漏为何是安全的、Drop Check 如何约束析构期生命周期，以及 PhantomData 与 FFI 封装的正确写法。">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/05-rust-ownership-drop/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="从所有权与移动语义出发，拆解 Drop 的执行顺序、内存泄漏为何是安全的、Drop Check 如何约束析构期生命周期，以及 PhantomData 与 FFI 封装的正确写法。">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/05-rust-ownership-drop/">
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <nav class="menu">
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/05-rust-ownership-drop/">Rust 所有权、Drop 与 Drop Check</a></h1>
+    <div class="post-meta-inline">
+        <span class="post-date">2026-10-25</span>
+    </div>
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/drop/">#Drop</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/ownership/">#Ownership</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/phantomdata/">#PhantomData</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    <div class="post-content">
+        <p>Rust 的所有权体系是理解 <code>Drop</code>、<code>Drop Check</code>、<code>PhantomData</code> 与资源管理的基础，也是把生命周期、型变、<code>unsafe</code> 与 FFI 串起来的那条主线。</p>
+<p>这里不只讲普通 Rust 的所有权规则，重点在三件事：编译器如何追踪一个值的所有权、如何决定何时析构，以及自己实现底层容器或 FFI 封装时，如何保证内存只被正确释放一次。</p>
+<p>主线参考 <a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/ownership.html">Rustonomicon: Ownership and Lifetimes</a>，并逐步延伸到后续章节。</p>
+<hr />
+<h2 id="yi-xian-jian-li-zheng-ti-zhi-shi-di-tu">一、先建立整体知识地图</h2>
+<p>Rustonomicon 中，这部分内容主要分布在以下章节：</p>
+<table><thead><tr><th>学习顺序</th><th>内容</th><th>核心问题</th></tr></thead><tbody>
+<tr><td>1</td><td>Ownership and Lifetimes</td><td>所有权为什么能保证内存安全？</td></tr>
+<tr><td>2</td><td>Constructors</td><td>如何正确构造底层资源？</td></tr>
+<tr><td>3</td><td>Destructors</td><td>Drop 到底什么时候执行？</td></tr>
+<tr><td>4</td><td>Leaking</td><td>为什么 Rust 允许内存泄漏？</td></tr>
+<tr><td>5</td><td>Drop Flags</td><td>编译器如何判断一个值是否需要析构？</td></tr>
+<tr><td>6</td><td>Drop Check</td><td>为什么实现 Drop 后，生命周期检查可能变严格？</td></tr>
+<tr><td>7</td><td>PhantomData</td><td>如何向编译器表达类型的所有权、生命周期和型变关系？</td></tr>
+<tr><td>8</td><td>Uninitialized Memory</td><td>如何处理尚未初始化的内存？</td></tr>
+</tbody></table>
+<p>对应的官方阅读入口：</p>
+<ul>
+<li><a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/ownership.html">Ownership and Lifetimes</a></li>
+<li><a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/dropck.html">Drop Check</a></li>
+<li><a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/drop-flags.html">Drop Flags</a></li>
+<li><a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/">Rustonomicon 完整目录</a></li>
+</ul>
+<p>需要特别说明：Rustonomicon 部分章节仍在持续维护。涉及语言规则时，如果书中内容与当前 <a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/reference/">Rust Reference</a> 不一致，应优先参考更新后的 Reference。</p>
+<p>这篇先打牢前四个核心问题：所有权、移动、析构，以及为什么 <code>Drop</code> 不只是一个清理函数；后半篇再进入 <code>Drop Check</code> 与 <code>PhantomData</code>。</p>
+<hr />
+<h2 id="er-ownership-suo-you-quan-jiu-jing-jie-jue-shen-me-wen-ti">二、Ownership：所有权究竟解决什么问题？</h2>
+<p>先看一个 C 语言中常见的问题：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="c"><span class="giallo-l"><span style="color: #CBA6F7;">int</span><span style="color: #94E2D5;"> *</span><span>p </span><span style="color: #94E2D5;">=</span><span style="color: #89B4FA;font-style: italic;"> malloc</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">sizeof</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">int</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">*</span><span>p </span><span style="color: #94E2D5;">=</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">free</span><span style="color: #9399B2;">(</span><span>p</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">printf</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;%d</span><span style="color: #F5C2E7;">\n</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #94E2D5;"> *</span><span style="color: #EBA0AC;font-style: italic;">p</span><span style="color: #9399B2;">);</span><span style="color: #9399B2;font-style: italic;"> // Use After Free</span></span></code></pre>
+<p><code>p</code> 保存着一个地址，但 <code>free(p)</code> 之后，原来的内存已经不再属于这个对象。如果继续解引用 <code>p</code>，就可能产生未定义行为。</p>
+<p>问题的根源是什么？</p>
+<p>指针本身并没有表达谁负责这块内存，也没有自动阻止内存释放之后继续使用指针。</p>
+<p>Rust 的所有权机制就是为了解决这类问题：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">value</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span><span style="color: #9399B2;font-style: italic;"> // value 离开作用域，堆内存被释放</span></span></code></pre>
+<p><code>Box&lt;i32&gt;</code> 拥有堆上的 <code>i32</code>。当 <code>value</code> 离开作用域时，Rust 会执行相应的析构过程，最终释放这块堆内存。</p>
+<p>这里的关键并不是 Rust 具有自动析构功能，而是：</p>
+<ol>
+<li><code>value</code> 是资源的所有者。</li>
+<li>所有权不能被随意复制。</li>
+<li>所有权转移之后，原来的变量不能再使用该值。</li>
+<li>当拥有资源的值被正确析构时，资源会得到相应清理。</li>
+</ol>
+<p>因此，Rust 能够在编译阶段阻止许多释放后使用和重复释放的问题。</p>
+<h3 id="2-1-wei-shen-me-box-ke-yi-yi-dong-que-bu-hui-zhong-fu-shi-fang">2.1 为什么 Box 可以移动，却不会重复释放？</h3>
+<p>看下面的代码：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> b</span><span style="color: #94E2D5;"> =</span><span> a</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">b</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // println!(&quot;{a}&quot;); // 编译错误：borrow of moved value</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>执行 <code>let b = a;</code> 之后，所有权从 <code>a</code> 转移给 <code>b</code>。可以将其理解为：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>移动之前：</span></span>
+<span class="giallo-l"><span>a ──────&gt; 堆上的 i32</span></span>
+<span class="giallo-l"><span>b 不存在</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>移动之后：</span></span>
+<span class="giallo-l"><span>a 已经不能再使用</span></span>
+<span class="giallo-l"><span>b ──────&gt; 堆上的 i32</span></span></code></pre>
+<p>需要注意，移动通常不意味着复制整个堆对象。</p>
+<p>对于 <code>Box&lt;i32&gt;</code>，移动主要涉及所有权和指针值的转移；堆上的整数本身并不需要因此重新分配。</p>
+<p>当 <code>b</code> 离开作用域时，Rust 才会执行这份资源的析构。</p>
+<p>Rust 的移动语义保证同一份拥有型值不会被两个普通所有者同时析构。</p>
+<p>当然，这个保证有适用范围。使用 <code>unsafe</code>、手动管理原始指针或违反外部 API 契约，仍然可能破坏内存安全。</p>
+<hr />
+<h2 id="san-move-copy-clone-zhe-san-ge-gai-nian-bi-xu-fen-qing">三、Move、Copy、Clone：这三个概念必须分清</h2>
+<p>它们看起来相似，但语义完全不同。</p>
+<h3 id="3-1-move-zhuan-yi-suo-you-quan">3.1 Move：转移所有权</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> b</span><span style="color: #94E2D5;"> =</span><span> a</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p><code>Box</code> 默认不是 <code>Copy</code> 类型，因此这里是移动。移动后，<code>a</code> 不再拥有原来的值。</p>
+<h3 id="3-2-copy-fu-zhi-zhi">3.2 Copy：复制值</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> b</span><span style="color: #94E2D5;"> =</span><span> a</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">a</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">b</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p><code>i32</code> 实现了 <code>Copy</code>。因此赋值会复制整数值，<code>a</code> 仍然可以使用。</p>
+<p>对于 <code>Copy</code> 类型，复制不需要通过析构来释放独占资源。</p>
+<h3 id="3-3-clone-xian-shi-fu-zhi">3.3 Clone：显式复制</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> b</span><span style="color: #94E2D5;"> =</span><span> a</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">();</span></span></code></pre>
+<p>这里调用了 <code>String</code> 的 <code>Clone</code> 实现。通常 <code>b</code> 会获得独立的字符串缓冲区，而不是与 <code>a</code> 共同拥有同一块缓冲区。</p>
+<p>但要注意，<code>Clone</code> 的具体行为由类型决定。对于某些类型，<code>clone()</code> 可能只是复制一个引用计数句柄，而不是深拷贝全部底层数据。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">sync</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Arc</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> b</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Arc</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">clone</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>a</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>这里的 <code>Arc::clone</code> 增加共享所有权的引用计数，不会深拷贝整个字符串。</p>
+<table><thead><tr><th>操作</th><th>是否转移原值所有权</th><th>是否可能分配内存</th><th>典型用途</th></tr></thead><tbody>
+<tr><td>Move</td><td>是</td><td>通常不需要因移动而重新分配</td><td>转移资源所有权</td></tr>
+<tr><td>Copy</td><td>否，复制值</td><td>不需要堆分配</td><td>复制简单值</td></tr>
+<tr><td>Clone</td><td>原值仍然有效</td><td>可能</td><td>显式复制或共享句柄</td></tr>
+</tbody></table>
+<p>这部分看似基础，但在 FFI 中非常关键。</p>
+<p>例如，如果你把 <code>Box&lt;T&gt;</code> 转成原始指针交给 C 管理，就必须明确原有 Rust 所有权已经如何转移，否则可能发生双重释放。</p>
+<hr />
+<h2 id="si-drop-rust-dao-di-shen-me-shi-hou-shi-fang-zi-yuan">四、Drop：Rust 到底什么时候释放资源？</h2>
+<p>现在进入重点。</p>
+<p>Rust 提供了 <code>Drop</code> Trait：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub trait</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>当一个实现了 <code>Drop</code> 的值被析构时，编译器会调用它的 <code>drop</code> 方法。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Dropping </span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>name</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> resource</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;engine&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Using resource&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>程序大致输出：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Using resource</span></span>
+<span class="giallo-l"><span>Dropping engine</span></span></code></pre>
+<p>当 <code>resource</code> 离开作用域时，Rust 会执行它的析构过程。</p>
+<p>但是，<code>Drop::drop()</code> 并不等于对象全部资源的最终释放过程。这点很重要。</p>
+<h3 id="4-1-jie-gou-ti-de-xi-gou-shun-xu">4.1 结构体的析构顺序</h3>
+<p>考虑：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Engine</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    buffer</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u8</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Engine</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Dropping Engine&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>当 <code>Engine</code> 被析构时，顺序是：</p>
+<ol>
+<li>调用 <code>Engine::drop()</code>。</li>
+<li>析构 <code>name</code> 字段。</li>
+<li>析构 <code>buffer</code> 字段。</li>
+</ol>
+<p>也就是说，执行 <code>Engine::drop()</code> 时，两个字段仍然有效，可以在满足借用规则的前提下访问它们。等自定义 <code>drop()</code> 返回后，字段才会继续析构。</p>
+<h3 id="4-2-zi-duan-de-xi-gou-shun-xu">4.2 字段的析构顺序</h3>
+<p>对于结构体字段，Rust 按照<strong>声明顺序</strong>析构：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Example</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    first</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    second</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    third</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>当 <code>Example</code> 被析构时：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Example::drop()</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>first.drop()</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>second.drop()</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>third.drop()</span></span></code></pre>
+<p>注意，这里是字段的析构顺序，而不是变量离开作用域的顺序。</p>
+<p>对于局部变量，通常是按照定义的<strong>逆序</strong>析构：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> first</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        name</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;first&quot;</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">into</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    };</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> second</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        name</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;second&quot;</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">into</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    };</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>通常会先析构 <code>second</code>，再析构 <code>first</code>。</p>
+<blockquote>
+<p>这里和 C++ 有一个容易记混的差别：C++ 的成员按<strong>逆声明序</strong>析构，Rust 的字段按<strong>声明序</strong>析构。两者都是「先执行析构函数体、再析构成员/字段」，但成员顺序正好相反。</p>
+</blockquote>
+<p>如果底层资源之间存在严格的释放依赖关系，应该明确设计所有权结构，不要依赖不必要的析构顺序假设。</p>
+<hr />
+<h2 id="wu-wei-shen-me-bu-neng-zhi-jie-diao-yong-drop-drop">五、为什么不能直接调用 Drop::drop()？</h2>
+<p>这是一个很值得理解的细节。</p>
+<p>你可能会想：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> resource</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;engine&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">};</span></span>
+<span class="giallo-l"><span>resource</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">drop</span><span style="color: #9399B2;">();</span></span></code></pre>
+<p>但这不是正常的资源释放方式，编译器会直接拒绝：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>error[E0040]: explicit use of destructor method</span></span></code></pre>
+<p>原因是：如果允许你随意调用 <code>drop(&amp;mut self)</code>，那么之后变量离开作用域时，编译器还会再次执行析构过程。</p>
+<p>对于拥有堆内存、文件句柄或 C 资源的类型，这可能造成重复释放。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">mut u8</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>如果 <code>Drop::drop()</code> 内部释放了 <code>ptr</code> 指向的内存，手动调用一次后，变量离开作用域又调用一次，就可能造成双重释放。</p>
+<p>正确的做法是使用：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">drop</span><span style="color: #9399B2;">(</span><span>resource</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>这里调用的是标准库提供的 <code>std::mem::drop</code>，它的核心签名可以理解为：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">_x</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;">)</span></span></code></pre>
+<p>它通过按值接收 <code>resource</code>，将值移动到函数参数中；当函数结束时，参数被正常析构。</p>
+<p>因此：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> resource</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;engine&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">};</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">drop</span><span style="color: #9399B2;">(</span><span>resource</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// resource 已经被移动，不能再使用。</span></span></code></pre>
+<p>这会让资源在当前位置提前析构，而不是等待当前作用域结束。</p>
+<p>记住：<code>Drop::drop(&amp;mut self)</code> 是<strong>析构实现</strong>；<code>std::mem::drop(value)</code> 是通过<strong>所有权转移</strong>来提前结束一个值的生命周期。</p>
+<hr />
+<h2 id="liu-wei-shen-me-rust-yun-xu-nei-cun-xie-lou">六、为什么 Rust 允许内存泄漏？</h2>
+<p>这可能是所有权学习中最反直觉的地方。</p>
+<p>Rust 保证安全代码不会轻易产生释放后使用等内存安全错误，但并不保证所有资源都一定会被及时释放。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Box</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">    std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">forget</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>mem::forget</code> 消耗这个值，却不执行其析构过程。结果就是：这个 <code>Box</code> 所拥有的内存不会通过正常析构路径释放——这是内存泄漏。</p>
+<p>为什么 Rust 允许它？</p>
+<p>因为内存泄漏通常是<strong>资源管理问题</strong>，而不一定是<strong>内存安全问题</strong>。</p>
+<p>相比之下，如果 Rust 强制要求所有值都必须析构，就会让某些安全抽象难以实现。例如引用计数结构、循环引用或涉及资源所有权转移的底层实现，都可能需要容忍某些值没有按通常路径析构。</p>
+<p>但这里要区分两个概念：</p>
+<ul>
+<li><strong>内存泄漏</strong>：资源没有及时释放。</li>
+<li><strong>释放后使用</strong>：程序继续访问已经失效的内存。</li>
+</ul>
+<p>前者不必然导致 UB，后者则可能直接破坏内存安全。</p>
+<p>另外，不能因为 <code>mem::forget</code> 是安全 API，就认为它对任何资源都没有后果。它可能泄漏文件句柄、锁、内存或其他资源，导致程序性能和正确性问题。</p>
+<p>Rustonomicon 也专门讨论了这种情况（<a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/leaking.html">Leaking</a>）：Rust 不保证析构函数一定执行，因此安全抽象不能把内存安全建立在「析构必定发生」这一假设上。</p>
+<hr />
+<h2 id="qi-zhe-dui-ffi-you-shen-me-ying-xiang">七、这对 FFI 有什么影响？</h2>
+<p>现在把所有权和 <code>Drop</code> 与 FFI 联系起来。</p>
+<p>假设 C 库提供：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="c"><span class="giallo-l"><span>Engine </span><span style="color: #94E2D5;">*</span><span style="color: #89B4FA;font-style: italic;">engine_create</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">void</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">void</span><span style="color: #89B4FA;font-style: italic;"> engine_destroy</span><span style="color: #9399B2;">(</span><span>Engine </span><span style="color: #94E2D5;">*</span><span style="color: #EBA0AC;font-style: italic;">engine</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>Rust 侧需要包装它。一个常见设计是：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">ptr</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">NonNull</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> Engine</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    handle</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> NonNull</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">CEngine</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>Engine</code> 拥有 C 库创建的资源，那么析构时应该释放它：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Engine</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            engine_destroy</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">handle</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">as_ptr</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这是示意代码，假定 <code>CEngine</code>、<code>engine_destroy</code> 等 FFI 声明已正确建立。</p>
+<p>真正的实现必须确认：</p>
+<ol>
+<li><code>handle</code> 来自正确的创建函数。</li>
+<li>该句柄仍然有效。</li>
+<li>当前 <code>Engine</code> 是唯一负责释放它的所有者。</li>
+<li><code>engine_destroy</code> 可以在当前线程和当前状态下调用。</li>
+<li>销毁操作不会引发不受支持的跨 ABI 异常传播。</li>
+</ol>
+<p>如果这些条件没有得到保证，那么即使 <code>Drop</code> 写得很整齐，也仍然可能产生双重释放或释放后使用。</p>
+<blockquote>
+<p>顺带一提：<code>NonNull&lt;T&gt;</code> 本身是 <code>!Send + !Sync</code>，所以这样的 <code>Engine</code> 默认也不能跨线程移动。真需要跨线程时，必须显式 <code>unsafe impl Send</code>，并对第 4 条负责。</p>
+</blockquote>
+<h3 id="7-1-dian-xing-cuo-wu-zhong-fu-shi-fang">7.1 典型错误：重复释放</h3>
+<p>例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> engine</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Engine</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">?</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> ptr</span><span style="color: #94E2D5;"> =</span><span> engine</span><span style="color: #94E2D5;">.</span><span>handle</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">as_ptr</span><span style="color: #9399B2;">();</span></span></code></pre>
+<p>假设有人把 <code>ptr</code> 传给 C，并让 C 直接调用 <code>engine_destroy(ptr)</code>。但 Rust 侧的 <code>engine</code> 仍然认为自己拥有该资源。等 <code>engine</code> 离开作用域时，<code>Drop</code> 又会调用 <code>engine_destroy</code>——这就可能造成双重释放。</p>
+<p>正确的设计必须明确选择一种所有权模型：</p>
+<p><strong>模型 A：Rust 拥有资源</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Rust Engine</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    └── Drop 负责销毁 C 资源</span></span></code></pre>
+<p>外部代码只能在明确的借用契约下使用句柄，不能擅自释放。</p>
+<p><strong>模型 B：所有权转移给 C</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Rust Engine</span></span>
+<span class="giallo-l"><span>    │</span></span>
+<span class="giallo-l"><span>    └── 将所有权转移给 C</span></span>
+<span class="giallo-l"><span>              │</span></span>
+<span class="giallo-l"><span>              └── C 负责销毁资源</span></span></code></pre>
+<p>转移之后，Rust 侧必须确保不再对该资源执行原有的析构操作。</p>
+<p>这就是所有权系统在 FFI 中最重要的应用之一。</p>
+<hr />
+<h2 id="ba-drop-check-dao-di-jian-cha-shen-me">八、Drop Check 到底检查什么？</h2>
+<p>到这里，我们已经知道：</p>
+<ul>
+<li>Rust 如何转移所有权；</li>
+<li><code>Drop</code> 如何执行析构；</li>
+<li>字段何时被析构；</li>
+<li>内存泄漏为什么可能是安全的；</li>
+<li>FFI 资源应该由谁释放。</li>
+</ul>
+<p>接下来会遇到一个更复杂的问题：</p>
+<p><strong>如果一个对象包含引用，那么它析构时，这些引用所指向的数据一定还活着吗？</strong></p>
+<p>普通生命周期检查已经能处理许多情况，但一旦引入自定义析构函数，问题就会变得更微妙。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Inspector</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #CBA6F7;"> u8</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Inspector</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">_</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;value = </span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>Inspector</code> 持有一个引用，而且在析构时会读取它。因此，当 <code>Inspector</code> 被析构时，引用指向的数据必须仍然有效；否则，析构函数本身就可能访问无效内存。</p>
+<p>这就引出了 <strong>Drop Check</strong>（析构检查）。</p>
+<p>它是 Rust 所有权体系里比较容易学得似懂非懂的一部分：你已经理解了生命周期、<code>Drop</code>、协变与不变，但当这些机制组合在一起时，编译器为什么有时会拒绝一段看似安全的代码？<code>PhantomData&lt;T&gt;</code> 为什么会影响借用检查？<code>Vec&lt;T&gt;</code> 又为什么需要特殊的析构设计？</p>
+<p>本篇后半部分主要依据 Rustonomicon 的 <a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/dropck.html">Drop Check</a> 和 <a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/phantom-data.html">PhantomData</a> 章节，按以下顺序展开：</p>
+<ol>
+<li>Drop Check 到底检查什么？</li>
+<li>为什么实现 <code>Drop</code> 会改变生命周期检查？</li>
+<li>为什么泛型析构函数可能造成内存安全问题？</li>
+<li><code>PhantomData&lt;T&gt;</code> 如何影响 Drop Check？</li>
+<li><code>#[may_dangle]</code> 为什么存在？</li>
+<li><code>Vec&lt;T&gt;</code> 的底层设计如何使用这些知识？</li>
+</ol>
+<h3 id="8-1-yi-ge-zui-jian-dan-de-li-zi">8.1 一个最简单的例子</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Inspector</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    value</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #CBA6F7;"> i32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Inspector</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">_</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;value = </span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>value</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> number</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> inspector</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Inspector</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        value</span><span style="color: #94E2D5;">: &amp;</span><span>number</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Inspector created&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这段代码是合法的。</p>
+<p>当 <code>main</code> 结束时，局部变量按照逆序析构：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>创建 number</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>创建 inspector</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>main 结束</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>析构 inspector</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>析构 number</span></span></code></pre>
+<p>所以，<code>Inspector::drop()</code> 运行时，<code>number</code> 仍然有效。</p>
+<p>这里有一个关键点：</p>
+<p>编译器不仅要检查引用在正常使用期间是否有效，还要考虑析构函数执行时，引用指向的数据是否仍然有效。</p>
+<p>这就是 Drop Check 要解决的问题。</p>
+<p>更具体地说，Drop Check 是借用检查器在考虑析构行为时采用的一组规则，用来避免对象在析构过程中访问已经失效的数据。</p>
+<p>它与普通生命周期检查密切相关，但不是简单地把所有生命周期统一延长到 <code>'static</code>。</p>
+<h3 id="8-2-wei-shen-me-bu-neng-zhi-jian-cha-pu-tong-dai-ma">8.2 为什么不能只检查普通代码？</h3>
+<p>假设一个类型没有自定义析构函数：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Wrapper</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    value</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #CBA6F7;"> i32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>它只保存一个引用。编译器可以根据类型定义、所有权关系和实际使用情况判断引用的生命周期是否足够。</p>
+<p>但现在我们为它添加一个 <code>Drop</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Wrapper</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    value</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #CBA6F7;"> i32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Wrapper</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">_</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>value</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这个类型在析构时会读取 <code>value</code>。因此，编译器需要考虑一个额外的事实：</p>
+<p>即使调用者不再显式访问这个对象，析构函数仍然可能访问它内部的引用。</p>
+<p>这就是析构行为对生命周期分析产生影响的原因。</p>
+<p>这个差别可以直接观察。下面两段代码只差一个 <code>Drop</code> 实现：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> NoDrop</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #CBA6F7;"> u8</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> _inspector</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> NoDrop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>a</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>    a</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">              // ✅ 通过：NLL 认为借用在构造之后就结束了</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> HasDrop</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #CBA6F7;"> u8</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> HasDrop</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">_</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        let</span><span> _</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> _inspector</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> HasDrop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span>a</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>    a</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span><span style="color: #9399B2;font-style: italic;">              // ❌ error[E0506]: cannot assign to `a` because it is borrowed</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>后者之所以被拒绝，是因为 <code>HasDrop</code> 有析构函数：<code>a</code> 的借用必须一直活到 <code>_inspector</code> 析构那一刻，而不是到「最后一次使用」就结束。</p>
+<p>这就是「实现 <code>Drop</code> 后生命周期检查变严格」的具体含义。</p>
+<p>不过，需要注意：实现 <code>Drop</code> 并不意味着所有内部引用都必须存活到程序结束，也不意味着所有带 <code>Drop</code> 的类型都会受到相同的限制。编译器会根据类型、生命周期约束和析构语义判断哪些条件必须成立。</p>
+<hr />
+<h2 id="jiu-wei-shen-me-fan-xing-xi-gou-han-shu-hui-rang-wen-ti-fu-za-qi-lai">九、为什么泛型析构函数会让问题复杂起来？</h2>
+<p>现在进入真正重要的部分。</p>
+<p>先定义一个泛型类型：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Inspector</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    value</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Inspector</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Dropping Inspector&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>注意：这里的 <code>T</code> 可以是任何类型。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Inspector&lt;i32&gt;</span></span>
+<span class="giallo-l"><span>Inspector&lt;String&gt;</span></span>
+<span class="giallo-l"><span>Inspector&lt;&amp;&#39;a i32&gt;</span></span>
+<span class="giallo-l"><span>Inspector&lt;Vec&lt;u8&gt;&gt;</span></span></code></pre>
+<p>问题在于，编译器不能只根据当前的 <code>Drop</code> 函数表面上做了什么，就完全忽略泛型参数 <code>T</code> 的析构行为。</p>
+<p>原因是 <code>T</code> 可能拥有自己的析构函数。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    reference</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #CBA6F7;"> i32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">_</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;Resource value = </span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>reference</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>如果 <code>Inspector&lt;Resource&lt;'a&gt;&gt;</code> 被析构，那么析构过程可能是：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Inspector&lt;Resource&lt;&#39;a&gt;&gt; 开始析构</span></span>
+<span class="giallo-l"><span>          │</span></span>
+<span class="giallo-l"><span>          ▼</span></span>
+<span class="giallo-l"><span>Inspector::drop()</span></span>
+<span class="giallo-l"><span>          │</span></span>
+<span class="giallo-l"><span>          ▼</span></span>
+<span class="giallo-l"><span>Inspector 的字段开始析构</span></span>
+<span class="giallo-l"><span>          │</span></span>
+<span class="giallo-l"><span>          ▼</span></span>
+<span class="giallo-l"><span>Resource&lt;&#39;a&gt;::drop()</span></span>
+<span class="giallo-l"><span>          │</span></span>
+<span class="giallo-l"><span>          ▼</span></span>
+<span class="giallo-l"><span>访问 reference 指向的数据</span></span></code></pre>
+<p>即使 <code>Inspector::drop()</code> 自己没有读取 <code>T</code>，<code>T</code> 的析构函数仍然可能读取它所引用的数据。</p>
+<p>因此，Rust 需要考虑的不只是外层类型的 <code>Drop</code> 实现，还包括字段及其相关析构行为。</p>
+<p>这就是 Drop Check 对泛型类型特别重要的原因：<strong>泛型参数不仅携带数据，还可能携带析构行为。</strong></p>
+<hr />
+<h2 id="shi-wei-shen-me-xi-gou-han-shu-bu-neng-fang-wen-yi-jing-shi-xiao-de-yin-yong">十、为什么析构函数不能访问已经失效的引用？</h2>
+<p>我们先看一个安全的设计：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Inspector</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    value</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #CBA6F7;"> i32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Inspector</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">_</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>value</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> number</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> inspector</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Inspector</span><span style="color: #9399B2;"> {</span><span> value</span><span style="color: #94E2D5;">: &amp;</span><span>number</span><span style="color: #9399B2;"> };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    drop</span><span style="color: #9399B2;">(</span><span>inspector</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这里的 <code>drop(inspector)</code> 会提前析构 <code>inspector</code>。因为 <code>number</code> 仍然有效，所以访问是安全的。</p>
+<p>现在考虑一个概念上的错误设计：</p>
+<ol>
+<li>创建一个局部变量 <code>number</code></li>
+<li>创建 <code>Inspector</code>，并保存 <code>&amp;number</code></li>
+<li>让 <code>number</code> 先失效</li>
+<li>再析构 <code>Inspector</code></li>
+<li><code>Inspector::drop()</code> 解引用已经失效的引用</li>
+</ol>
+<p>如果 Rust 允许这样的程序，就会产生悬垂引用访问。</p>
+<p>但是在普通安全 Rust 中，借用检查器会阻止能够导致这种情况的合法代码路径。</p>
+<p>因此，Drop Check 并不是一个运行时检测器。它不是等到 <code>drop()</code> 执行时才检查引用是否有效，而是通过编译期约束，避免某些不安全的生命周期安排。</p>
+<p>所以应该这样理解 Drop Check：</p>
+<p>它是编译器生命周期与析构安全分析的一部分，而不是一个运行时的析构函数检查器。</p>
+<hr />
+<h2 id="shi-yi-phantomdata-wei-shen-me-yi-ge-ling-da-xiao-zi-duan-hui-ying-xiang-an-quan-xing">十一、PhantomData：为什么一个零大小字段会影响安全性？</h2>
+<p>现在进入本篇最重要的知识点之一。</p>
+<p><code>PhantomData&lt;T&gt;</code> 是 Rust 标准库提供的一个零大小类型。它本身不保存一个实际的 <code>T</code> 值，但可以向编译器表达：当前类型在类型系统层面，应当被视为与 <code>T</code> 存在某种关系。</p>
+<p>例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">marker</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PhantomData</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> MyType</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    marker</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PhantomData</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这里的 <code>marker</code> 不会在运行时存储一个实际的 <code>T</code>。但是，<code>PhantomData&lt;T&gt;</code> 会影响类型的静态属性，包括：</p>
+<ul>
+<li>型变（variance）；</li>
+<li>自动 Trait 推导，例如 <code>Send</code> 和 <code>Sync</code>；</li>
+<li>Drop Check 对类型所表达的所有权关系的理解。</li>
+</ul>
+<p>具体效果取决于 <code>PhantomData</code> 内部使用的类型形式。</p>
+<p>因此，不能把所有 <code>PhantomData</code> 用法都简单归结为「告诉编译器我拥有 T」。</p>
+<h3 id="11-1-wei-shen-me-xu-yao-phantomdata">11.1 为什么需要 PhantomData？</h3>
+<p>假设我们在底层实现一个容器：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">marker</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PhantomData</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">ptr</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">NonNull</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> MyVec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> NonNull</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    len</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    capacity</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    marker</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PhantomData</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>它大致表达以下结构：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>MyVec&lt;T&gt;</span></span>
+<span class="giallo-l"><span>   │</span></span>
+<span class="giallo-l"><span>   ├── ptr      ──────&gt; 堆内存中的 T 元素</span></span>
+<span class="giallo-l"><span>   ├── len      ──────&gt; 当前初始化元素数量</span></span>
+<span class="giallo-l"><span>   ├── capacity ──────&gt; 已分配容量</span></span>
+<span class="giallo-l"><span>   └── marker   ──────&gt; 向类型系统表达与 T 的关系</span></span></code></pre>
+<p><code>ptr</code> 是原始指针。它并不会像普通的 <code>&amp;T</code> 那样，直接在类型系统中表达与目标数据之间的生命周期关系。</p>
+<p>但 <code>MyVec&lt;T&gt;</code> 逻辑上拥有一组 <code>T</code> 元素。因此，如果我们希望编译器把 <code>MyVec&lt;T&gt;</code> 视为拥有 <code>T</code>，那么 <code>PhantomData&lt;T&gt;</code> 就是一个重要的工具。</p>
+<p>它不仅是一个标记，还影响编译器如何理解这个类型的所有权和型变属性。</p>
+<p><strong>关键区别</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> A</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span style="color: #FAB387;"> T</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>与：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">marker</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PhantomData</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> B</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span style="color: #FAB387;"> T</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    marker</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PhantomData</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这两个类型在类型系统中的含义并不完全相同。第二个类型明确表达了与 <code>T</code> 的额外关系。</p>
+<p>不过，真实的指针容器应该根据自己的所有权语义选择正确的标记类型，而不是机械地为所有指针添加 <code>PhantomData&lt;T&gt;</code>。例如：</p>
+<ul>
+<li>拥有 <code>T</code> 的容器通常需要表达拥有型关系；</li>
+<li>仅仅借用 <code>T</code> 的包装类型，应当表达借用关系；</li>
+<li>如果类型只是保存一个不拥有目标对象的原始句柄，可能需要另一种标记策略。</li>
+</ul>
+<p><code>PhantomData</code> 的类型选择必须反映真实的语义，而不是仅仅为了让编译器接受代码。</p>
+<hr />
+<h2 id="shi-er-phantomdata-ru-he-ying-xiang-drop-check">十二、PhantomData 如何影响 Drop Check？</h2>
+<p>现在可以把前面的概念连起来了。</p>
+<p>考虑：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">marker</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PhantomData</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> MyContainer</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    marker</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PhantomData</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>虽然 <code>PhantomData&lt;T&gt;</code> 不保存实际的 <code>T</code> 值，但它会让编译器把这个类型视为在类型系统中拥有与 <code>T</code> 相关的关系。</p>
+<p>当 <code>T</code> 包含生命周期参数时，这种关系就可能影响借用检查和析构安全分析。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Borrowed</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    value</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #CBA6F7;"> i32</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>那么 <code>MyContainer&lt;Borrowed&lt;'a&gt;&gt;</code> 通过 <code>PhantomData&lt;T&gt;</code> 表达了与 <code>Borrowed&lt;'a&gt;</code> 的拥有型关系。</p>
+<p>这意味着，类型系统需要考虑 <code>MyContainer</code> 与 <code>'a</code> 之间的关联，而不能只把它视为一个完全不相关的原始指针包装。</p>
+<p>但要注意：</p>
+<p><code>PhantomData&lt;T&gt;</code> 不会自动保证 <code>Drop</code> 实现正确，也不会自动保证原始指针有效。它提供的是类型系统层面的关系信息。</p>
+<p>如果你在实现 <code>MyContainer&lt;T&gt;</code> 时，仍然可能重复释放、访问已经失效的内存，或者在析构时违反类型不变量，那么仅仅增加 <code>PhantomData&lt;T&gt;</code> 并不能修复这些问题。</p>
+<hr />
+<h2 id="shi-san-wei-shen-me-vec-shi-xue-xi-drop-check-de-jing-dian-li-zi">十三、为什么 Vec 是学习 Drop Check 的经典例子？</h2>
+<p>现在来看 Rust 标准库中最值得研究的类型之一：<code>Vec&lt;T&gt;</code>。</p>
+<p>一个简化的 <code>Vec&lt;T&gt;</code> 可以理解为：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> MyVec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">mut</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    len</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    capacity</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>真实的标准库实现要复杂得多，而且会使用适合当前实现的内部类型和不变量。这里先用简化结构帮助理解。</p>
+<p>它需要维护以下约束：</p>
+<ol>
+<li><code>ptr</code> 必须符合分配器和布局要求。</li>
+<li><code>capacity</code> 必须与实际分配的内存容量相符。</li>
+<li><code>[0, len)</code> 中的元素已经初始化。</li>
+<li><code>[len, capacity)</code> 中的空间不能被当成已经初始化的 <code>T</code>。</li>
+<li>每个已初始化元素必须在适当时机被析构。</li>
+<li>分配的内存必须由正确的分配器释放。</li>
+</ol>
+<p>注意第五点。</p>
+<p>假设：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Item</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>当 <code>Vec&lt;Item&gt;</code> 被析构时，它不能仅仅释放存储元素的那块原始内存。它还需要正确析构其中已经初始化的 <code>Item</code> 元素，否则每个 <code>Item</code> 内部的 <code>String</code> 可能无法正常释放自己的缓冲区。</p>
+<p>所以，容器的析构逻辑大致是：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Vec&lt;T&gt; 开始析构</span></span>
+<span class="giallo-l"><span>       │</span></span>
+<span class="giallo-l"><span>       ▼</span></span>
+<span class="giallo-l"><span>析构所有已初始化的 T</span></span>
+<span class="giallo-l"><span>       │</span></span>
+<span class="giallo-l"><span>       ▼</span></span>
+<span class="giallo-l"><span>释放容器的底层分配</span></span></code></pre>
+<p>这也是为什么 <code>len</code> 非常重要：它表示已经初始化、拥有的元素数量，而不是分配内存可以容纳的元素数量。<code>capacity</code> 与 <code>len</code> 不能混淆。</p>
+<h3 id="13-1-wei-shen-me-bu-neng-xi-gou-zheng-ge-capacity">13.1 为什么不能析构整个 capacity？</h3>
+<p>假设：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> values</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">with_capacity</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>values</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">push</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">));</span></span></code></pre>
+<p>这里的 <code>capacity</code> 至少为 10，但实际只初始化了一个元素。也就是说：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>capacity &gt;= 10</span></span>
+<span class="giallo-l"><span>len = 1</span></span></code></pre>
+<p>如果底层实现尝试析构全部 <code>capacity</code> 个位置，就会把尚未初始化的内存当作 <code>String</code> 对象处理。这可能导致未定义行为。</p>
+<p>正确的容器实现必须只析构已经初始化的元素，然后释放分配的内存。</p>
+<p>这一点会在下一步学习 <code>MaybeUninit&lt;T&gt;</code> 时变得更加重要。</p>
+<hr />
+<h2 id="shi-si-drop-check-yu-phantomdata-de-zhen-zheng-jiao-hui-dian">十四、Drop Check 与 PhantomData 的真正交汇点</h2>
+<p>现在我们已经知道：</p>
+<ul>
+<li><code>Vec&lt;T&gt;</code> 在逻辑上拥有 <code>T</code>；</li>
+<li><code>T</code> 可能包含生命周期参数；</li>
+<li><code>T</code> 也可能有自己的析构函数；</li>
+<li>原始指针不会自动表达完整的拥有型关系；</li>
+<li><code>PhantomData&lt;T&gt;</code> 可以帮助编译器理解这种关系。</li>
+</ul>
+<p>于是就出现了一个问题：</p>
+<p>如果我们正在实现自己的容器，如何告诉编译器这个容器拥有 <code>T</code>，同时又正确处理析构时的生命周期约束？</p>
+<p>这就是 Drop Check 与 <code>PhantomData</code> 的交汇点。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">marker</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PhantomData</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">ptr</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">NonNull</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> MyVec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> NonNull</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    len</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    capacity</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    marker</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PhantomData</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这里的 <code>PhantomData&lt;T&gt;</code> 表达了拥有型关系。</p>
+<p>对于安全设计来说，这意味着我们不能随意声称：<code>MyVec&lt;T&gt;</code> 只是保存一个不相关的地址，所以 <code>T</code> 的生命周期和析构行为与它无关。</p>
+<p>它逻辑上拥有 <code>T</code>，因此必须认真考虑 <code>T</code> 的析构和生命周期约束。</p>
+<p>但是，如果你只是在做一个不拥有目标对象的借用包装器，那么 <code>PhantomData&lt;T&gt;</code> 可能不是正确的选择。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">marker</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PhantomData</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> BorrowedPtr</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #9399B2;">,</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const</span><span style="color: #FAB387;"> T</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    marker</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> PhantomData</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这个类型表达的是：</p>
+<ul>
+<li>它保存一个原始指针；</li>
+<li>它在类型系统中与一个生命周期为 <code>'a</code> 的共享借用相关联；</li>
+<li>它并不声称自己拥有 <code>T</code>。</li>
+</ul>
+<p>这两个设计有着不同的语义：<code>PhantomData&lt;T&gt;</code> 与 <code>PhantomData&lt;&amp;'a T&gt;</code> 不能随意互换。</p>
+<p>前者表达与拥有型 <code>T</code> 的关系；后者表达与借用 <code>T</code> 的关系。这会影响型变、自动 Trait 推导，以及编译器如何理解该类型的生命周期与所有权关系。</p>
+<hr />
+<h2 id="shi-wu-na-me-may-dangle-shi-shen-me">十五、那么 #[may_dangle] 是什么？</h2>
+<p>这属于 Drop Check 中更高级的内容。</p>
+<p>在某些底层泛型容器中，析构函数不一定需要访问 <code>T</code> 的内容。例如，一个容器的析构逻辑可能只需要：</p>
+<ol>
+<li>释放某块内存；</li>
+<li>不读取某个泛型参数的值；</li>
+<li>不调用该泛型参数的析构函数。</li>
+</ol>
+<p>这种情况下，如果编译器一律要求所有相关泛型参数在整个析构过程中保持可用，就可能限制某些原本可以安全实现的底层抽象。</p>
+<p><code>#[may_dangle]</code> 就与这种情况有关。</p>
+<p>它允许某些受约束的 <code>Drop</code> 实现声明：析构期间，指定的泛型参数或生命周期可能已经不再有效。</p>
+<p>但这不是一个普通的性能优化属性，而是涉及析构安全性的高级机制。</p>
+<p>不能仅仅因为 <code>Drop::drop()</code> 没有直接读取 <code>T</code>，就认定可以使用 <code>#[may_dangle]</code>。因为还必须考虑字段析构和其他隐式析构行为。例如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Container</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    value</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>即使 <code>Container::drop()</code> 不读取 <code>self.value</code>，在自定义 <code>Drop</code> 结束后，<code>value</code> 仍然会被析构。如果 <code>T</code> 的析构函数需要访问某个生命周期相关的数据，那么随意放宽该生命周期约束就可能破坏安全性。</p>
+<p>这正是 Drop Check 必须谨慎处理的原因。</p>
+<p>在当前稳定 Rust 中，<code>#[may_dangle]</code> 属于不稳定的内部机制（需要 nightly 的 <code>dropck_eyepatch</code>），不能把它当成普通稳定 Rust API 随意使用。学习时应以 Rustonomicon 的相关章节和当前编译器实现为准。</p>
+<p>推荐阅读：<a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/dropck.html">Rustonomicon: Drop Check</a>。</p>
+<hr />
+<h2 id="shi-liu-ba-drop-check-ying-yong-dao-ffi-yi-ge-shi-yong-she-ji">十六、把 Drop Check 应用到 FFI：一个实用设计</h2>
+<p>假设我们封装一个 C 引擎，它返回一块由 C 管理的缓冲区。</p>
+<p>Rust 侧设计：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">ptr</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">NonNull</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> Engine</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    handle</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> NonNull</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">CEngine</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>如果这个句柄由 <code>Engine</code> 独占拥有，那么 <code>Drop</code> 应该负责释放它。</p>
+<p>但是，如果 <code>Engine</code> 还提供一个借用视图：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">pub struct</span><span style="color: #F9E2AF;font-style: italic;"> EngineData</span><span style="color: #89DCEB;">&lt;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">const u8</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    len</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    marker</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">marker</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">PhantomData</span><span style="color: #89DCEB;">&lt;</span><span style="color: #94E2D5;">&amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">a</span><span style="color: #F9E2AF;font-style: italic;"> Engine</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>那么 <code>EngineData&lt;'a&gt;</code> 的类型就表达了：这个视图的有效期不能超过它所借用的 <code>Engine</code>。</p>
+<p>这会帮助 Rust 的生命周期系统阻止调用者在引擎已经被销毁之后，继续通过安全接口使用该视图。</p>
+<p>不过，这只有在 API 的实现确实维持该不变量时才成立。例如：</p>
+<ul>
+<li><code>EngineData</code> 不能在 <code>Engine</code> 销毁后继续访问内部缓冲区；</li>
+<li>引擎不能在视图仍然有效时释放该缓冲区；</li>
+<li>如果后续操作会使缓冲区失效，就必须通过借用规则或其他机制禁止冲突操作。</li>
+</ul>
+<p>这里的 <code>PhantomData&lt;&amp;'a Engine&gt;</code> 只负责表达类型关系，不会自动固定 C 缓冲区的内存，也不会阻止外部 C 代码偷偷释放它。</p>
+<p>因此，FFI 封装必须同时具备：</p>
+<ol>
+<li>正确的类型设计；</li>
+<li>明确的外部 API 契约；</li>
+<li>正确的资源管理；</li>
+<li>必要的同步与生命周期控制。</li>
+</ol>
+<hr />
+<h2 id="shi-qi-zhe-yi-jie-ni-zhen-zheng-xu-yao-ji-zhu-shen-me">十七、这一节你真正需要记住什么？</h2>
+<p>把最重要的结论压缩成六条。</p>
+<p><strong>第一，Drop Check 是编译期安全机制。</strong></p>
+<p>它关注析构过程中可能发生的引用访问，而不是在运行时检查内存。</p>
+<p><strong>第二，泛型参数可能带来隐式析构行为。</strong></p>
+<p>外层 <code>Drop</code> 函数不读取 <code>T</code>，不代表整个析构过程不需要考虑 <code>T</code>。</p>
+<p><strong>第三，PhantomData 会影响类型系统对所有权和生命周期关系的理解。</strong></p>
+<p>它不是一个简单的占位符，也不是用来欺骗编译器的工具。</p>
+<p><strong>第四，<code>Vec&lt;T&gt;</code> 必须区分已初始化元素与尚未初始化的容量空间。</strong></p>
+<p>只析构实际初始化的元素，然后释放底层分配。</p>
+<p><strong>第五，#[may_dangle] 是高级安全机制。</strong></p>
+<p>它不能作为随意绕过生命周期约束的手段。</p>
+<p><strong>第六，FFI 的安全性最终依赖正确的所有权与生命周期契约。</strong></p>
+<p>即使使用 <code>NonNull&lt;T&gt;</code>、<code>PhantomData&lt;T&gt;</code> 和 <code>Drop</code>，也不能自动保证外部资源有效或不会被重复释放。</p>
+<hr />
+<h2 id="xia-yi-jie-uninitialized-memory-yu-maybeuninit-t">下一节：Uninitialized Memory 与 <code>MaybeUninit&lt;T&gt;</code></h2>
+<p>下一步进入 Rustonomicon 的未初始化内存部分（<a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/uninitialized.html">Uninitialized Memory</a>）。</p>
+<p>这是理解 <code>Vec&lt;T&gt;</code>、底层容器和 FFI 输出缓冲区的自然延伸：</p>
+<ul>
+<li>为什么不能直接读取未初始化的内存？</li>
+<li><code>MaybeUninit&lt;T&gt;</code> 与普通 <code>T</code> 有什么区别？</li>
+<li>如何逐个初始化 <code>Vec&lt;T&gt;</code> 的元素？</li>
+<li>如果初始化过程中途失败，已经初始化的元素应该如何析构？</li>
+<li><code>ptr::write</code> 和普通赋值有什么区别？</li>
+<li>如何避免重复析构与内存泄漏？</li>
+</ul>
+<p>这些知识会把所有权、Drop Check 和原始指针真正串联起来。</p>
+
+    </div>
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/06-rust-uninit-memory/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Rust 未初始化内存与 MaybeUninit</span></a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/04-rust-unsafe-ffi/"><span class="button__text">Rust 的 unsafe 边界：原始指针、型变与 FFI</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                        </span>
+                    </div>
+            </div>
+        </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 2026 Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

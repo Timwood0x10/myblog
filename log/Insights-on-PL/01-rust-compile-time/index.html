@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Rust 编译慢研究 | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="拆解 Rust 编译慢的真实成因：单态化如何放大后端工作量、LLVM 优化管线、依赖 DAG、trait 求解与宏展开，并与 Go 的泛型实现对比。">
+    <meta property="og:description" content="拆解 Rust 编译慢的真实成因：单态化如何放大后端工作量、LLVM 优化管线、依赖 DAG、trait 求解与宏展开，并与 Go 的泛型实现对比。">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/01-rust-compile-time/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="拆解 Rust 编译慢的真实成因：单态化如何放大后端工作量、LLVM 优化管线、依赖 DAG、trait 求解与宏展开，并与 Go 的泛型实现对比。">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/01-rust-compile-time/">
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <nav class="menu">
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/01-rust-compile-time/">Rust 编译慢研究</a></h1>
+    <div class="post-meta-inline">
+        <span class="post-date">2026-10-25</span>
+    </div>
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/compiler/">#Compiler</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/monomorphization/">#Monomorphization</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/performance/">#Performance</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a></span>
+    <div class="post-content">
+        <h2 id="1-man-zai-na-an-quan-zhong-pai-xu-dan-pai-xu-hui-yin-xiang-mu-er-yi">1. 慢在哪（按权重排序，但排序会因项目而异）</h2>
+<blockquote>
+<p>先给结论前提：<strong>不要硬背某个固定排名</strong>。用 <code>cargo build --timings</code> 看 crate 级耗时分布，用 <code>-Ztime-passes</code>（nightly）看 rustc 内部各 phase 占比，用 <code>cargo llvm-lines</code> 看是哪些代码贡献了 LLVM IR 行数。不同项目（泛型重 / 宏重 / 依赖多）的排序差异很大。具体命令和实测输出在第 4 节。</p>
+<p>下面是<strong>经验上最常见</strong>的构成，按"能优化的收益"排序。</p>
+</blockquote>
+<h3 id="1-monomorphization-fan-xing-shi-li-hua-dai-ma-liang-de-fang-da-qi">1、Monomorphization（泛型实例化）—— 代码量的放大器</h3>
+<p><strong>专有名词</strong></p>
+<table><thead><tr><th>名词</th><th>含义</th></tr></thead><tbody>
+<tr><td><strong>monomorphization</strong></td><td>每个泛型 + 具体类型组合 → 生成一份<strong>独立的机器码</strong></td></tr>
+<tr><td><strong>type instantiation</strong></td><td><code>HashMap&lt;String, i32&gt;</code> 和 <code>HashMap&lt;String, f64&gt;</code> 是<strong>两份代码</strong></td></tr>
+<tr><td><strong>LLVM codegen</strong></td><td>每个实例化函数都走 LLVM 后端（IR → 机器码），release 下还要跑优化 pass</td></tr>
+<tr><td><strong>CGU</strong>（Codegen Unit）</td><td>rustc 把实例化结果切成若干代码生成单元，这是 LLVM 并行度的来源（release 默认 16 个）</td></tr>
+<tr><td><strong>combinatorial explosion</strong></td><td>嵌套泛型：<code>Vec&lt;HashSet&lt;Box&lt;dyn Iterator&lt;Item = T&gt;&gt;&gt;&gt;</code> → 每层都展开</td></tr>
+</tbody></table>
+<p><strong>通俗解释</strong></p>
+<blockquote>
+<p><code>fn sum&lt;T: Add&lt;Output = T&gt;&gt;(a: T, b: T) -&gt; T</code> 被 10 种类型调用 → <strong>10 份</strong>机器码，每份都走完整的 LLVM 后端。</p>
+<p><code>Vec&lt;String&gt;</code>、<code>Vec&lt;i32&gt;</code>、<code>Vec&lt;MyStruct&gt;</code>、<code>HashMap&lt;String, i32&gt;</code>、<code>HashMap&lt;&amp;str, &amp;str&gt;</code>……每个都是独立函数体。一个中型项目做到<strong>数万个</strong>实例化项很常见（可用 <code>cargo llvm-lines</code>、<code>-Zprint-mono-items</code> 实测，见第 4 节）。</p>
+<p>关键点：<strong>单态化本身不是最慢的那一步</strong>。它在前端只是收集实例、生成 MIR；真正昂贵的是它把这些代码量<strong>乘以 N 之后灌进 LLVM 后端</strong>。所以更准确的说法是"单态化 + LLVM 后端"是一个复合主因，单态化是放大器。</p>
+</blockquote>
+<p><strong>为什么 Go 不这样？</strong></p>
+<blockquote>
+<p>Go 1.18+ 的泛型实现是 <strong>GC shape stenciling + dictionaries</strong>：按类型对 GC 的"形状"分组，<strong>所有指针类型共享同一份实例</strong>（都按 <code>uintptr</code> 处理），方法调用、字段偏移通过隐藏的 dictionary 参数间接寻址。</p>
+<p>所以 Go 既不是完全单态化（<code>Sum[int]</code> 和 <code>Sum[int64]</code> 仍然是两份代码），也不是"一份代码服务所有类型"，更不是"装箱进 <code>any</code>"。它在<strong>代码体积 ↔ 运行时分发开销</strong>之间取了折中。Rust 选了"零运行时开销"，代价就落在编译期。</p>
+</blockquote>
+<hr />
+<h3 id="2-llvm-you-hua-guan-xian-you-qi-release">2、LLVM 优化管线（尤其 <code>--release</code>）</h3>
+<p><strong>专有名词</strong></p>
+<table><thead><tr><th>名词</th><th>含义</th></tr></thead><tbody>
+<tr><td><strong>LLVM IR</strong>（Intermediate Representation）</td><td>编译器中端表示，Rust → LLVM IR → 目标机器码</td></tr>
+<tr><td><strong>SROA</strong>（Scalar Replacement of Aggregates）</td><td>把 struct 拆成标量，便于寄存器分配</td></tr>
+<tr><td><strong>IPO</strong>（Inter-Procedural Optimization）</td><td>跨函数优化（含内联）；跨 crate 内联需要 LTO 才成立</td></tr>
+<tr><td><strong>LTO</strong>（Link Time Optimization）</td><td>链接时跨 crate 优化，<code>lto = true</code>（fat）最慢</td></tr>
+<tr><td><strong>thin LTO</strong></td><td>折中方案（<code>lto = "thin"</code>），比 fat 快，比不开启效果好</td></tr>
+<tr><td><strong>local ThinLTO</strong></td><td>每个 CGU <strong>内部</strong>的 ThinLTO，这是 release 默认就有的，<strong>不等于跨 crate LTO</strong></td></tr>
+<tr><td><strong>PGO</strong>（Profile-Guided Optimization）</td><td>可选，用 profile 数据引导内联/分支布局</td></tr>
+</tbody></table>
+<p><strong>通俗解释</strong></p>
+<blockquote>
+<p><code>cargo build</code>（debug）：<code>opt-level = 0</code>，LLVM 基本不优化。单个函数的优化通常在<strong>毫秒级或更低</strong>。</p>
+<p><code>cargo build --release</code>：<code>opt-level = 3</code>、<code>codegen-units = 16</code>、<strong><code>lto = false</code></strong>（默认不开跨 crate LTO）、<code>incremental = false</code>。此时每个 CGU 内部有 local ThinLTO，由 LLVM 并行处理——耗时大头基本都在 <code>LLVM_module_codegen</code> + <code>LLVM_passes</code> 这两个 phase。</p>
+<p>所以量级是：数万个实例化函数 × 每个毫秒级后端开销 → <strong>几十秒到几分钟</strong>的纯后端时间，再叠加几百个依赖 crate 的同类开销。</p>
+<p>类比：Go 没有 release/debug 之分，优化策略固定（内联预算小、无自动向量化），所以全量构建通常是<strong>秒级到几十秒</strong>。</p>
+</blockquote>
+<hr />
+<h3 id="3-yi-lai-dag-you-xiang-wu-huan-tu">3、依赖 DAG（有向无环图）</h3>
+<p><strong>专有名词</strong></p>
+<table><thead><tr><th>名词</th><th>含义</th></tr></thead><tbody>
+<tr><td><strong>crate DAG</strong></td><td>每个 <code>.crate</code> 是一个节点，依赖关系是有向边</td></tr>
+<tr><td><strong>cargo</strong></td><td>包管理器，解析 <code>Cargo.toml</code> → 构建 DAG</td></tr>
+<tr><td><strong>串行依赖</strong></td><td>A 依赖 B，B 编译完 A 才能开始（关键路径）</td></tr>
+<tr><td><strong>并行编译</strong></td><td>cargo 可并行编译<strong>无依赖关系</strong>的 crate；默认 <code>-j</code> 就等于可用核心数</td></tr>
+<tr><td><strong>feature unification</strong></td><td>多个 crate 依赖同一库的不同 feature → 合并后可能多出变体</td></tr>
+<tr><td><strong><code>build.rs</code></strong></td><td>构建脚本（FFI、代码生成），<strong>阻塞</strong>所在 crate 的编译</td></tr>
+</tbody></table>
+<p><strong>通俗解释</strong></p>
+<blockquote>
+<p>一个典型 Rust 项目（<code>tokio</code> + <code>serde</code> + <code>anyhow</code> + <code>tracing</code>）：</p>
+<ul>
+<li>依赖树展开后 <strong>200-500 个 crate</strong></li>
+<li>每个 crate <strong>必须完整编译</strong>（类型检查 + MIR 优化 + codegen + 产出 <code>.rlib</code>/<code>.rmeta</code>），哪怕它只有一个函数被用到</li>
+<li>关键路径（最长链）上的 crate <strong>只能串行</strong>，这条链通常决定了整体下限</li>
+<li>一个 <code>build.rs</code> 跑 CMake / bindgen → <strong>额外 10-60 秒</strong>，且期间无法并行</li>
+</ul>
+<p>类比：Go 以 <strong>package</strong> 为编译单元，依赖几百个 package 也很常见，但单元粒度更细、没有 codegen 阶段的重活，包级并行度更充分。</p>
+</blockquote>
+<hr />
+<h3 id="4-fu-za-lei-xing-jian-cha-trait-lifetime-gat">4、复杂类型检查（Trait + Lifetime + GAT）</h3>
+<p><strong>专有名词</strong></p>
+<table><thead><tr><th>名词</th><th>含义</th></tr></thead><tbody>
+<tr><td><strong>trait resolution</strong></td><td>每个泛型调用点，编译器要<strong>确定</strong>用哪个 <code>impl</code>（可能有多个 candidate）</td></tr>
+<tr><td><strong>coherence</strong></td><td>一致性检查（<code>impl</code> 不能重叠），这也是新 solver 最先落地的部分</td></tr>
+<tr><td><strong>lifetime unification</strong></td><td>多个 <code>'a</code> 约束要<strong>求交</strong>（intersection），证明兼容</td></tr>
+<tr><td><strong>GAT</strong>（Generic Associated Type）</td><td><code>type Item&lt;'a&gt; where Self: 'a;</code> → 额外一层约束求解</td></tr>
+<tr><td><strong>HRTB</strong>（Higher-Ranked Trait Bound）</td><td><code>for&lt;'a&gt; fn(&amp;'a T)</code>，属于 <strong>rank-1 高阶限定</strong>，不是"二阶逻辑"</td></tr>
+<tr><td><strong>inference variable</strong></td><td>未标注的 lifetime 是 <code>?a</code>，要等所有约束收集完再统一求解</td></tr>
+<tr><td><strong>trait solver</strong></td><td>旧 solver 是"递归 + 缓存"；新 solver（<code>-Znext-solver</code>）是基于 <strong>canonicalization 的类型化约束求解</strong>，<strong>不是并行</strong>；目前仍是 nightly，首要目标是正确性与可维护性，性能在逐步追平</td></tr>
+</tbody></table>
+<p><strong>通俗解释</strong></p>
+<blockquote>
+<p>Go 的类型检查：struct 字段 + interface 隐式匹配 → 基本是<strong>线性扫描</strong>。
+Rust 的类型检查：每个调用点要解一组约束（比如 <code>T: Iterator&lt;Item = u32&gt; + Send + 'a</code>），要证明 3 个约束成立且 lifetime 兼容 → <strong>搜索空间大</strong>。实际有缓存，但大项目里缓存命中率不一定高。</p>
+<p>越复杂的泛型组合（<code>tokio</code> 的 <code>Future + Send + 'static</code>、<code>serde</code> 的 <code>Deserialize&lt;'de&gt;</code>），前端耗时越明显；<code>diesel</code>、<code>nalgebra</code> 这类重度泛型库是典型受害者。</p>
+</blockquote>
+<hr />
+<h3 id="5-hong-zhan-kai-ci-yao-yin-su">5、宏展开（次要因素）</h3>
+<p><strong>专有名词</strong></p>
+<table><thead><tr><th>名词</th><th>含义</th></tr></thead><tbody>
+<tr><td><strong><code>macro_rules!</code></strong></td><td>声明式宏，<strong>编译器进程内</strong>展开，开销很小</td></tr>
+<tr><td><strong>proc macro</strong>（<code>#[derive]</code> / <code>#[attr]</code>）</td><td>编译成动态库，rustc 通过 <code>proc_macro</code> 桥接 <strong><code>dlopen</code> 到同一进程内</strong>调用——<strong>不是子进程，也没有管道 IPC</strong></td></tr>
+<tr><td><strong>TokenStream</strong></td><td>编译器内部 token 流与 <code>proc_macro</code> API 之间的句柄式抽象，跨界时需要转换</td></tr>
+<tr><td><strong>derive macro</strong></td><td><code>#[derive(Serialize)]</code> → 展开成几十行 <code>impl</code> → 再进入类型检查 + 单态化</td></tr>
+</tbody></table>
+<p><strong>通俗解释</strong></p>
+<blockquote>
+<p><code>macro_rules!</code> 很快（token 层面的替换）。
+proc macro 的开销来自三块：动态库加载、token 树的来回转换、以及<strong>展开出来的代码还要再走一遍类型检查和单态化</strong>。</p>
+<p>一个 <code>#[derive(Serialize, Deserialize, Clone, Debug)]</code> = 4 次宏调用 × 200 个 struct = <strong>800 次宏调用</strong>。次数不少，但单次开销在微秒到毫秒级，相比后端仍是<strong>小头</strong>。</p>
+<p>真正被宏拖慢的典型是 <code>serde</code> + 大量 DTO 的组合，或者编译期生成大数组/大 match 的宏。</p>
+</blockquote>
+<hr />
+<h3 id="6-lian-jie-linking">6、链接（Linking）</h3>
+<table><thead><tr><th>名词</th><th>含义</th></tr></thead><tbody>
+<tr><td><strong>thin LTO / fat LTO</strong></td><td>跨 crate 去重 + 内联，链接时再跑一遍优化</td></tr>
+<tr><td><strong>symbol deduplication</strong></td><td>泛型实例默认以 <code>linkonce_odr</code> 产出，由<strong>链接器</strong>负责合并；<code>-Zshare-generics</code> 可让 rustc 在 codegen 阶段就复用</td></tr>
+<tr><td><strong>可复现构建</strong></td><td><code>--remap-path-prefix</code>、<code>-Ztrim-paths</code>（nightly），消除构建路径带来的 hash 差异</td></tr>
+</tbody></table>
+<p><strong>通俗解释</strong></p>
+<blockquote>
+<p>几百个 <code>.rlib</code>（Rust 库产物）→ 链接器（<code>ld</code> / <code>lld</code> / <code>mold</code>）合并所有 <code>linkonce_odr</code> 符号并重排。
+fat LTO：链接器先拿到<strong>所有</strong> crate 的 LLVM IR → 重新跑一遍优化 → 再链接。<strong>最慢</strong>，但产物通常最小最快。
+换用 <code>mold</code> / <code>lld</code> 加速的是<strong>链接这一步本身</strong>（比 GNU <code>ld</code> 快数倍），但 LTO 的大头仍然在 LLVM 里，换链接器救不了。</p>
+</blockquote>
+<hr />
+<h2 id="2-rust-man-go-kuai-de-jie-gou-xing-yuan-yin">2. Rust 慢、Go 快的结构性原因</h2>
+<table><thead><tr><th>因素</th><th>Go</th><th>Rust</th></tr></thead><tbody>
+<tr><td><strong>泛型</strong></td><td>GC shape stenciling + dictionaries（有限几份）</td><td>完全单态化（N 份）</td></tr>
+<tr><td><strong>优化</strong></td><td>固定策略，内联预算小，无自动向量化</td><td>LLVM 全管线（<code>-O3</code> + SROA + IPO，可选 LTO/PGO）</td></tr>
+<tr><td><strong>编译单元</strong></td><td>package 级，粒度细，并行充分</td><td>crate 级，固定开销大，受关键路径限制</td></tr>
+<tr><td><strong>依赖规模</strong></td><td>几十到几百个 package</td><td>200-500 个 crate</td></tr>
+<tr><td><strong>类型检查</strong></td><td>结构化匹配，无统一/相干性求解</td><td>trait resolution + lifetime 约束求解</td></tr>
+<tr><td><strong>宏</strong></td><td>无</td><td><code>macro_rules!</code> + proc macro</td></tr>
+<tr><td><strong>增量粒度</strong></td><td>包级，效果稳定</td><td>crate 级，dev 默认开、release 默认关</td></tr>
+</tbody></table>
+<hr />
+<h2 id="3-zen-me-huan-jie">3. 怎么缓解</h2>
+<table><thead><tr><th>方法</th><th>效果</th></tr></thead><tbody>
+<tr><td><strong>开发期用 <code>cargo check</code> / <code>cargo build</code>（debug），<code>--release</code> 只出最终产物</strong></td><td>最有效，开发循环快一个量级</td></tr>
+<tr><td><strong><code>[profile.release] lto = "thin"</code></strong></td><td>相对 <code>lto = true</code>（fat）快不少；注意默认本来是 <code>false</code>，开启它是"用编译时间换运行性能"，别当成加速编译的手段</td></tr>
+<tr><td><strong>调大 <code>codegen-units</code></strong>（如 256）</td><td>并行度更高、编译更快，代价是优化效果与运行性能略降</td></tr>
+<tr><td><strong><code>opt-level = 1</code> 或 <code>2</code></strong></td><td>比 <code>3</code> 明显更快，多数场景运行性能损失可接受</td></tr>
+<tr><td><strong>换 <code>mold</code> / <code>lld</code></strong></td><td>只加速链接步骤本身（数倍），LTO 时收益被稀释</td></tr>
+<tr><td><strong><code>sccache</code></strong></td><td>跨项目编译缓存，CI 与多 worktree 场景收益明显；它和 cargo 增量是两件事</td></tr>
+<tr><td><strong><code>workspace</code> 拆分 + 控制在合理粒度</strong></td><td>提升并行度与增量命中率；但拆太碎会反而增加每 crate 固定开销，且跨 crate 内联要依赖 LTO</td></tr>
+<tr><td><strong>减少依赖 / 关掉默认 feature</strong></td><td>直接减少 DAG 节点与关键路径长度</td></tr>
+<tr><td><strong>少用巨型泛型、<code>#[inline]</code> 收敛、<code>debug = "line-tables-only"</code></strong></td><td>减少后端代码量与调试信息体积</td></tr>
+<tr><td><strong><code>-Znext-solver</code></strong>（nightly）</td><td>新 trait solver，部分场景更快，但别指望固定倍数，且未稳定</td></tr>
+</tbody></table>
+<hr />
+<h2 id="4-zen-me-ding-wei-si-tiao-ming-ling">4. 怎么定位：四条命令</h2>
+<p>上面全是经验判断。真正定位瓶颈得靠实测，下面四条命令按「由粗到细」排。</p>
+<h3 id="4-1-cargo-build-timings-xian-kan-crate-ji">4.1 <code>cargo build --timings</code>：先看 crate 级</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">cargo</span><span style="color: #A6E3A1;"> build --timings</span></span></code></pre>
+<p>输出末尾会给出报告路径：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>   Timing report saved to target/cargo-timings/cargo-timing-20261025T135702275Z-5b6be953ca888f6b.html</span></span></code></pre>
+<p>同时会生成一份固定名字的 <code>target/cargo-timings/cargo-timing.html</code>，用浏览器打开就能看到：</p>
+<ul>
+<li>每个 crate 的编译耗时；</li>
+<li>整条构建的时间轴，以及<strong>并行度</strong>（哪些 crate 在同时编、哪些在等）；</li>
+<li>关键路径上卡了多久。</li>
+</ul>
+<p>我用一个只有 <code>main.rs</code> 的小项目（依赖 <code>tokio</code> + <code>serde</code> + <code>anyhow</code> + <code>tracing</code>）实测：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>cargo build             → 6.07s</span></span>
+<span class="giallo-l"><span>cargo build --release   → 10.38s</span></span></code></pre>
+<p>依赖占了绝大部分时间，自己那个 crate 只占零点几秒——这基本是所有 Rust 项目的常态。</p>
+<h3 id="4-2-ztime-passes-kan-rustc-nei-bu-ge-phase">4.2 <code>-Ztime-passes</code>：看 rustc 内部各 phase</h3>
+<p>需要 nightly：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="shellscript"><span class="giallo-l"><span>RUSTC_WRAPPER</span><span style="color: #94E2D5;">=</span><span style="color: #A6E3A1;">&quot;&quot;</span><span> RUSTC</span><span style="color: #94E2D5;">=</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">$(</span><span style="color: #89B4FA;font-style: italic;">rustup</span><span style="color: #A6E3A1;"> which --toolchain nightly rustc</span><span style="color: #9399B2;">)</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #89B4FA;font-style: italic;"> \</span></span>
+<span class="giallo-l"><span style="color: #A6E3A1;">  cargo rustc -- -Ztime-passes</span></span></code></pre>
+<p>（<code>RUSTC_WRAPPER=""</code> 是绕开 sccache 之类的包装器，否则 <code>-Z</code> 参数传不进去。）</p>
+<p>输出会逐行列出每个 pass 的耗时和内存变化。抓关键几行：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>time:   0.002; rss:   54MB -&gt;   66MB (  +12MB)	type_check_crate</span></span>
+<span class="giallo-l"><span>time:   0.001; rss:   75MB -&gt;   81MB (   +6MB)	monomorphization_collector_graph_walk</span></span>
+<span class="giallo-l"><span>time:   0.003; rss:   74MB -&gt;   84MB (  +10MB)	codegen_crate</span></span>
+<span class="giallo-l"><span>time:   0.003; rss:   84MB -&gt;   82MB (   -3MB)	LLVM_passes</span></span>
+<span class="giallo-l"><span>time:   0.042; rss:   81MB -&gt;   81MB (   +0MB)	run_linker</span></span></code></pre>
+<p>这是个小程序，但它揭示了一件容易被忽略的事：</p>
+<blockquote>
+<p><strong><code>run_linker</code> 花了 0.042s，比 <code>codegen_crate</code> + <code>LLVM_passes</code> 加起来还慢十几倍。</strong></p>
+</blockquote>
+<p>所以对小项目而言，光盯 LLVM 是没用的——链接才是大头。项目越大，LLVM 占比才逐渐升上去。</p>
+<h3 id="4-3-zprint-mono-items-shu-shi-li-hua-xiang">4.3 <code>-Zprint-mono-items</code>：数实例化项</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">rustc</span><span style="color: #A6E3A1;"> --edition</span><span style="color: #FAB387;"> 2021</span><span style="color: #A6E3A1;"> -Zprint-mono-items src/main.rs -o /tmp/x</span></span></code></pre>
+<p>注意两个坑：</p>
+<ul>
+<li>参数是<strong>布尔开关</strong>，不是 <code>=lazy</code>（旧语法已废弃，会直接报 <code>incorrect value</code>）。</li>
+<li>输出走 <strong>stdout</strong>，不是 stderr。</li>
+</ul>
+<p>一个 6 行的程序：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> sum</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">ops</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">Add</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">Output</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> +</span><span style="color: #F9E2AF;font-style: italic;"> Copy</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">a</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> b</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    a</span><span style="color: #94E2D5;"> +</span><span> b</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> sum</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #CBA6F7;">i32</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #CBA6F7;">i32</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> sum</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #CBA6F7;">i64</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #CBA6F7;">i64</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> sum</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #CBA6F7;">u32</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #CBA6F7;">u32</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> sum</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> sum</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">5</span><span style="color: #CBA6F7;">f32</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">5</span><span style="color: #CBA6F7;">f32</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> sum</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">5</span><span style="color: #CBA6F7;">f64</span><span style="color: #9399B2;">,</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;">.</span><span style="color: #FAB387;">5</span><span style="color: #CBA6F7;">f64</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>输出里自己写的 <code>sum</code> 就有 6 份：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>MONO_ITEM fn sum::&lt;f32&gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]</span></span>
+<span class="giallo-l"><span>MONO_ITEM fn sum::&lt;f64&gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]</span></span>
+<span class="giallo-l"><span>MONO_ITEM fn sum::&lt;i32&gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]</span></span>
+<span class="giallo-l"><span>MONO_ITEM fn sum::&lt;i64&gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]</span></span>
+<span class="giallo-l"><span>MONO_ITEM fn sum::&lt;u32&gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]</span></span>
+<span class="giallo-l"><span>MONO_ITEM fn sum::&lt;u64&gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]</span></span></code></pre>
+<p>再加上 <code>std::ops::Add</code> 的 6 个实现、<code>fmt</code> 的一堆实例化，总共 <strong>27 个 mono item</strong>——一个 6 行程序。</p>
+<p>这就是「一个中型项目几万个实例化项」的来源：数量是<strong>乘法式</strong>涨上去的。</p>
+<h3 id="4-4-cargo-llvm-lines-kan-na-duan-dai-ma-gong-xian-liao-ir">4.4 <code>cargo llvm-lines</code>：看哪段代码贡献了 IR</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="shellscript"><span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">cargo</span><span style="color: #A6E3A1;"> install cargo-llvm-lines</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">cargo</span><span style="color: #A6E3A1;"> llvm-lines</span><span style="color: #94E2D5;"> |</span><span style="color: #89B4FA;font-style: italic;"> head</span><span style="color: #A6E3A1;"> -20</span></span></code></pre>
+<p>它按<strong>源码行</strong>统计生成的 LLVM IR 行数，输出类似：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>  Lines          Copies        Function name</span></span>
+<span class="giallo-l"><span>  -----          ------        -------------</span></span>
+<span class="giallo-l"><span>  12345 (100%)   100 (100%)    (TOTAL)</span></span>
+<span class="giallo-l"><span>   2100 (17.0%)   12 (12.0%)   core::fmt::impls</span></span>
+<span class="giallo-l"><span>    980 (7.9%)    20 (20.0%)  serde::de::impls</span></span>
+<span class="giallo-l"><span>    720 (5.8%)     8 (8.0%)   &lt;alloc::vec::Vec&lt;T&gt; as ...&gt;</span></span></code></pre>
+<p><code>Copies</code> 那一列最关键：它告诉你某个函数被实例化了几份。<strong>行数 × 份数 = 真正的后端工作量。</strong></p>
+<p>通常 <code>serde</code>、<code>fmt</code>、<code>core</code> 会排在最前面——这也是为什么「减少 derive」和「少用巨型泛型」在高行数项目里有用。</p>
+<h3 id="4-5-pan-duan-liu-cheng">4.5 判断流程</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>cargo build --timings</span></span>
+<span class="giallo-l"><span>        │</span></span>
+<span class="giallo-l"><span>        ├── 依赖 crate 多、关键路径长  → 减依赖 / 拆 workspace / sccache</span></span>
+<span class="giallo-l"><span>        │</span></span>
+<span class="giallo-l"><span>        └── 自己的 crate 特别慢</span></span>
+<span class="giallo-l"><span>                  │</span></span>
+<span class="giallo-l"><span>                  ├── -Ztime-passes 看 type_check_crate 高？ → 泛型/trait 太重</span></span>
+<span class="giallo-l"><span>                  ├── -Ztime-passes 看 LLVM_passes 高？     → 用 llvm-lines 找大头</span></span>
+<span class="giallo-l"><span>                  └── -Ztime-passes 看 run_linker 高？      → 换 mold / lld</span></span></code></pre>
+<p>先定位到「哪一层」，再谈优化，比背结论有效得多。</p>
+<hr />
+<h2 id="5-zhi-jie-hui-da">5. 直接回答</h2>
+<blockquote>
+<p><strong>"Rust 编译慢是因为类型推断 + 宏展开 + 编译依赖吗？"</strong></p>
+<p><strong>部分对，但更准确的分层是：</strong></p>
+<ol>
+<li><strong>后端（LLVM codegen + 优化）</strong>，而<strong>单态化把送进后端的代码量放大 N 倍</strong> —— 这两者要合起来看，不能拆开排第一第二</li>
+<li><strong>依赖 DAG</strong>：几百个 crate 各自完整编译，关键路径串行，固定开销累加</li>
+<li><strong>前端类型检查</strong>：trait resolution + lifetime 约束求解，泛型越重越明显</li>
+<li><strong>宏展开</strong>：proc macro 有加载与转换开销，但属小头</li>
+<li><strong>链接</strong>：只开 LTO 时才是显著项</li>
+</ol>
+<p>"类型推断"这个说法不准确——Rust 不是"推断慢"，而是<strong>实例化之后每个函数体都要完整编译 + 优化</strong>。Go 用 GC shape stenciling 让多数类型共享同一份实例，Rust 用完全单态化换零运行时开销，代价自然落在编译期。</p>
+</blockquote>
+<hr />
+<h2 id="6-zong-jie">6. 总结</h2>
+<blockquote>
+<p>Rust 编译慢不是单一原因：<strong>完全单态化把代码量放大 N 倍，再叠加 LLVM 后端的完整优化管线</strong>，这是最大的一块；其次是 <strong>200-500 个 crate 的构建 DAG</strong>——每个都要完整编译，关键路径还只能串行；再者是 <strong>trait + lifetime 的约束求解</strong>，比 Go 的 interface 匹配贵得多；proc macro 和链接（开 LTO 时）属于次要项。Go 快在结构上：GC shape stenciling 让泛型实例数量有限、优化策略固定且轻量、以 package 为编译单元且并行充分。想真正定位瓶颈，别靠记忆排序，用 <code>cargo build --timings</code>、<code>-Zself-profile</code>、<code>cargo llvm-lines</code> 实测。</p>
+</blockquote>
+<hr />
+
+    </div>
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/02-rust-lifetime/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Rust 生命周期到底在「确保」什么</span></a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/00-generics-go-rust-cpp/"><span class="button__text">深入理解 Go / Rust / C++ 泛型</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                        </span>
+                    </div>
+            </div>
+        </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 2026 Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

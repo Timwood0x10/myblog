@@ -91,8 +91,8 @@
 &lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;组件&lt;/th&gt;&lt;th&gt;数据结构&lt;/th&gt;&lt;th&gt;信任模型&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
 &lt;tr&gt;&lt;td&gt;ThreadLocalTracker&lt;/td&gt;&lt;td&gt;SegQueue + DashMap + AtomicU64&lt;/td&gt;&lt;td&gt;信任自己：单线程独占，零竞争&lt;/td&gt;&lt;/tr&gt;
 &lt;tr&gt;&lt;td&gt;MemoryTracker (core)&lt;/td&gt;&lt;td&gt;DashMap + AtomicU64&lt;/td&gt;&lt;td&gt;半信任：多线程读写，但 key 天然去重&lt;/td&gt;&lt;/tr&gt;
-&lt;tr&gt;&lt;td&gt;AsyncTracker&lt;/td&gt;&lt;td&gt;Arc&amp;lt;Mutex&lt;HashMap&gt;&amp;gt;&lt;/td&gt;&lt;td&gt;不信任：多 tokio worker 线程共享&lt;/td&gt;&lt;/tr&gt;
-&lt;tr&gt;&lt;td&gt;GlobalTracker&lt;/td&gt;&lt;td&gt;RwLock&amp;lt;Option&lt;Arc&gt;&amp;gt;&lt;/td&gt;&lt;td&gt;极不信任：全局单例，写少读多&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;AsyncTracker&lt;/td&gt;&lt;td&gt;&lt;code&gt;Arc&amp;lt;Mutex&amp;lt;HashMap&amp;gt;&amp;gt;&lt;/code&gt;&lt;/td&gt;&lt;td&gt;不信任：多 tokio worker 线程共享&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;GlobalTracker&lt;/td&gt;&lt;td&gt;&lt;code&gt;RwLock&amp;lt;Option&amp;lt;Arc&amp;gt;&amp;gt;&lt;/code&gt;&lt;/td&gt;&lt;td&gt;极不信任：全局单例，写少读多&lt;/td&gt;&lt;/tr&gt;
 &lt;/tbody&gt;&lt;/table&gt;
 &lt;p&gt;信任层级从上到下递减，同步开销从上到下递增。这是正确的：你信任越多，你付出的同步代价越少。&lt;/p&gt;
 &lt;p&gt;&lt;code&gt;RwLock&lt;/code&gt; 在 GlobalTracker 里的选择尤其精确：全局单例在初始化时写入一次，之后只被读取。&lt;code&gt;RwLock&lt;/code&gt; 允许多个读者并发，写者独占——完美匹配&quot;写少读多&quot;的模式。如果用 &lt;code&gt;Mutex&lt;/code&gt;，读者之间也会互斥，白白浪费性能。&lt;/p&gt;

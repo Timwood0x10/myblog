@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Rust 未初始化内存与 MaybeUninit | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="分配内存不等于构造对象。从 MaybeUninit、ptr::write、部分初始化与 panic 安全出发，说明 Vec 的 len/capacity 为何必须分开，以及 FFI 缓冲区该怎样转成 Rust 值。">
+    <meta property="og:description" content="分配内存不等于构造对象。从 MaybeUninit、ptr::write、部分初始化与 panic 安全出发，说明 Vec 的 len/capacity 为何必须分开，以及 FFI 缓冲区该怎样转成 Rust 值。">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/06-rust-uninit-memory/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="分配内存不等于构造对象。从 MaybeUninit、ptr::write、部分初始化与 panic 安全出发，说明 Vec 的 len/capacity 为何必须分开，以及 FFI 缓冲区该怎样转成 Rust 值。">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/06-rust-uninit-memory/">
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <nav class="menu">
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/06-rust-uninit-memory/">Rust 未初始化内存与 MaybeUninit</a></h1>
+    <div class="post-meta-inline">
+        <span class="post-date">2026-10-25</span>
+    </div>
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/maybeuninit/">#MaybeUninit</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory/">#Memory</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/unsafe/">#Unsafe</a></span>
+    <div class="post-content">
+        <p>核心问题只有一个：</p>
+<blockquote>
+<p>如果我想先申请一块内存、稍后再把值写进去，Rust 如何保证这块内存不会被错误读取、重复析构或泄漏？</p>
+</blockquote>
+<p>这个问题贯穿 <code>Vec&lt;T&gt;</code>、内存池、对象池、FFI、零拷贝与手动内存管理。</p>
+<p>按以下顺序展开：</p>
+<ol>
+<li>什么是未初始化内存？为什么不能直接读？</li>
+<li><code>MaybeUninit&lt;T&gt;</code> 解决了什么问题？</li>
+<li><code>ptr::write()</code> 与普通赋值的区别？</li>
+<li>如何正确实现部分初始化的数组？</li>
+<li>初始化中途 panic 怎么办？</li>
+<li><code>Vec&lt;T&gt;</code> 为什么必须同时维护 <code>len</code> 与 <code>capacity</code>？</li>
+<li>这些知识如何用于 FFI？</li>
+</ol>
+<p>参考资料：<a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/uninitialized.html">Rustonomicon: Uninitialized Memory</a>。</p>
+<hr />
+<h2 id="yi-shen-me-shi-wei-chu-shi-hua-nei-cun">一、什么是未初始化内存？</h2>
+<p>普通变量：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> x</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> i32</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 42</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">x</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>状态很明确：分配了存储空间、空间里有一个合法的 <code>i32</code>、可以安全读取。</p>
+<p>但如果先申请空间、之后再初始化：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 伪代码：不是合法的 Rust</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> x</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> i32</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">x</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p>Rust 会拒绝编译。这不只是编译器在限制你，背后有一个核心概念：</p>
+<p><strong>内存中存在一些字节，不代表这些字节已经构成一个合法的 Rust 值。</strong></p>
+<p>某些整数类型的任意位模式都是合法值，但并非所有类型如此：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> x</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #94E2D5;"> =</span><span style="color: #F38BA8;"> true</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p><code>bool</code> 只有两个合法表示（<code>false = 0</code>、<code>true = 1</code>），其他位模式不能作为合法 <code>bool</code> 使用。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> x</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #CBA6F7;">i32</span><span style="color: #94E2D5;"> = &amp;</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p>引用更是如此：随便一组字节不能保证构成有效引用。</p>
+<p>所以底层内存操作必须区分两种状态：</p>
+<table><thead><tr><th>状态</th><th>含义</th></tr></thead><tbody>
+<tr><td>已分配内存</td><td>有一块可以存储数据的空间</td></tr>
+<tr><td>已初始化的 <code>T</code></td><td>这块空间中存在一个合法的 <code>T</code> 值</td></tr>
+</tbody></table>
+<h3 id="1-1-yi-ge-di-ceng-chang-jing">1.1 一个底层场景</h3>
+<p>要分配能容纳 100 个 <code>u64</code> 的内存，逻辑上是两个阶段：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>内存分配</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>┌────┬────┬────┬────┬────┬────┐</span></span>
+<span class="giallo-l"><span>│ ?? │ ?? │ ?? │ ?? │ ?? │ ?? │ ... 100 个槽位</span></span>
+<span class="giallo-l"><span>└────┴────┴────┴────┴────┴────┘</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>逐个初始化</span></span>
+<span class="giallo-l"><span>    ↓</span></span>
+<span class="giallo-l"><span>┌────┬────┬────┬────┬────┬────┐</span></span>
+<span class="giallo-l"><span>│ 10 │ 20 │ 30 │ 40 │ 50 │ 60 │ ...</span></span>
+<span class="giallo-l"><span>└────┴────┴────┴────┴────┴────┘</span></span></code></pre>
+<p>第一阶段只需要内存，不需要已经构造好的 <code>u64</code>。这在 C/C++/Rust 的底层容器里都很常见。</p>
+<p>Rust 的额外要求是：<strong>一个位置在被初始化之前，不能当作有效的 <code>T</code> 来读取、传递或析构。</strong></p>
+<p>这就引出了 <code>MaybeUninit&lt;T&gt;</code>。</p>
+<hr />
+<h2 id="er-maybeuninit-t-shi-shen-me">二、<code>MaybeUninit&lt;T&gt;</code> 是什么</h2>
+<p><code>MaybeUninit&lt;T&gt;</code> 表示：</p>
+<blockquote>
+<p>这里可能存在一个有效的 <code>T</code>，也可能还没有初始化。</p>
+</blockquote>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MaybeUninit</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> slot</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> MaybeUninit</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u32</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> MaybeUninit</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">uninit</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span>    slot</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">write</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">42</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> unsafe</span><span style="color: #9399B2;"> {</span><span> slot</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">assume_init</span><span style="color: #9399B2;">() };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">value</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>MaybeUninit::uninit()</span></span>
+<span class="giallo-l"><span>          │</span></span>
+<span class="giallo-l"><span>          ▼</span></span>
+<span class="giallo-l"><span>┌────────────────────┐</span></span>
+<span class="giallo-l"><span>│ 未初始化的存储空间 │</span></span>
+<span class="giallo-l"><span>└────────────────────┘</span></span>
+<span class="giallo-l"><span>          │</span></span>
+<span class="giallo-l"><span>          │ write(42)</span></span>
+<span class="giallo-l"><span>          ▼</span></span>
+<span class="giallo-l"><span>┌────────────────────┐</span></span>
+<span class="giallo-l"><span>│ 有效的 u32 值：42  │</span></span>
+<span class="giallo-l"><span>└────────────────────┘</span></span>
+<span class="giallo-l"><span>          │</span></span>
+<span class="giallo-l"><span>          │ assume_init()</span></span>
+<span class="giallo-l"><span>          ▼</span></span>
+<span class="giallo-l"><span>┌────────────────────┐</span></span>
+<span class="giallo-l"><span>│ 普通的 u32：42     │</span></span>
+<span class="giallo-l"><span>└────────────────────┘</span></span></code></pre>
+<p>注意 <code>MaybeUninit::uninit()</code> 本身是<strong>安全</strong>的：我们没有声称内存里已经存在有效的 <code>u32</code>。</p>
+<p>需要 unsafe 的是 <code>assume_init()</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MaybeUninit</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> slot</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> MaybeUninit</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u32</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">uninit</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 错误示范：不要这样做</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> unsafe</span><span style="color: #9399B2;"> {</span><span> slot</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">assume_init</span><span style="color: #9399B2;">() };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">value</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>因为编译器无法仅凭这次调用判断你是否真的完成了初始化。</p>
+<p><code>unsafe</code> 不会替你初始化内存，也不会检查内存里是否真的有合法 <code>u32</code>——它只是允许你执行一个需要由你证明安全的操作。</p>
+<p><code>assume_init()</code> 的含义不是「帮我初始化」，而是「<strong>我保证</strong>这里已经初始化好了」。</p>
+<hr />
+<h2 id="san-wei-shen-me-bu-neng-zhi-jie-yong-t">三、为什么不能直接用 T</h2>
+<p>需求：构造一个 4 元素数组，元素靠运行时计算得到。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> calculate</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">index</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #CBA6F7;"> u64</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    (</span><span>index</span><span style="color: #CBA6F7;"> as u64</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 100</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> values</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    calculate</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">0</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    calculate</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">1</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    calculate</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">2</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    calculate</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">3</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">];</span></span></code></pre>
+<p>这要求在构造数组时就能提供全部元素。如果数组很大、元素要逐个从外部接口取，或者想避免先造一批无用的默认值，就需要手动管理初始化过程。</p>
+<p>典型场景：FFI 接口要求调用者提供缓冲区，由 C 函数填入数据——我们希望直接写进目标内存，而不是先造默认值再复制。</p>
+<h3 id="3-1-wei-shen-me-bu-neng-yong-mo-ren-zhi">3.1 为什么不能用默认值</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> values</span><span style="color: #94E2D5;"> =</span><span style="color: #9399B2;"> [</span><span style="color: #FAB387;">0</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">;</span><span style="color: #FAB387;"> 100</span><span style="color: #9399B2;">];</span></span></code></pre>
+<p>对 <code>u64</code> 通常没问题。但如果 <code>T</code> 是复杂对象：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> ExpensiveObject</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    data</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u8</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>为了创建 100 个对象，可能要先构造 100 个空 <code>Vec</code> 再逐个替换，产生额外的构造和析构开销。而且 <code>T</code> 甚至可能没有 <code>Default</code> 实现。</p>
+<p>所以需要一种表示：<strong>有存储空间，但还没有构造出 <code>T</code></strong>。这就是 <code>MaybeUninit&lt;T&gt;</code> 的核心用途。</p>
+<p>优化是否值得取决于实际类型和场景，不能简单认为 <code>MaybeUninit</code> 一定更快。</p>
+<hr />
+<h2 id="si-ptr-write-yu-pu-tong-fu-zhi-de-qu-bie">四、ptr::write 与普通赋值的区别</h2>
+<p>普通赋值：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> x</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>x</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;world&quot;</span><span style="color: #9399B2;">);</span></span></code></pre>
+<p><code>x</code> 已经持有一个有效的 <code>String</code>，赋值时旧值需要被正确处理，否则它拥有的堆内存会泄漏。</p>
+<p>但<strong>如果目标内存尚未初始化，就不能把它当成已有的 <code>T</code> 来赋值</strong>——普通赋值可能需要先处理目标位置上的旧值，而这对未初始化内存是不正确的。</p>
+<p><code>std::ptr::write(dst, value)</code> 会把 <code>value</code> 写入目标地址，<strong>不会先读取或析构目标地址原先的内容</strong>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MaybeUninit</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span>ptr</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> slot</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> MaybeUninit</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">uninit</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">        ptr</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">write</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span>            slot</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">as_mut_ptr</span><span style="color: #9399B2;">(),</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">            String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        );</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> unsafe</span><span style="color: #9399B2;"> {</span><span> slot</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">assume_init</span><span style="color: #9399B2;">() };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">value</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<ul>
+<li><code>slot.as_mut_ptr()</code> 拿到用于存储 <code>String</code> 的原始指针；</li>
+<li><code>ptr::write(...)</code> 把一个新构造的 <code>String</code> 写入目标位置；</li>
+<li><code>slot.assume_init()</code> 在你能证明已初始化时，把它转成普通的 <code>String</code>。</li>
+</ul>
+<h3 id="4-1-wei-shen-me-bu-hui-xi-gou-jiu-zhi">4.1 为什么不会析构旧值</h3>
+<p>因为它面向的核心场景就是「向尚未初始化的内存写入新值」。如果写入前先尝试析构旧值，就等于要求调用者先提供一个有效的旧对象，与需求冲突。</p>
+<p>但反过来说：<strong>如果目标位置原本已经持有有效值，<code>ptr::write</code> 也不会替你析构它。</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;old&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">    std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">ptr</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">write</span><span style="color: #9399B2;">(</span></span>
+<span class="giallo-l"><span style="color: #94E2D5;">        &amp;</span><span style="color: #CBA6F7;">mut</span><span> value</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">        String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;new&quot;</span><span style="color: #9399B2;">),</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    );</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这会覆盖原来的 <code>String</code>，但不会析构 <code>"old"</code>——旧值拥有的资源泄漏了。</p>
+<p>因此：</p>
+<ul>
+<li>目标位置未初始化：<code>ptr::write</code> 适合。</li>
+<li>目标位置已有有效值：必须先考虑旧值的生命周期与资源释放。</li>
+<li>不能确定目标状态：不要随意用原始指针写入。</li>
+</ul>
+<p>一句话：<code>ptr::write</code> 负责写入，不负责管理旧对象的生命周期。</p>
+<hr />
+<h2 id="wu-zhen-zheng-de-nan-dian-bu-fen-chu-shi-hua">五、真正的难点：部分初始化</h2>
+<p>现在不是 1 个对象，而是 100 个：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>第 0 个元素：初始化成功</span></span>
+<span class="giallo-l"><span>第 1 个元素：初始化成功</span></span>
+<span class="giallo-l"><span>第 2 个元素：初始化成功</span></span>
+<span class="giallo-l"><span>第 3 个元素：初始化失败</span></span>
+<span class="giallo-l"><span>...</span></span></code></pre>
+<p>这时怎么办？这才是 <code>MaybeUninit&lt;T&gt;</code> 真正困难的地方。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> RawBuffer</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> const</span><span style="color: #FAB387;"> N</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    slots</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> [</span><span style="color: #F9E2AF;font-style: italic;">MaybeUninit</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">;</span><span style="color: #F9E2AF;font-style: italic;"> N</span><span style="color: #9399B2;">],</span></span>
+<span class="giallo-l"><span>    initialized</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<ul>
+<li><code>slots</code> 是存储空间；</li>
+<li><code>initialized</code> 表示前多少个元素已经成功初始化。</li>
+</ul>
+<p>若 <code>initialized = 3</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>索引：     0        1        2        3        4</span></span>
+<span class="giallo-l"><span>状态：   已初始化  已初始化  已初始化  未初始化  未初始化</span></span></code></pre>
+<p>这建立了一个关键不变量：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>0 ≤ initialized ≤ N</span></span>
+<span class="giallo-l"><span>∀ i ∈ [0, initialized): slots[i] 已初始化</span></span></code></pre>
+<p>前 <code>initialized</code> 个元素全部有效，后面的可能没有初始化。</p>
+<p>这个计数不是简单的辅助字段——<strong>它决定了析构时哪些位置可以被当作有效的 <code>T</code></strong>。</p>
+<h3 id="5-1-wei-shen-me-bu-neng-xi-gou-quan-bu-yuan-su">5.1 为什么不能析构全部元素</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>slots       = [有效 T, 有效 T, 有效 T, 未初始化, 未初始化]</span></span>
+<span class="giallo-l"><span>initialized = 3</span></span></code></pre>
+<p>如果把 5 个槽位都当作 <code>T</code> 析构，后两个槽位并不包含有效 <code>T</code>，违反了 Rust 对有效值的要求。</p>
+<p>正确清理逻辑：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>析构 slots[2]</span></span>
+<span class="giallo-l"><span>析构 slots[1]</span></span>
+<span class="giallo-l"><span>析构 slots[0]</span></span></code></pre>
+<p>只清理已经初始化的元素。如果析构顺序有依赖，还要认真设计顺序；真实实现还要处理析构函数自身 panic 的情况。</p>
+<hr />
+<h2 id="liu-yi-ge-ke-yun-xing-de-bu-fen-chu-shi-hua-shi-li">六、一个可运行的部分初始化示例</h2>
+<p>先不实现完整 <code>Vec&lt;T&gt;</code>，而是观察如何保证初始化状态正确：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MaybeUninit</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> build_array</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #9399B2;"> [</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">;</span><span style="color: #FAB387;"> 4</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> slots</span><span style="color: #94E2D5;">:</span><span style="color: #9399B2;"> [</span><span style="color: #F9E2AF;font-style: italic;">MaybeUninit</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u64</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;">;</span><span style="color: #FAB387;"> 4</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;"> =</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        [</span><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> {</span><span style="color: #F9E2AF;font-style: italic;"> MaybeUninit</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">uninit</span><span style="color: #9399B2;">() };</span><span style="color: #FAB387;"> 4</span><span style="color: #9399B2;">];</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    for</span><span> i</span><span style="color: #CBA6F7;"> in</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;">..</span><span style="color: #FAB387;">4</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>        slots</span><span style="color: #9399B2;">[</span><span>i</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">write</span><span style="color: #9399B2;">((</span><span>i</span><span style="color: #CBA6F7;"> as u64</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // SAFETY: 上面的循环已经初始化了全部 4 个元素，</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 且 u64 是 Copy 类型，按位读出后源位置不会被再次析构。</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        (</span><span style="color: #94E2D5;">&amp;</span><span>slots</span><span style="color: #CBA6F7;"> as</span><span style="color: #94E2D5;"> *</span><span style="color: #CBA6F7;">const</span><span> _</span><span style="color: #CBA6F7;"> as</span><span style="color: #94E2D5;"> *</span><span style="color: #CBA6F7;">const</span><span style="color: #9399B2;"> [</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">;</span><span style="color: #FAB387;"> 4</span><span style="color: #9399B2;">])</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">read</span><span style="color: #9399B2;">()</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">:?</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #89B4FA;font-style: italic;"> build_array</span><span style="color: #9399B2;">());</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>输出：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>[10, 20, 30, 40]</span></span></code></pre>
+<p><code>[const { MaybeUninit::uninit() }; 4]</code> 是 inline const 语法（Rust 1.79 起稳定），用来给非 <code>Copy</code> 的 <code>MaybeUninit&lt;T&gt;</code> 批量初始化数组。</p>
+<p>关于最后那次指针转换，有两点必须说清：</p>
+<ol>
+<li><strong>它只在 <code>T: Copy</code> 时安全</strong>。<code>read()</code> 是复制而非移动——对 <code>String</code> 这类拥有资源的类型，<code>slots</code> 里的值之后仍会被析构，导致双重释放。</li>
+<li>这种手工转换容易出错，不是首选写法。如果元素是逐个算出来的，用安全 API 更简单：</li>
+</ol>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> build_array</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #9399B2;"> [</span><span style="color: #CBA6F7;">u64</span><span style="color: #9399B2;">;</span><span style="color: #FAB387;"> 4</span><span style="color: #9399B2;">] {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">    std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">array</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from_fn</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">|</span><span>i</span><span style="color: #94E2D5;">|</span><span style="color: #9399B2;"> (</span><span>i</span><span style="color: #CBA6F7;"> as u64</span><span style="color: #94E2D5;"> +</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> *</span><span style="color: #FAB387;"> 10</span><span style="color: #9399B2;">)</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>MaybeUninit::array_assume_init</code> 能做到同样的事，但它<strong>至今仍是 nightly API</strong>（<code>maybe_uninit_array_assume_init</code>），不能用于稳定 Rust。</p>
+<p>重点不是记住某种转换写法，而是理解：<strong>只有全部元素都有效时，才能把整个数组视为普通的 <code>[T; N]</code>。</strong></p>
+<hr />
+<h2 id="qi-chu-shi-hua-zhong-tu-panic-zen-me-ban">七、初始化中途 panic 怎么办</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> i</span><span style="color: #CBA6F7;"> in</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;">..</span><span style="color: #FAB387;">100</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    slots</span><span style="color: #9399B2;">[</span><span>i</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">write</span><span style="color: #9399B2;">(</span><span style="color: #89B4FA;font-style: italic;">create_object</span><span style="color: #9399B2;">(</span><span>i</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>假设 <code>create_object(57)</code> 发生 panic：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>索引 0~56：已初始化</span></span>
+<span class="giallo-l"><span>索引 57~99：没有初始化</span></span></code></pre>
+<p>如果这些对象持有文件句柄、堆内存等资源，必须保证已初始化的对象得到清理，否则泄漏；但又不能析构整个数组，因为剩余元素没初始化。</p>
+<p>所以底层实现必须维护初始化进度：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> initialized</span><span style="color: #94E2D5;"> =</span><span style="color: #FAB387;"> 0</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> i</span><span style="color: #CBA6F7;"> in</span><span style="color: #FAB387;"> 0</span><span style="color: #94E2D5;">..</span><span style="color: #F9E2AF;font-style: italic;">N</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> create_object</span><span style="color: #9399B2;">(</span><span>i</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>    slots</span><span style="color: #9399B2;">[</span><span>i</span><span style="color: #9399B2;">]</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">write</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span>    initialized</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>顺序很重要：</p>
+<ol>
+<li>先成功构造对象。</li>
+<li>写入目标槽位。</li>
+<li>确认写入成功。</li>
+<li>更新已初始化数量。</li>
+</ol>
+<p>如果第 57 个对象构造时 panic，计数仍是 57，清理代码就知道只有前 57 个元素可以被当作 <code>T</code> 处理。</p>
+<p>但只有计数器还不够：还需要一个<strong>清理机制</strong>，例如一个持有 <code>slots</code> 与 <code>initialized</code> 的 guard，在栈展开时析构已初始化的元素。如果清理本身再次 panic，行为会更复杂。</p>
+<p>这就是 <code>Vec&lt;T&gt;</code> 底层实现不是「分配内存、逐个写入」这么简单的原因——它必须处理部分初始化、资源释放、所有权转移和异常路径。</p>
+<hr />
+<h2 id="ba-yu-vec-t-de-guan-xi">八、与 <code>Vec&lt;T&gt;</code> 的关系</h2>
+<p>概念上的结构：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> VecLike</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">mut</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    len</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    capacity</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>（简化模型，不是标准库真实定义。）</p>
+<table><thead><tr><th>字段</th><th>含义</th></tr></thead><tbody>
+<tr><td><code>ptr</code></td><td>指向元素存储空间</td></tr>
+<tr><td><code>len</code></td><td>已经初始化、且属于本容器的元素数量</td></tr>
+<tr><td><code>capacity</code></td><td>当前分配空间能容纳的元素数量</td></tr>
+</tbody></table>
+<p>设 <code>capacity = 8</code>、<code>len = 3</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>内存分配空间</span></span>
+<span class="giallo-l"><span>┌────┬────┬────┬────┬────┬────┬────┬────┐</span></span>
+<span class="giallo-l"><span>│ T0 │ T1 │ T2 │ ?? │ ?? │ ?? │ ?? │ ?? │</span></span>
+<span class="giallo-l"><span>└────┴────┴────┴────┴────┴────┴────┴────┘</span></span>
+<span class="giallo-l"><span>  └─────────┘</span></span>
+<span class="giallo-l"><span>     len = 3</span></span>
+<span class="giallo-l"><span>  └───────────────────────────────────┘</span></span>
+<span class="giallo-l"><span>                capacity = 8</span></span></code></pre>
+<ul>
+<li><code>len</code> 以内是已经初始化的有效值；</li>
+<li><code>len</code> 到 <code>capacity</code> 之间属于分配区域，但不一定包含有效的 <code>T</code>。</li>
+</ul>
+<p>所以 <code>len()</code> 不是「分配了多少内存」，而是「当前拥有多少个有效元素」；<code>capacity()</code> 才是「不重新分配还能再放几个」。</p>
+<h3 id="8-1-push-de-he-xin-guo-cheng">8.1 push 的核心过程</h3>
+<p>从 <code>len = 3</code>、<code>capacity = 8</code> 开始，容量足够时：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>1. 找到第 3 个元素的位置</span></span>
+<span class="giallo-l"><span>             ↓</span></span>
+<span class="giallo-l"><span>2. 将 value 写入该位置</span></span>
+<span class="giallo-l"><span>             ↓</span></span>
+<span class="giallo-l"><span>3. 确认新元素已初始化</span></span>
+<span class="giallo-l"><span>             ↓</span></span>
+<span class="giallo-l"><span>4. 将 len 从 3 更新为 4</span></span></code></pre>
+<p><strong>必须先写入、再增加 <code>len</code>。</strong> 因为 <code>len</code> 是容器对外承诺的有效元素数量，先加 <code>len</code> 会让容器声称存在一个尚未初始化的元素，直接破坏不变量。</p>
+<h3 id="8-2-pop-de-he-xin-guo-cheng">8.2 pop 的核心过程</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>1. 检查 len 是否为 0</span></span>
+<span class="giallo-l"><span>             ↓</span></span>
+<span class="giallo-l"><span>2. 确定最后一个有效元素的位置</span></span>
+<span class="giallo-l"><span>             ↓</span></span>
+<span class="giallo-l"><span>3. 将该元素的所有权转移给调用者</span></span>
+<span class="giallo-l"><span>             ↓</span></span>
+<span class="giallo-l"><span>4. 将 len 从 4 更新为 3</span></span></code></pre>
+<p>关键在于：最后一个元素不能既由 <code>Vec&lt;T&gt;</code> 拥有、又由返回的 <code>value</code> 拥有。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    data</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>所有权转移正确时，<code>pop()</code> 返回的 <code>Resource</code> 由调用者负责析构，<code>Vec&lt;T&gt;</code> 不会再析构那个已移出的对象。</p>
+<p>这也是 <code>ptr::read</code>、<code>ptr::write</code> 和 <code>MaybeUninit&lt;T&gt;</code> 必须放在<strong>所有权语义</strong>里一起理解的原因。</p>
+<hr />
+<h2 id="jiu-drop-yu-maybeuninit-de-jie-he">九、Drop 与 MaybeUninit 的结合</h2>
+<p>持有原始分配内存的容器，析构逻辑不能写成：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 错误示意：不能这样实现真实容器</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    drop_all_elements_in_allocation</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>因为整个分配区域里可能只有一部分元素已初始化。</p>
+<p>正确的清理过程：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>读取 len</span></span>
+<span class="giallo-l"><span>   ↓</span></span>
+<span class="giallo-l"><span>析构已初始化的元素</span></span>
+<span class="giallo-l"><span>   ↓</span></span>
+<span class="giallo-l"><span>释放底层分配</span></span></code></pre>
+<p>最关键的一条：<strong>析构的元素数量应等于实际初始化且由容器拥有的元素数量，而不是容量。</strong></p>
+<p>这也说明了 <code>MaybeUninit&lt;T&gt;</code> 与 Drop Check 的关系：</p>
+<ul>
+<li><code>MaybeUninit&lt;T&gt;</code> 用来表达某个位置尚未构造出 <code>T</code>；</li>
+<li>初始化状态记录哪些位置已经拥有有效的 <code>T</code>；</li>
+<li><code>Drop</code> 只能处理真正有效且由当前容器拥有的对象；</li>
+<li><code>PhantomData&lt;T&gt;</code> 可以进一步表达容器与 <code>T</code> 在类型系统层面的关系。</li>
+</ul>
+<hr />
+<h2 id="shi-ying-yong-dao-ffi-c-fen-pei-de-nei-cun-neng-zhi-jie-dang-rust-dui-xiang-ma">十、应用到 FFI：C 分配的内存能直接当 Rust 对象吗</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="c"><span class="giallo-l"><span style="color: #CBA6F7;">void</span><span style="color: #89B4FA;font-style: italic;"> fill_buffer</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">uint32_t</span><span style="color: #94E2D5;"> *</span><span style="color: #EBA0AC;font-style: italic;">buffer</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> size_t</span><span style="color: #EBA0AC;font-style: italic;"> len</span><span style="color: #9399B2;">);</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">unsafe extern</span><span style="color: #A6E3A1;"> &quot;C&quot;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> fill_buffer</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">buffer</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">mut u32</span><span style="color: #9399B2;">,</span><span style="color: #EBA0AC;"> len</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>分配一段缓冲区交给 C 写入时，必须区分三个问题。</p>
+<p><strong>问题一：内存是否已经分配？</strong></p>
+<p>有存储空间，不代表其中有有效的 <code>u32</code> 值。</p>
+<p><strong>问题二：C 函数是否真的初始化了所有元素？</strong></p>
+<p>如果 C 只写了前 10 个，其余位置不能自动视为已初始化。</p>
+<p><strong>问题三：C 函数的行为是否符合约定？</strong></p>
+<ul>
+<li>是否会写出缓冲区边界？</li>
+<li>是否真的初始化了约定数量的元素？</li>
+<li>是否会保留指针、在函数返回后继续使用？</li>
+<li>是否会在其他线程访问缓冲区？</li>
+</ul>
+<p>这些都属于 FFI 安全契约。Rust 编译器不能自动证明外部 C 函数遵守了约定。</p>
+<p>因此，安全的 FFI 封装必须先明确约束 C 函数的行为，再<strong>根据它实际完成的初始化范围</strong>，把内存转成 Rust 可以安全使用的值。</p>
+<p>不能仅因为 C 函数返回成功，就假定所有内存都已正确初始化——这一点必须由具体接口的契约保证。</p>
+<hr />
+<h2 id="shi-yi-ke-yong-yu-kua-yu-yan-fen-xi-de-wei-du">十一、可用于跨语言分析的维度</h2>
+<p>从内存安全分析器的角度看，<code>MaybeUninit&lt;T&gt;</code> 涉及的问题可以归纳为几个可分析维度：</p>
+<table><thead><tr><th>分析维度</th><th>需要判断的问题</th></tr></thead><tbody>
+<tr><td>初始化状态</td><td>某个内存位置是否已被写入有效值？</td></tr>
+<tr><td>初始化范围</td><td>数组或缓冲区中究竟哪些元素有效？</td></tr>
+<tr><td>所有权</td><td>当前代码是否拥有这些对象的析构责任？</td></tr>
+<tr><td>所有权转移</td><td>对象被移出后，旧容器是否还会析构它？</td></tr>
+<tr><td>析构正确性</td><td>是否可能析构未初始化的内存？</td></tr>
+<tr><td>异常安全</td><td>部分初始化失败后，已构造对象是否得到清理？</td></tr>
+<tr><td>FFI 契约</td><td>外部函数是否初始化了约定的内存区域？</td></tr>
+</tbody></table>
+<p>要区分两种能力：</p>
+<ul>
+<li><strong>静态分析能直接验证的事实</strong>：某条控制流路径上，初始化计数是否可能小于 <code>len</code>；某分支是否可能在初始化之前读取目标位置。</li>
+<li><strong>需要建模的外部契约</strong>：C 函数是否真的写入了全部元素。仅凭 Rust 调用点的类型信息通常无法证明，需要分析外部实现、可信注解或接口契约。</li>
+</ul>
+<p>这也与 Ownership Tracking、Memory Graph 和 FFI 边界分析直接相关。</p>
+<p>但要注意：不能把所有初始化问题都归结为「变量有没有赋值」。对 Rust 来说，<strong>有效值、对象所有权、初始化范围、析构责任</strong>是相互关联但不同的概念。</p>
+<hr />
+<h2 id="shi-er-bi-xu-ji-zhu-de-liu-tiao">十二、必须记住的六条</h2>
+<ol>
+<li><strong>分配内存不等于初始化对象。</strong> 一段内存可以存在，但尚未构造出有效的 <code>T</code>。</li>
+<li><strong><code>MaybeUninit&lt;T&gt;</code> 表达可能尚未初始化的存储空间。</strong> 它允许延迟构造对象，但不会自动管理初始化进度。</li>
+<li><strong><code>assume_init()</code> 是一条安全边界。</strong> 调用者必须保证目标位置已包含有效 <code>T</code>。</li>
+<li><strong><code>ptr::write()</code> 不析构目标位置的旧值。</strong> 它适合向未初始化内存写入；若覆盖已有对象，调用者必须自行处理旧值。</li>
+<li><strong><code>len</code> 与 <code>capacity</code> 语义不同。</strong> <code>len</code> 是有效元素数量，<code>capacity</code> 是可容纳元素数量。</li>
+<li><strong>部分初始化必须有明确的清理策略。</strong> 构造中途失败时，必须知道哪些对象已构造完成、哪些需要析构。</li>
+</ol>
+<hr />
+<h2 id="xia-yi-jie-unwinding-yi-chang-an-quan-yu-yuan-shi-nei-cun-guan-li">下一节：Unwinding、异常安全与原始内存管理</h2>
+<p>接下来最值得深入的三件事：</p>
+<ol>
+<li>Rust 的 panic 为什么会影响底层容器的正确性？</li>
+<li>如何用初始化计数器与 guard，保证部分初始化失败时资源不泄漏？</li>
+<li><code>ptr::read</code>、<code>ptr::write</code>、<code>set_len</code> 与所有权转移之间是什么关系？</li>
+</ol>
+<p>这部分学透，才能系统理解 <code>Vec&lt;T&gt;</code> 的底层操作，而不只是记住几个 unsafe API 的用法。</p>
+
+    </div>
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/07-rust-panic-unwinding/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Rust panic 展开、异常安全与原始内存</span></a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/05-rust-ownership-drop/"><span class="button__text">Rust 所有权、Drop 与 Drop Check</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                        </span>
+                    </div>
+            </div>
+        </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 2026 Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>

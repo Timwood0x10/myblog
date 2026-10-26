@@ -5,8 +5,266 @@
     <link rel="self" type="application/atom+xml" href="https://Timwood0x10.github.io/myblog/tags/performance/atom.xml"/>
     <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog"/>
     <generator uri="https://www.getzola.org/">Zola</generator>
-    <updated>2026-06-22T00:00:00+00:00</updated>
+    <updated>2026-10-25T00:00:00+00:00</updated>
     <id>https://Timwood0x10.github.io/myblog/tags/performance/atom.xml</id>
+    <entry xml:lang="en">
+        <title>Rust 编译慢研究</title>
+        <published>2026-10-25T00:00:00+00:00</published>
+        <updated>2026-10-25T00:00:00+00:00</updated>
+        
+        <author>
+          <name>Unknown</name>
+        </author>
+        
+        <link rel="alternate" type="text/html" href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/01-rust-compile-time/"/>
+        <id>https://Timwood0x10.github.io/myblog/log/Insights-on-PL/01-rust-compile-time/</id>
+        
+        <content type="html" xml:base="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/01-rust-compile-time/">&lt;h2 id=&quot;1-man-zai-na-an-quan-zhong-pai-xu-dan-pai-xu-hui-yin-xiang-mu-er-yi&quot;&gt;1. 慢在哪（按权重排序，但排序会因项目而异）&lt;/h2&gt;
+&lt;blockquote&gt;
+&lt;p&gt;先给结论前提：&lt;strong&gt;不要硬背某个固定排名&lt;/strong&gt;。用 &lt;code&gt;cargo build --timings&lt;/code&gt; 看 crate 级耗时分布，用 &lt;code&gt;-Ztime-passes&lt;/code&gt;（nightly）看 rustc 内部各 phase 占比，用 &lt;code&gt;cargo llvm-lines&lt;/code&gt; 看是哪些代码贡献了 LLVM IR 行数。不同项目（泛型重 / 宏重 / 依赖多）的排序差异很大。具体命令和实测输出在第 4 节。&lt;/p&gt;
+&lt;p&gt;下面是&lt;strong&gt;经验上最常见&lt;/strong&gt;的构成，按&quot;能优化的收益&quot;排序。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;h3 id=&quot;1-monomorphization-fan-xing-shi-li-hua-dai-ma-liang-de-fang-da-qi&quot;&gt;1、Monomorphization（泛型实例化）—— 代码量的放大器&lt;/h3&gt;
+&lt;p&gt;&lt;strong&gt;专有名词&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;名词&lt;/th&gt;&lt;th&gt;含义&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;monomorphization&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;每个泛型 + 具体类型组合 → 生成一份&lt;strong&gt;独立的机器码&lt;/strong&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;type instantiation&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;code&gt;HashMap&amp;lt;String, i32&amp;gt;&lt;/code&gt; 和 &lt;code&gt;HashMap&amp;lt;String, f64&amp;gt;&lt;/code&gt; 是&lt;strong&gt;两份代码&lt;/strong&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;LLVM codegen&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;每个实例化函数都走 LLVM 后端（IR → 机器码），release 下还要跑优化 pass&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;CGU&lt;/strong&gt;（Codegen Unit）&lt;/td&gt;&lt;td&gt;rustc 把实例化结果切成若干代码生成单元，这是 LLVM 并行度的来源（release 默认 16 个）&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;combinatorial explosion&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;嵌套泛型：&lt;code&gt;Vec&amp;lt;HashSet&amp;lt;Box&amp;lt;dyn Iterator&amp;lt;Item = T&amp;gt;&amp;gt;&amp;gt;&amp;gt;&lt;/code&gt; → 每层都展开&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;通俗解释&lt;/strong&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;fn sum&amp;lt;T: Add&amp;lt;Output = T&amp;gt;&amp;gt;(a: T, b: T) -&amp;gt; T&lt;/code&gt; 被 10 种类型调用 → &lt;strong&gt;10 份&lt;/strong&gt;机器码，每份都走完整的 LLVM 后端。&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;Vec&amp;lt;String&amp;gt;&lt;/code&gt;、&lt;code&gt;Vec&amp;lt;i32&amp;gt;&lt;/code&gt;、&lt;code&gt;Vec&amp;lt;MyStruct&amp;gt;&lt;/code&gt;、&lt;code&gt;HashMap&amp;lt;String, i32&amp;gt;&lt;/code&gt;、&lt;code&gt;HashMap&amp;lt;&amp;amp;str, &amp;amp;str&amp;gt;&lt;/code&gt;……每个都是独立函数体。一个中型项目做到&lt;strong&gt;数万个&lt;/strong&gt;实例化项很常见（可用 &lt;code&gt;cargo llvm-lines&lt;/code&gt;、&lt;code&gt;-Zprint-mono-items&lt;/code&gt; 实测，见第 4 节）。&lt;/p&gt;
+&lt;p&gt;关键点：&lt;strong&gt;单态化本身不是最慢的那一步&lt;/strong&gt;。它在前端只是收集实例、生成 MIR；真正昂贵的是它把这些代码量&lt;strong&gt;乘以 N 之后灌进 LLVM 后端&lt;/strong&gt;。所以更准确的说法是&quot;单态化 + LLVM 后端&quot;是一个复合主因，单态化是放大器。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;&lt;strong&gt;为什么 Go 不这样？&lt;/strong&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Go 1.18+ 的泛型实现是 &lt;strong&gt;GC shape stenciling + dictionaries&lt;/strong&gt;：按类型对 GC 的&quot;形状&quot;分组，&lt;strong&gt;所有指针类型共享同一份实例&lt;/strong&gt;（都按 &lt;code&gt;uintptr&lt;/code&gt; 处理），方法调用、字段偏移通过隐藏的 dictionary 参数间接寻址。&lt;/p&gt;
+&lt;p&gt;所以 Go 既不是完全单态化（&lt;code&gt;Sum[int]&lt;/code&gt; 和 &lt;code&gt;Sum[int64]&lt;/code&gt; 仍然是两份代码），也不是&quot;一份代码服务所有类型&quot;，更不是&quot;装箱进 &lt;code&gt;any&lt;/code&gt;&quot;。它在&lt;strong&gt;代码体积 ↔ 运行时分发开销&lt;/strong&gt;之间取了折中。Rust 选了&quot;零运行时开销&quot;，代价就落在编译期。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;hr /&gt;
+&lt;h3 id=&quot;2-llvm-you-hua-guan-xian-you-qi-release&quot;&gt;2、LLVM 优化管线（尤其 &lt;code&gt;--release&lt;/code&gt;）&lt;/h3&gt;
+&lt;p&gt;&lt;strong&gt;专有名词&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;名词&lt;/th&gt;&lt;th&gt;含义&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;LLVM IR&lt;/strong&gt;（Intermediate Representation）&lt;/td&gt;&lt;td&gt;编译器中端表示，Rust → LLVM IR → 目标机器码&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;SROA&lt;/strong&gt;（Scalar Replacement of Aggregates）&lt;/td&gt;&lt;td&gt;把 struct 拆成标量，便于寄存器分配&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;IPO&lt;/strong&gt;（Inter-Procedural Optimization）&lt;/td&gt;&lt;td&gt;跨函数优化（含内联）；跨 crate 内联需要 LTO 才成立&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;LTO&lt;/strong&gt;（Link Time Optimization）&lt;/td&gt;&lt;td&gt;链接时跨 crate 优化，&lt;code&gt;lto = true&lt;/code&gt;（fat）最慢&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;thin LTO&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;折中方案（&lt;code&gt;lto = &quot;thin&quot;&lt;/code&gt;），比 fat 快，比不开启效果好&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;local ThinLTO&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;每个 CGU &lt;strong&gt;内部&lt;/strong&gt;的 ThinLTO，这是 release 默认就有的，&lt;strong&gt;不等于跨 crate LTO&lt;/strong&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;PGO&lt;/strong&gt;（Profile-Guided Optimization）&lt;/td&gt;&lt;td&gt;可选，用 profile 数据引导内联/分支布局&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;通俗解释&lt;/strong&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;cargo build&lt;/code&gt;（debug）：&lt;code&gt;opt-level = 0&lt;/code&gt;，LLVM 基本不优化。单个函数的优化通常在&lt;strong&gt;毫秒级或更低&lt;/strong&gt;。&lt;/p&gt;
+&lt;p&gt;&lt;code&gt;cargo build --release&lt;/code&gt;：&lt;code&gt;opt-level = 3&lt;/code&gt;、&lt;code&gt;codegen-units = 16&lt;/code&gt;、&lt;strong&gt;&lt;code&gt;lto = false&lt;/code&gt;&lt;/strong&gt;（默认不开跨 crate LTO）、&lt;code&gt;incremental = false&lt;/code&gt;。此时每个 CGU 内部有 local ThinLTO，由 LLVM 并行处理——耗时大头基本都在 &lt;code&gt;LLVM_module_codegen&lt;/code&gt; + &lt;code&gt;LLVM_passes&lt;/code&gt; 这两个 phase。&lt;/p&gt;
+&lt;p&gt;所以量级是：数万个实例化函数 × 每个毫秒级后端开销 → &lt;strong&gt;几十秒到几分钟&lt;/strong&gt;的纯后端时间，再叠加几百个依赖 crate 的同类开销。&lt;/p&gt;
+&lt;p&gt;类比：Go 没有 release/debug 之分，优化策略固定（内联预算小、无自动向量化），所以全量构建通常是&lt;strong&gt;秒级到几十秒&lt;/strong&gt;。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;hr /&gt;
+&lt;h3 id=&quot;3-yi-lai-dag-you-xiang-wu-huan-tu&quot;&gt;3、依赖 DAG（有向无环图）&lt;/h3&gt;
+&lt;p&gt;&lt;strong&gt;专有名词&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;名词&lt;/th&gt;&lt;th&gt;含义&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;crate DAG&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;每个 &lt;code&gt;.crate&lt;/code&gt; 是一个节点，依赖关系是有向边&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;cargo&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;包管理器，解析 &lt;code&gt;Cargo.toml&lt;/code&gt; → 构建 DAG&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;串行依赖&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;A 依赖 B，B 编译完 A 才能开始（关键路径）&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;并行编译&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;cargo 可并行编译&lt;strong&gt;无依赖关系&lt;/strong&gt;的 crate；默认 &lt;code&gt;-j&lt;/code&gt; 就等于可用核心数&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;feature unification&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;多个 crate 依赖同一库的不同 feature → 合并后可能多出变体&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;&lt;code&gt;build.rs&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;构建脚本（FFI、代码生成），&lt;strong&gt;阻塞&lt;/strong&gt;所在 crate 的编译&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;通俗解释&lt;/strong&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;一个典型 Rust 项目（&lt;code&gt;tokio&lt;/code&gt; + &lt;code&gt;serde&lt;/code&gt; + &lt;code&gt;anyhow&lt;/code&gt; + &lt;code&gt;tracing&lt;/code&gt;）：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;依赖树展开后 &lt;strong&gt;200-500 个 crate&lt;/strong&gt;&lt;/li&gt;
+&lt;li&gt;每个 crate &lt;strong&gt;必须完整编译&lt;/strong&gt;（类型检查 + MIR 优化 + codegen + 产出 &lt;code&gt;.rlib&lt;/code&gt;/&lt;code&gt;.rmeta&lt;/code&gt;），哪怕它只有一个函数被用到&lt;/li&gt;
+&lt;li&gt;关键路径（最长链）上的 crate &lt;strong&gt;只能串行&lt;/strong&gt;，这条链通常决定了整体下限&lt;/li&gt;
+&lt;li&gt;一个 &lt;code&gt;build.rs&lt;/code&gt; 跑 CMake / bindgen → &lt;strong&gt;额外 10-60 秒&lt;/strong&gt;，且期间无法并行&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;类比：Go 以 &lt;strong&gt;package&lt;/strong&gt; 为编译单元，依赖几百个 package 也很常见，但单元粒度更细、没有 codegen 阶段的重活，包级并行度更充分。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;hr /&gt;
+&lt;h3 id=&quot;4-fu-za-lei-xing-jian-cha-trait-lifetime-gat&quot;&gt;4、复杂类型检查（Trait + Lifetime + GAT）&lt;/h3&gt;
+&lt;p&gt;&lt;strong&gt;专有名词&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;名词&lt;/th&gt;&lt;th&gt;含义&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;trait resolution&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;每个泛型调用点，编译器要&lt;strong&gt;确定&lt;/strong&gt;用哪个 &lt;code&gt;impl&lt;/code&gt;（可能有多个 candidate）&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;coherence&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;一致性检查（&lt;code&gt;impl&lt;/code&gt; 不能重叠），这也是新 solver 最先落地的部分&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;lifetime unification&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;多个 &lt;code&gt;&#39;a&lt;/code&gt; 约束要&lt;strong&gt;求交&lt;/strong&gt;（intersection），证明兼容&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;GAT&lt;/strong&gt;（Generic Associated Type）&lt;/td&gt;&lt;td&gt;&lt;code&gt;type Item&amp;lt;&#39;a&amp;gt; where Self: &#39;a;&lt;/code&gt; → 额外一层约束求解&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;HRTB&lt;/strong&gt;（Higher-Ranked Trait Bound）&lt;/td&gt;&lt;td&gt;&lt;code&gt;for&amp;lt;&#39;a&amp;gt; fn(&amp;amp;&#39;a T)&lt;/code&gt;，属于 &lt;strong&gt;rank-1 高阶限定&lt;/strong&gt;，不是&quot;二阶逻辑&quot;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;inference variable&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;未标注的 lifetime 是 &lt;code&gt;?a&lt;/code&gt;，要等所有约束收集完再统一求解&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;trait solver&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;旧 solver 是&quot;递归 + 缓存&quot;；新 solver（&lt;code&gt;-Znext-solver&lt;/code&gt;）是基于 &lt;strong&gt;canonicalization 的类型化约束求解&lt;/strong&gt;，&lt;strong&gt;不是并行&lt;/strong&gt;；目前仍是 nightly，首要目标是正确性与可维护性，性能在逐步追平&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;通俗解释&lt;/strong&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Go 的类型检查：struct 字段 + interface 隐式匹配 → 基本是&lt;strong&gt;线性扫描&lt;/strong&gt;。
+Rust 的类型检查：每个调用点要解一组约束（比如 &lt;code&gt;T: Iterator&amp;lt;Item = u32&amp;gt; + Send + &#39;a&lt;/code&gt;），要证明 3 个约束成立且 lifetime 兼容 → &lt;strong&gt;搜索空间大&lt;/strong&gt;。实际有缓存，但大项目里缓存命中率不一定高。&lt;/p&gt;
+&lt;p&gt;越复杂的泛型组合（&lt;code&gt;tokio&lt;/code&gt; 的 &lt;code&gt;Future + Send + &#39;static&lt;/code&gt;、&lt;code&gt;serde&lt;/code&gt; 的 &lt;code&gt;Deserialize&amp;lt;&#39;de&amp;gt;&lt;/code&gt;），前端耗时越明显；&lt;code&gt;diesel&lt;/code&gt;、&lt;code&gt;nalgebra&lt;/code&gt; 这类重度泛型库是典型受害者。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;hr /&gt;
+&lt;h3 id=&quot;5-hong-zhan-kai-ci-yao-yin-su&quot;&gt;5、宏展开（次要因素）&lt;/h3&gt;
+&lt;p&gt;&lt;strong&gt;专有名词&lt;/strong&gt;&lt;/p&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;名词&lt;/th&gt;&lt;th&gt;含义&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;&lt;code&gt;macro_rules!&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;声明式宏，&lt;strong&gt;编译器进程内&lt;/strong&gt;展开，开销很小&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;proc macro&lt;/strong&gt;（&lt;code&gt;#[derive]&lt;/code&gt; / &lt;code&gt;#[attr]&lt;/code&gt;）&lt;/td&gt;&lt;td&gt;编译成动态库，rustc 通过 &lt;code&gt;proc_macro&lt;/code&gt; 桥接 &lt;strong&gt;&lt;code&gt;dlopen&lt;/code&gt; 到同一进程内&lt;/strong&gt;调用——&lt;strong&gt;不是子进程，也没有管道 IPC&lt;/strong&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;TokenStream&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;编译器内部 token 流与 &lt;code&gt;proc_macro&lt;/code&gt; API 之间的句柄式抽象，跨界时需要转换&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;derive macro&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;code&gt;#[derive(Serialize)]&lt;/code&gt; → 展开成几十行 &lt;code&gt;impl&lt;/code&gt; → 再进入类型检查 + 单态化&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;通俗解释&lt;/strong&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;code&gt;macro_rules!&lt;/code&gt; 很快（token 层面的替换）。
+proc macro 的开销来自三块：动态库加载、token 树的来回转换、以及&lt;strong&gt;展开出来的代码还要再走一遍类型检查和单态化&lt;/strong&gt;。&lt;/p&gt;
+&lt;p&gt;一个 &lt;code&gt;#[derive(Serialize, Deserialize, Clone, Debug)]&lt;/code&gt; = 4 次宏调用 × 200 个 struct = &lt;strong&gt;800 次宏调用&lt;/strong&gt;。次数不少，但单次开销在微秒到毫秒级，相比后端仍是&lt;strong&gt;小头&lt;/strong&gt;。&lt;/p&gt;
+&lt;p&gt;真正被宏拖慢的典型是 &lt;code&gt;serde&lt;/code&gt; + 大量 DTO 的组合，或者编译期生成大数组/大 match 的宏。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;hr /&gt;
+&lt;h3 id=&quot;6-lian-jie-linking&quot;&gt;6、链接（Linking）&lt;/h3&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;名词&lt;/th&gt;&lt;th&gt;含义&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;thin LTO / fat LTO&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;跨 crate 去重 + 内联，链接时再跑一遍优化&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;symbol deduplication&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;泛型实例默认以 &lt;code&gt;linkonce_odr&lt;/code&gt; 产出，由&lt;strong&gt;链接器&lt;/strong&gt;负责合并；&lt;code&gt;-Zshare-generics&lt;/code&gt; 可让 rustc 在 codegen 阶段就复用&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;可复现构建&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;&lt;code&gt;--remap-path-prefix&lt;/code&gt;、&lt;code&gt;-Ztrim-paths&lt;/code&gt;（nightly），消除构建路径带来的 hash 差异&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;
+&lt;p&gt;&lt;strong&gt;通俗解释&lt;/strong&gt;&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;几百个 &lt;code&gt;.rlib&lt;/code&gt;（Rust 库产物）→ 链接器（&lt;code&gt;ld&lt;/code&gt; / &lt;code&gt;lld&lt;/code&gt; / &lt;code&gt;mold&lt;/code&gt;）合并所有 &lt;code&gt;linkonce_odr&lt;/code&gt; 符号并重排。
+fat LTO：链接器先拿到&lt;strong&gt;所有&lt;/strong&gt; crate 的 LLVM IR → 重新跑一遍优化 → 再链接。&lt;strong&gt;最慢&lt;/strong&gt;，但产物通常最小最快。
+换用 &lt;code&gt;mold&lt;/code&gt; / &lt;code&gt;lld&lt;/code&gt; 加速的是&lt;strong&gt;链接这一步本身&lt;/strong&gt;（比 GNU &lt;code&gt;ld&lt;/code&gt; 快数倍），但 LTO 的大头仍然在 LLVM 里，换链接器救不了。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;hr /&gt;
+&lt;h2 id=&quot;2-rust-man-go-kuai-de-jie-gou-xing-yuan-yin&quot;&gt;2. Rust 慢、Go 快的结构性原因&lt;/h2&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;因素&lt;/th&gt;&lt;th&gt;Go&lt;/th&gt;&lt;th&gt;Rust&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;泛型&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;GC shape stenciling + dictionaries（有限几份）&lt;/td&gt;&lt;td&gt;完全单态化（N 份）&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;优化&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;固定策略，内联预算小，无自动向量化&lt;/td&gt;&lt;td&gt;LLVM 全管线（&lt;code&gt;-O3&lt;/code&gt; + SROA + IPO，可选 LTO/PGO）&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;编译单元&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;package 级，粒度细，并行充分&lt;/td&gt;&lt;td&gt;crate 级，固定开销大，受关键路径限制&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;依赖规模&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;几十到几百个 package&lt;/td&gt;&lt;td&gt;200-500 个 crate&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;类型检查&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;结构化匹配，无统一/相干性求解&lt;/td&gt;&lt;td&gt;trait resolution + lifetime 约束求解&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;宏&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;无&lt;/td&gt;&lt;td&gt;&lt;code&gt;macro_rules!&lt;/code&gt; + proc macro&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;增量粒度&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;包级，效果稳定&lt;/td&gt;&lt;td&gt;crate 级，dev 默认开、release 默认关&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;
+&lt;hr /&gt;
+&lt;h2 id=&quot;3-zen-me-huan-jie&quot;&gt;3. 怎么缓解&lt;/h2&gt;
+&lt;table&gt;&lt;thead&gt;&lt;tr&gt;&lt;th&gt;方法&lt;/th&gt;&lt;th&gt;效果&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;开发期用 &lt;code&gt;cargo check&lt;/code&gt; / &lt;code&gt;cargo build&lt;/code&gt;（debug），&lt;code&gt;--release&lt;/code&gt; 只出最终产物&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;最有效，开发循环快一个量级&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;&lt;code&gt;[profile.release] lto = &quot;thin&quot;&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;相对 &lt;code&gt;lto = true&lt;/code&gt;（fat）快不少；注意默认本来是 &lt;code&gt;false&lt;/code&gt;，开启它是&quot;用编译时间换运行性能&quot;，别当成加速编译的手段&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;调大 &lt;code&gt;codegen-units&lt;/code&gt;&lt;/strong&gt;（如 256）&lt;/td&gt;&lt;td&gt;并行度更高、编译更快，代价是优化效果与运行性能略降&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;&lt;code&gt;opt-level = 1&lt;/code&gt; 或 &lt;code&gt;2&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;比 &lt;code&gt;3&lt;/code&gt; 明显更快，多数场景运行性能损失可接受&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;换 &lt;code&gt;mold&lt;/code&gt; / &lt;code&gt;lld&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;只加速链接步骤本身（数倍），LTO 时收益被稀释&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;&lt;code&gt;sccache&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;跨项目编译缓存，CI 与多 worktree 场景收益明显；它和 cargo 增量是两件事&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;&lt;code&gt;workspace&lt;/code&gt; 拆分 + 控制在合理粒度&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;提升并行度与增量命中率；但拆太碎会反而增加每 crate 固定开销，且跨 crate 内联要依赖 LTO&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;减少依赖 / 关掉默认 feature&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;直接减少 DAG 节点与关键路径长度&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;少用巨型泛型、&lt;code&gt;#[inline]&lt;/code&gt; 收敛、&lt;code&gt;debug = &quot;line-tables-only&quot;&lt;/code&gt;&lt;/strong&gt;&lt;/td&gt;&lt;td&gt;减少后端代码量与调试信息体积&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;strong&gt;&lt;code&gt;-Znext-solver&lt;/code&gt;&lt;/strong&gt;（nightly）&lt;/td&gt;&lt;td&gt;新 trait solver，部分场景更快，但别指望固定倍数，且未稳定&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;
+&lt;hr /&gt;
+&lt;h2 id=&quot;4-zen-me-ding-wei-si-tiao-ming-ling&quot;&gt;4. 怎么定位：四条命令&lt;/h2&gt;
+&lt;p&gt;上面全是经验判断。真正定位瓶颈得靠实测，下面四条命令按「由粗到细」排。&lt;/p&gt;
+&lt;h3 id=&quot;4-1-cargo-build-timings-xian-kan-crate-ji&quot;&gt;4.1 &lt;code&gt;cargo build --timings&lt;/code&gt;：先看 crate 级&lt;/h3&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;cargo&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; build --timings&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;输出末尾会给出报告路径：&lt;/p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;   Timing report saved to target/cargo-timings/cargo-timing-20261025T135702275Z-5b6be953ca888f6b.html&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;同时会生成一份固定名字的 &lt;code&gt;target/cargo-timings/cargo-timing.html&lt;/code&gt;，用浏览器打开就能看到：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;每个 crate 的编译耗时；&lt;/li&gt;
+&lt;li&gt;整条构建的时间轴，以及&lt;strong&gt;并行度&lt;/strong&gt;（哪些 crate 在同时编、哪些在等）；&lt;/li&gt;
+&lt;li&gt;关键路径上卡了多久。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;我用一个只有 &lt;code&gt;main.rs&lt;/code&gt; 的小项目（依赖 &lt;code&gt;tokio&lt;/code&gt; + &lt;code&gt;serde&lt;/code&gt; + &lt;code&gt;anyhow&lt;/code&gt; + &lt;code&gt;tracing&lt;/code&gt;）实测：&lt;/p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;cargo build             → 6.07s&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;cargo build --release   → 10.38s&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;依赖占了绝大部分时间，自己那个 crate 只占零点几秒——这基本是所有 Rust 项目的常态。&lt;/p&gt;
+&lt;h3 id=&quot;4-2-ztime-passes-kan-rustc-nei-bu-ge-phase&quot;&gt;4.2 &lt;code&gt;-Ztime-passes&lt;/code&gt;：看 rustc 内部各 phase&lt;/h3&gt;
+&lt;p&gt;需要 nightly：&lt;/p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;RUSTC_WRAPPER&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;=&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&amp;quot;&lt;/span&gt;&lt;span&gt; RUSTC&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;=&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;$(&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;rustup&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; which --toolchain nightly rustc&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; \&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;  cargo rustc -- -Ztime-passes&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;（&lt;code&gt;RUSTC_WRAPPER=&quot;&quot;&lt;/code&gt; 是绕开 sccache 之类的包装器，否则 &lt;code&gt;-Z&lt;/code&gt; 参数传不进去。）&lt;/p&gt;
+&lt;p&gt;输出会逐行列出每个 pass 的耗时和内存变化。抓关键几行：&lt;/p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;time:   0.002; rss:   54MB -&amp;gt;   66MB (  +12MB)	type_check_crate&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;time:   0.001; rss:   75MB -&amp;gt;   81MB (   +6MB)	monomorphization_collector_graph_walk&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;time:   0.003; rss:   74MB -&amp;gt;   84MB (  +10MB)	codegen_crate&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;time:   0.003; rss:   84MB -&amp;gt;   82MB (   -3MB)	LLVM_passes&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;time:   0.042; rss:   81MB -&amp;gt;   81MB (   +0MB)	run_linker&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;这是个小程序，但它揭示了一件容易被忽略的事：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;&lt;code&gt;run_linker&lt;/code&gt; 花了 0.042s，比 &lt;code&gt;codegen_crate&lt;/code&gt; + &lt;code&gt;LLVM_passes&lt;/code&gt; 加起来还慢十几倍。&lt;/strong&gt;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;所以对小项目而言，光盯 LLVM 是没用的——链接才是大头。项目越大，LLVM 占比才逐渐升上去。&lt;/p&gt;
+&lt;h3 id=&quot;4-3-zprint-mono-items-shu-shi-li-hua-xiang&quot;&gt;4.3 &lt;code&gt;-Zprint-mono-items&lt;/code&gt;：数实例化项&lt;/h3&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;rustc&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; --edition&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 2021&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; -Zprint-mono-items src/main.rs -o /tmp/x&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;注意两个坑：&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;参数是&lt;strong&gt;布尔开关&lt;/strong&gt;，不是 &lt;code&gt;=lazy&lt;/code&gt;（旧语法已废弃，会直接报 &lt;code&gt;incorrect value&lt;/code&gt;）。&lt;/li&gt;
+&lt;li&gt;输出走 &lt;strong&gt;stdout&lt;/strong&gt;，不是 stderr。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;一个 6 行的程序：&lt;/p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;rust&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;fn&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; sum&lt;/span&gt;&lt;span style=&quot;color: #89DCEB;&quot;&gt;&amp;lt;&lt;/span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;T&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;/span&gt;&lt;span style=&quot;color: #F9E2AF;&quot;&gt; std&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;::&lt;/span&gt;&lt;span style=&quot;color: #F9E2AF;&quot;&gt;ops&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;::&lt;/span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Add&lt;/span&gt;&lt;span style=&quot;color: #89DCEB;&quot;&gt;&amp;lt;&lt;/span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt;Output&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; =&lt;/span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; T&lt;/span&gt;&lt;span style=&quot;color: #89DCEB;&quot;&gt;&amp;gt;&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; +&lt;/span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; Copy&lt;/span&gt;&lt;span style=&quot;color: #89DCEB;&quot;&gt;&amp;gt;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #EBA0AC;&quot;&gt;a&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;/span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; T&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #EBA0AC;&quot;&gt; b&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt;:&lt;/span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; T&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;)&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; -&amp;gt;&lt;/span&gt;&lt;span style=&quot;color: #F9E2AF;font-style: italic;&quot;&gt; T&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt; {&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    a&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; +&lt;/span&gt;&lt;span&gt; b&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;fn&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; main&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;() {&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    println!&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;{}&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; sum&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;1&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;i32&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 2&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;i32&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;));&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    println!&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;{}&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; sum&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;1&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;i64&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 2&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;i64&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;));&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    println!&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;{}&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; sum&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;1&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;u32&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 2&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;u32&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;));&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    println!&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;{}&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; sum&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;1&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;u64&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 2&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;u64&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;));&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    println!&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;{}&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; sum&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;1&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;5&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;f32&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 2&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;5&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;f32&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;));&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;    println!&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;{}&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt;&amp;quot;&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; sum&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;(&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;1&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;5&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;f64&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;,&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt; 2&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;.&lt;/span&gt;&lt;span style=&quot;color: #FAB387;&quot;&gt;5&lt;/span&gt;&lt;span style=&quot;color: #CBA6F7;&quot;&gt;f64&lt;/span&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;));&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #9399B2;&quot;&gt;}&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;输出里自己写的 &lt;code&gt;sum&lt;/code&gt; 就有 6 份：&lt;/p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;MONO_ITEM fn sum::&amp;lt;f32&amp;gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;MONO_ITEM fn sum::&amp;lt;f64&amp;gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;MONO_ITEM fn sum::&amp;lt;i32&amp;gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;MONO_ITEM fn sum::&amp;lt;i64&amp;gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;MONO_ITEM fn sum::&amp;lt;u32&amp;gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;MONO_ITEM fn sum::&amp;lt;u64&amp;gt; @@ mono.da07f71c875d30cc-cgu.0[Internal]&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;再加上 &lt;code&gt;std::ops::Add&lt;/code&gt; 的 6 个实现、&lt;code&gt;fmt&lt;/code&gt; 的一堆实例化，总共 &lt;strong&gt;27 个 mono item&lt;/strong&gt;——一个 6 行程序。&lt;/p&gt;
+&lt;p&gt;这就是「一个中型项目几万个实例化项」的来源：数量是&lt;strong&gt;乘法式&lt;/strong&gt;涨上去的。&lt;/p&gt;
+&lt;h3 id=&quot;4-4-cargo-llvm-lines-kan-na-duan-dai-ma-gong-xian-liao-ir&quot;&gt;4.4 &lt;code&gt;cargo llvm-lines&lt;/code&gt;：看哪段代码贡献了 IR&lt;/h3&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;shellscript&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;cargo&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; install cargo-llvm-lines&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt;cargo&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; llvm-lines&lt;/span&gt;&lt;span style=&quot;color: #94E2D5;&quot;&gt; |&lt;/span&gt;&lt;span style=&quot;color: #89B4FA;font-style: italic;&quot;&gt; head&lt;/span&gt;&lt;span style=&quot;color: #A6E3A1;&quot;&gt; -20&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;它按&lt;strong&gt;源码行&lt;/strong&gt;统计生成的 LLVM IR 行数，输出类似：&lt;/p&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  Lines          Copies        Function name&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  -----          ------        -------------&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;  12345 (100%)   100 (100%)    (TOTAL)&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;   2100 (17.0%)   12 (12.0%)   core::fmt::impls&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    980 (7.9%)    20 (20.0%)  serde::de::impls&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;    720 (5.8%)     8 (8.0%)   &amp;lt;alloc::vec::Vec&amp;lt;T&amp;gt; as ...&amp;gt;&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;Copies&lt;/code&gt; 那一列最关键：它告诉你某个函数被实例化了几份。&lt;strong&gt;行数 × 份数 = 真正的后端工作量。&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;通常 &lt;code&gt;serde&lt;/code&gt;、&lt;code&gt;fmt&lt;/code&gt;、&lt;code&gt;core&lt;/code&gt; 会排在最前面——这也是为什么「减少 derive」和「少用巨型泛型」在高行数项目里有用。&lt;/p&gt;
+&lt;h3 id=&quot;4-5-pan-duan-liu-cheng&quot;&gt;4.5 判断流程&lt;/h3&gt;
+&lt;pre class=&quot;giallo&quot; style=&quot;color: #CDD6F4; background-color: #1E1E2E;&quot; &gt;&lt;code data-lang=&quot;plain&quot;&gt;&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;cargo build --timings&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        │&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        ├── 依赖 crate 多、关键路径长  → 减依赖 / 拆 workspace / sccache&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        │&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;        └── 自己的 crate 特别慢&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;                  │&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;                  ├── -Ztime-passes 看 type_check_crate 高？ → 泛型/trait 太重&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;                  ├── -Ztime-passes 看 LLVM_passes 高？     → 用 llvm-lines 找大头&lt;/span&gt;&lt;/span&gt;
+&lt;span class=&quot;giallo-l&quot;&gt;&lt;span&gt;                  └── -Ztime-passes 看 run_linker 高？      → 换 mold / lld&lt;/span&gt;&lt;/span&gt;&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;先定位到「哪一层」，再谈优化，比背结论有效得多。&lt;/p&gt;
+&lt;hr /&gt;
+&lt;h2 id=&quot;5-zhi-jie-hui-da&quot;&gt;5. 直接回答&lt;/h2&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&lt;strong&gt;&quot;Rust 编译慢是因为类型推断 + 宏展开 + 编译依赖吗？&quot;&lt;/strong&gt;&lt;/p&gt;
+&lt;p&gt;&lt;strong&gt;部分对，但更准确的分层是：&lt;/strong&gt;&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;后端（LLVM codegen + 优化）&lt;/strong&gt;，而&lt;strong&gt;单态化把送进后端的代码量放大 N 倍&lt;/strong&gt; —— 这两者要合起来看，不能拆开排第一第二&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;依赖 DAG&lt;/strong&gt;：几百个 crate 各自完整编译，关键路径串行，固定开销累加&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;前端类型检查&lt;/strong&gt;：trait resolution + lifetime 约束求解，泛型越重越明显&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;宏展开&lt;/strong&gt;：proc macro 有加载与转换开销，但属小头&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;链接&lt;/strong&gt;：只开 LTO 时才是显著项&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;&quot;类型推断&quot;这个说法不准确——Rust 不是&quot;推断慢&quot;，而是&lt;strong&gt;实例化之后每个函数体都要完整编译 + 优化&lt;/strong&gt;。Go 用 GC shape stenciling 让多数类型共享同一份实例，Rust 用完全单态化换零运行时开销，代价自然落在编译期。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;hr /&gt;
+&lt;h2 id=&quot;6-zong-jie&quot;&gt;6. 总结&lt;/h2&gt;
+&lt;blockquote&gt;
+&lt;p&gt;Rust 编译慢不是单一原因：&lt;strong&gt;完全单态化把代码量放大 N 倍，再叠加 LLVM 后端的完整优化管线&lt;/strong&gt;，这是最大的一块；其次是 &lt;strong&gt;200-500 个 crate 的构建 DAG&lt;/strong&gt;——每个都要完整编译，关键路径还只能串行；再者是 &lt;strong&gt;trait + lifetime 的约束求解&lt;/strong&gt;，比 Go 的 interface 匹配贵得多；proc macro 和链接（开 LTO 时）属于次要项。Go 快在结构上：GC shape stenciling 让泛型实例数量有限、优化策略固定且轻量、以 package 为编译单元且并行充分。想真正定位瓶颈，别靠记忆排序，用 &lt;code&gt;cargo build --timings&lt;/code&gt;、&lt;code&gt;-Zself-profile&lt;/code&gt;、&lt;code&gt;cargo llvm-lines&lt;/code&gt; 实测。&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;hr /&gt;
+</content>
+        
+    </entry>
     <entry xml:lang="en">
         <title>OmniScope Architecture Deep Dive (Part 2): IR Loading — 8 Ways to Wrestle with LLVM IR</title>
         <published>2026-06-22T00:00:00+00:00</published>

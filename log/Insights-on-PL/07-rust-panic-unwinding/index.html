@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Rust panic 展开、异常安全与原始内存 | Timwood0x10</title><meta http-equiv="content-type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5">
+    <meta name="robots" content="noodp"/>
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/color/green.css">
+
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/font-hack-subset.css">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/terminal-style.css">
+
+    
+    <link rel="stylesheet" href="https://Timwood0x10.github.io/myblog/css/cyberpunk.css"><meta name="description" content="程序执行到一半 panic 时，已经申请的内存、已构造的对象、还没初始化的空间分别该怎么处理？这篇从栈展开讲到 guard、ptr::read/write 与 set_len。">
+    <meta property="og:description" content="程序执行到一半 panic 时，已经申请的内存、已构造的对象、还没初始化的空间分别该怎么处理？这篇从栈展开讲到 guard、ptr::read/write 与 set_len。">
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/07-rust-panic-unwinding/">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:description" content="程序执行到一半 panic 时，已经申请的内存、已构造的对象、还没初始化的空间分别该怎么处理？这篇从栈展开讲到 guard、ptr::read/write 与 set_len。">
+    <meta property="twitter:domain" content="Timwood0x10.github.io/myblog">
+    <meta property="twitter:url" content="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/07-rust-panic-unwinding/">
+                <link rel="alternate" type="application/rss+xml" title="Timwood0x10 RSS Feed" href="https://Timwood0x10.github.io/myblog/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title="Timwood0x10 Atom Feed" href="https://Timwood0x10.github.io/myblog/atom.xml" /></head>
+
+<body class="">
+<div class="container container--wide">
+    
+    <header class="header">
+        <div class="header__inner">
+            <div class="header__logo">
+                    
+                <a href="https://Timwood0x10.github.io/myblog" style="text-decoration: none;">
+                    <div class="logo">
+                      
+                        <span class="terminal-prompt">
+                          <span class="prompt-user">Tim</span><span class="prompt-at">@</span><span class="prompt-host">0x10</span>
+                          <span class="prompt-colon">:</span><span class="prompt-path">~</span>
+                          <span class="prompt-sep">&nbsp;</span>
+                          <span class="prompt-tech-dynamic" id="tech-typer"></span><span class="prompt-cursor-anim">&#9608;</span>
+                        </span>
+                      
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <nav class="menu">
+                <ul class="menu__inner">
+                    <li class="active"><a href="https://Timwood0x10.github.io/myblog/log/">Log</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/archive">Archive</a></li>
+                
+                    <li><a href="https://Timwood0x10.github.io/myblog/tags">Tags</a></li>
+                </ul>
+            </nav>
+        
+    </header>
+    
+
+    <div class="content">
+        
+<div class="article-layout">
+  <article class="post">
+    <h1 class="post-title"><a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/07-rust-panic-unwinding/">Rust panic 展开、异常安全与原始内存</a></h1>
+    <div class="post-meta-inline">
+        <span class="post-date">2026-10-25</span>
+    </div>
+        <span class="post-tags-inline">:: tags:&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/memory/">#Memory</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/panic/">#Panic</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/rust/">#Rust</a>&nbsp;
+            <a class="post-tag" href="https://Timwood0x10.github.io/myblog/tags/unsafe/">#Unsafe</a></span>
+    <div class="post-content">
+        <p>我最初读 Rustonomicon 的 Exception Safety 那一章，觉得没什么难的：panic 就 panic，Rust 会自动清理。直到自己动手写一个简化版 <code>Vec</code>，才发现 <code>push</code> 里一个赋值顺序就能把整个容器搞成未定义行为。</p>
+<p>这篇就围绕一个问题展开：</p>
+<blockquote>
+<p>程序执行到一半突然 panic，已经申请的内存、已经构造的对象、还没初始化的空间，分别该怎么处理？</p>
+</blockquote>
+<p>参考：<a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/exception-safety.html">Rustonomicon: Exception Safety</a>、<a rel="noopener external" target="_blank" href="https://doc.rust-lang.org/nomicon/uninitialized.html">Uninitialized Memory</a>。</p>
+<p>先把两条 panic 策略的差别摆出来，后面所有讨论都建立在这个前提上：</p>
+<table><thead><tr><th></th><th><code>panic = "unwind"</code>（默认）</th><th><code>panic = "abort"</code></th></tr></thead><tbody>
+<tr><td>发生 panic 时</td><td>栈展开，逐层执行 <code>Drop</code></td><td>直接 abort 进程</td></tr>
+<tr><td>资源清理</td><td>离开作用域的局部变量会被析构</td><td>不保证任何析构执行</td></tr>
+<tr><td>能否 <code>catch_unwind</code></td><td>可以捕获</td><td>能编译，但捕获不到（进程直接终止）</td></tr>
+<tr><td>编译产物大小</td><td>略大（需要展开信息）</td><td>更小</td></tr>
+<tr><td>性能</td><td>正常路径几乎无差异</td><td>正常路径几乎无差异，异常路径更快（不展开）</td></tr>
+<tr><td>典型场景</td><td>需要 <code>catch_unwind</code> 隔离故障</td><td>嵌入式、CLI、追求最小产物</td></tr>
+<tr><td>展开期间再次 panic</td><td>进程 abort</td><td>不适用</td></tr>
+</tbody></table>
+<p>我在下面的分析默认按 <code>unwind</code> 走——因为只有它会触发「析构顺序」「部分初始化清理」这些问题。切到 <code>abort</code> 之后，panic 就是进程终结，容器是否处于一致状态已经不重要了。</p>
+<hr />
+<h2 id="yi-unwinding-dao-di-shi-shen-me">一、Unwinding 到底是什么</h2>
+<p>先看一段很普通的代码：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    name</span><span style="color: #94E2D5;">: &amp;</span><span style="color: #9399B2;">&#39;</span><span style="color: #89B4FA;font-style: italic;">static</span><span style="color: #F9E2AF;font-style: italic;"> str</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">        println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;drop </span><span style="color: #9399B2;">{}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">,</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>name</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> a</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span><span> name</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;A&quot;</span><span style="color: #9399B2;"> };</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> b</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Resource</span><span style="color: #9399B2;"> {</span><span> name</span><span style="color: #94E2D5;">:</span><span style="color: #A6E3A1;"> &quot;B&quot;</span><span style="color: #9399B2;"> };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;before panic&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    panic!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;something went wrong&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>用默认的 <code>panic = "unwind"</code> 配置时，panic 会触发<strong>栈展开</strong>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>main()</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ├── 创建 a</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ├── 创建 b</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  ├── println!</span></span>
+<span class="giallo-l"><span>  │</span></span>
+<span class="giallo-l"><span>  └── panic!</span></span>
+<span class="giallo-l"><span>         │</span></span>
+<span class="giallo-l"><span>         ▼</span></span>
+<span class="giallo-l"><span>     开始栈展开</span></span>
+<span class="giallo-l"><span>         │</span></span>
+<span class="giallo-l"><span>         ▼</span></span>
+<span class="giallo-l"><span>     离开当前作用域</span></span>
+<span class="giallo-l"><span>         │</span></span>
+<span class="giallo-l"><span>         ├── drop b</span></span>
+<span class="giallo-l"><span>         │</span></span>
+<span class="giallo-l"><span>         └── drop a</span></span></code></pre>
+<p>我在本机跑出来的输出是：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>before panic</span></span>
+<span class="giallo-l"><span>thread &#39;main&#39; panicked at src/main.rs:9:5:</span></span>
+<span class="giallo-l"><span>something went wrong</span></span>
+<span class="giallo-l"><span>note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace</span></span>
+<span class="giallo-l"><span>drop B</span></span>
+<span class="giallo-l"><span>drop A</span></span></code></pre>
+<p>这里有个容易记错的顺序：<strong><code>drop B</code> / <code>drop A</code> 出现在 panic 消息之后</strong>。因为 panic 消息是 panic hook 先打印的，打印完才开始栈展开、逐个执行 drop。同一个线程里这两件事是顺序发生的。</p>
+<p>关键在于：<strong>栈展开过程中，Rust 会清理离开作用域时需要析构的局部变量</strong>，而且是逆序（先 <code>b</code> 后 <code>a</code>）。</p>
+<p>这让资源管理变得可靠。比如：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">fs</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">File</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> process</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> file</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> File</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">open</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;data.txt&quot;</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">unwrap</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 后续代码即使 panic，</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 在正常的栈展开路径上，file 也会被清理</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>文件句柄由拥有它的对象管理，不用在每个错误分支手动关闭。这就是 RAII 在 Rust 里的价值。</p>
+<p>但有三个限制必须记住：</p>
+<ul>
+<li><code>panic = "abort"</code> 时直接终止进程，没有常规栈展开。</li>
+<li>进程被强杀、崩溃，或遇到无法正常展开的情况，不能指望所有 <code>Drop</code> 都执行。</li>
+<li><code>Drop</code> 实现本身再次 panic，行为会变得复杂，甚至直接终止进程。</li>
+</ul>
+<p>所以「析构一定会执行」不能当成无条件前提。</p>
+<hr />
+<h2 id="er-panic-wei-shen-me-rang-di-ceng-rong-qi-bian-fu-za">二、panic 为什么让底层容器变复杂</h2>
+<p>先看普通的 <code>String</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">);</span></span></code></pre><pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>栈</span></span>
+<span class="giallo-l"><span>┌─────────────────┐</span></span>
+<span class="giallo-l"><span>│ String          │</span></span>
+<span class="giallo-l"><span>│ ptr ────────────────┐</span></span>
+<span class="giallo-l"><span>│ len = 5         │   │</span></span>
+<span class="giallo-l"><span>│ capacity = 5    │   │</span></span>
+<span class="giallo-l"><span>└─────────────────┘   │</span></span>
+<span class="giallo-l"><span>                      ▼</span></span>
+<span class="giallo-l"><span>堆              ┌───────────────┐</span></span>
+<span class="giallo-l"><span>                │ hello         │</span></span>
+<span class="giallo-l"><span>                └───────────────┘</span></span></code></pre>
+<p>它被正确析构时会释放自己拥有的堆内存。</p>
+<p>但我自己实现容器时：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> MyVec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">mut</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    len</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    capacity</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>所有权关系得自己维护：</p>
+<ul>
+<li><code>ptr</code> 指向一段分配空间；</li>
+<li><code>len</code> 是已经初始化的元素数量；</li>
+<li><code>capacity</code> 是总容量。</li>
+</ul>
+<p>如果 <code>push()</code> 中途 panic，我必须保证容器没有进入一个「无法正确析构」的状态。这就是异常安全的核心。</p>
+<h3 id="2-1-yi-ge-cuo-wu-de-shi-xian-si-lu">2.1 一个错误的实现思路</h3>
+<p>假设容器当前 <code>len = 3</code>、<code>capacity = 8</code>，准备加第 4 个元素。一种想当然的写法：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 仅为错误示意，不能用于真实容器</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span>len </span><span style="color: #94E2D5;">+=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> create_value</span><span style="color: #9399B2;">();</span><span style="color: #9399B2;font-style: italic;"> // 这里可能 panic</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span>ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">add</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">3</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">write</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>问题在哪？</p>
+<p><code>self.len += 1</code> 之后，容器已经声称自己拥有 4 个有效元素。但如果 <code>create_value()</code> panic，第 4 个元素根本没写进去：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>实际状态：[有效 T, 有效 T, 有效 T, 未初始化]</span></span>
+<span class="giallo-l"><span>容器记录：len = 4</span></span></code></pre>
+<p>容器析构时按 <code>len</code> 去析构前 4 个元素，就会去析构一块没初始化的内存。</p>
+<p>正确顺序只有一种：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> create_value</span><span style="color: #9399B2;">();</span><span style="color: #9399B2;font-style: italic;"> // 如果 panic，len 仍为 3</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">    self</span><span style="color: #94E2D5;">.</span><span>ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">add</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">len</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">write</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span>len </span><span style="color: #94E2D5;">+=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span></code></pre>
+<p>这个例子还是伪代码，完整的容器还要处理容量检查、指针有效性、对齐等。但它揭示了一条原则：</p>
+<blockquote>
+<p><strong>容器的内部状态必须准确反映已经完成的初始化和所有权转移，不能提前承诺尚未完成的操作。</strong></p>
+</blockquote>
+<hr />
+<h2 id="san-yi-chang-an-quan-de-san-ge-ceng-ci">三、异常安全的三个层次</h2>
+<p>这套分类来自 C++，但用来分析 Rust 的 panic 一样好用。</p>
+<h3 id="3-1-di-yi-ceng-bu-chan-sheng-wei-ding-yi-xing-wei">3.1 第一层：不产生未定义行为</h3>
+<p>最基本的要求。无论操作成功与否，都不能因为异常路径破坏内存安全。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> values</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">();</span></span></code></pre>
+<p>假设某个操作中途失败，容器仍然不能：</p>
+<ul>
+<li>读取未初始化的 <code>String</code>；</li>
+<li>对同一个对象重复析构；</li>
+<li>使用已经释放的内存；</li>
+<li>通过悬垂指针访问对象。</li>
+</ul>
+<p>这里要强调一句：<strong>内存泄漏不一定构成未定义行为</strong>。程序可能因为错误路径没释放某个分配，这是资源管理问题，和对无效内存执行操作不是一回事。</p>
+<h3 id="3-2-di-er-ceng-ji-ben-bao-zheng">3.2 第二层：基本保证</h3>
+<p>操作失败后，对象仍处于一个有效、可安全析构的状态，但逻辑状态可能已经变了。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>操作前：[A, B, C]</span></span>
+<span class="giallo-l"><span>操作后：[A, B, C]</span></span></code></pre>
+<p>这是比较理想的结果。但基本保证实际只要求：对象仍然满足自己的不变量，能安全继续使用或析构——不要求业务状态完全回到原样。</p>
+<h3 id="3-3-di-san-ceng-qiang-bao-zheng">3.3 第三层：强保证</h3>
+<p>强保证的意思是：操作失败就像从没发生过。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>操作前：[A, B, C]</span></span>
+<span class="giallo-l"><span>尝试追加 D</span></span>
+<span class="giallo-l"><span>发生失败</span></span>
+<span class="giallo-l"><span>操作后：[A, B, C]</span></span></code></pre>
+<p>如果一次操作要重新分配内存、构造多个元素、或执行多个相互依赖的步骤，做到强保证就很困难。常见策略是：</p>
+<ol>
+<li>在临时空间完成可能失败的工作；</li>
+<li>确认成功；</li>
+<li>最后再提交状态变更。</li>
+</ol>
+<p>这类似事务里的 commit。</p>
+<p>不过不是所有操作都值得追求强保证。对底层容器来说，先保住内存安全和内部状态有效，再按 API 需求决定要不要更强的保证，通常更实际。</p>
+<hr />
+<h2 id="si-guard-chu-li-bu-fen-chu-shi-hua-de-guan-jian-ji-zhi">四、Guard：处理部分初始化的关键机制</h2>
+<p>这是底层编程里我用了最多的一种模式。</p>
+<p>Guard 本身是个普通 Rust 对象，只是它的 <code>Drop</code> 负责在操作失败时清理资源。先看一个不碰指针的版本：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Guard</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    committed</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> bool</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Guard</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #94E2D5;"> !</span><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span>committed </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;operation did not commit&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> operation</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> guard</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Guard</span><span style="color: #9399B2;"> {</span><span> committed</span><span style="color: #94E2D5;">:</span><span style="color: #F38BA8;"> false</span><span style="color: #9399B2;"> };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;working&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 所有工作成功，提交状态</span></span>
+<span class="giallo-l"><span>    guard</span><span style="color: #94E2D5;">.</span><span>committed </span><span style="color: #94E2D5;">=</span><span style="color: #F38BA8;"> true</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>如果 <code>operation()</code> 在提交前 panic，栈展开会让 <code>guard</code> 析构，它发现 <code>committed == false</code>，就执行清理。</p>
+<p>真实实现当然不能让 guard 只打印一句话——它得真的持有待清理的资源或初始化状态。</p>
+<h3 id="4-1-ba-guard-yong-zai-bu-fen-chu-shi-hua-shang">4.1 把 Guard 用在部分初始化上</h3>
+<p>概念上的结构是这样：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>InitGuard&lt;T&gt;</span></span>
+<span class="giallo-l"><span>├── ptr         → 目标存储空间</span></span>
+<span class="giallo-l"><span>├── initialized → 已成功构造的元素数量</span></span>
+<span class="giallo-l"><span>└── capacity    → 可用槽位数量</span></span></code></pre>
+<p>正常初始化时：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>initialized = 0</span></span>
+<span class="giallo-l"><span>写入第 0 个元素 → initialized = 1</span></span>
+<span class="giallo-l"><span>写入第 1 个元素 → initialized = 2</span></span>
+<span class="giallo-l"><span>写入第 2 个元素 → initialized = 3</span></span></code></pre>
+<p>如果第 3 个元素构造失败，guard 记录的仍是 3，它就只清理前 3 个。</p>
+<p>写成代码（<code>capacity</code> 这一段暂用不到，先省掉）：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span>ptr</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> InitGuard</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">: *</span><span style="color: #CBA6F7;">mut</span><span style="color: #F9E2AF;font-style: italic;"> T</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span>    initialized</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> InitGuard</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">            for</span><span> i</span><span style="color: #CBA6F7;"> in</span><span style="color: #9399B2;"> (</span><span style="color: #FAB387;">0</span><span style="color: #94E2D5;">..</span><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span>initialized</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">rev</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #F9E2AF;">                ptr</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">drop_in_place</span><span style="color: #9399B2;">(</span><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;">ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">add</span><span style="color: #9399B2;">(</span><span>i</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">            }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这段只展示清理逻辑，离生产可用还差得远。调用它之前必须保证：</p>
+<ol>
+<li><code>ptr</code> 指向足够大、正确对齐的存储空间；</li>
+<li><code>[0, initialized)</code> 内元素全部已初始化；</li>
+<li>这些元素确实由 guard 负责析构；</li>
+<li>每个元素只被析构一次；</li>
+<li>对应分配在清理完成前仍然有效；</li>
+<li>没有其他所有者同时析构同一批元素。</li>
+</ol>
+<p>它也没处理 Drop 期间再次 panic 的情况，也没负责释放底层分配。</p>
+<h3 id="4-2-wei-shen-me-yao-dao-xu-xi-gou">4.2 为什么要倒序析构</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">for</span><span> i</span><span style="color: #CBA6F7;"> in</span><span style="color: #9399B2;"> (</span><span style="color: #FAB387;">0</span><span style="color: #94E2D5;">..</span><span style="color: #F38BA8;">self</span><span style="color: #94E2D5;">.</span><span>initialized</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">rev</span><span style="color: #9399B2;">()</span></span></code></pre>
+<p>从最后一个已初始化元素开始往前清。</p>
+<p>对于按顺序构造的元素，逆序析构是自然的选择——后构造的对象可能依赖先构造的对象。不过具体容器该不该采用某种顺序，要看它自己的语义和契约，不能一概而论。</p>
+<hr />
+<h2 id="wu-guard-yu-suo-you-quan-zhuan-yi-zui-rong-yi-chu-cuo-de-di-fang">五、Guard 与所有权转移：最容易出错的地方</h2>
+<p>上面那个 guard 会在 Drop 里析构已初始化的对象。但如果元素已经全部构造成功，现在要把它们交给另一个容器呢？</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Guard 持有清理责任</span></span>
+<span class="giallo-l"><span>          │</span></span>
+<span class="giallo-l"><span>          ▼</span></span>
+<span class="giallo-l"><span>   [A, B, C, D]</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>我们把这批对象交给目标容器：</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span>目标容器拥有清理责任</span></span>
+<span class="giallo-l"><span>          │</span></span>
+<span class="giallo-l"><span>          ▼</span></span>
+<span class="giallo-l"><span>   [A, B, C, D]</span></span></code></pre>
+<p>如果 guard 仍然认为自己拥有这些元素，那就变成两个所有者 → 重复析构。</p>
+<p>所以成功提交后，必须让 guard 停止清理已经转移出去的对象。常见设计是在刚才的结构上再加一个 <code>armed: bool</code>：</p>
+<ul>
+<li>提交前 <code>armed = true</code>，表示 guard 负责清理；</li>
+<li>成功转移所有权后 <code>armed = false</code>，表示 guard 放手。</li>
+</ul>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> InitGuard</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">T</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>armed </span><span style="color: #9399B2;">{</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">            // 清理 guard 仍然拥有的对象</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>这仍是概念设计。实际实现还要保证转移操作本身的失败语义正确，并且目标容器只有在确实拿到所有权之后才把自己标记为所有者。</p>
+<p><code>armed</code> 这个字段叫什么不重要，重要的是：<strong>任何时刻都必须明确到底由谁负责析构。</strong></p>
+<hr />
+<h2 id="liu-san-ge-di-ceng-cao-zuo-ptr-read-ptr-write-set-len">六、三个底层操作：ptr::read、ptr::write、set_len</h2>
+<p>这三个经常一起出现，但职责完全不同。</p>
+<h3 id="6-1-ptr-write-zai-zhi-ding-wei-zhi-xie-ru-zhi">6.1 ptr::write：在指定位置写入值</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> slot</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MaybeUninit</span><span style="color: #94E2D5;">::</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">uninit</span><span style="color: #9399B2;">();</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    slot</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">as_mut_ptr</span><span style="color: #9399B2;">()</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">write</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>它把一个值写入目标内存，<strong>不会先析构目标位置原来的内容</strong>，也不会维护 <code>len</code>，不会记录所有权转移。写入条件得你自己保证。</p>
+<h3 id="6-2-ptr-read-an-zhi-du-qu">6.2 ptr::read：按值读取</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> ptr</span><span style="color: #94E2D5;"> = &amp;</span><span>value</span><span style="color: #CBA6F7;"> as</span><span style="color: #94E2D5;"> *</span><span style="color: #CBA6F7;">const</span><span style="color: #FAB387;"> String</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> moved_value</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> unsafe</span><span style="color: #9399B2;"> {</span><span> ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">read</span><span style="color: #9399B2;">() };</span></span></code></pre>
+<p>这段要格外小心。</p>
+<p><code>ptr::read()</code> 从指针位置读出一个 <code>T</code> 并按值返回。对 <code>String</code> 这种拥有资源的类型，这意味着现在有两份描述同一块资源的句柄——但原来的 <code>value</code> 还在。</p>
+<p>如果之后让 <code>value</code> 正常析构，就是重复释放。</p>
+<p>所以上面这段是<strong>刻意展示的危险操作</strong>，不能当作正确的所有权转移来用。</p>
+<p>对 <code>Copy</code> 类型没这个问题；对拥有资源的非 <code>Copy</code> 类型，必须明确处理源位置的所有权状态。</p>
+<p>更符合转移语义的写法是让源槽位变成 <code>MaybeUninit</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">use</span><span style="color: #F9E2AF;"> std</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;">mem</span><span style="color: #94E2D5;">::</span><span style="color: #F9E2AF;font-style: italic;">MaybeUninit</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> main</span><span style="color: #9399B2;">() {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> slot</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> MaybeUninit</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">new</span><span style="color: #9399B2;">(</span><span style="color: #F9E2AF;">String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;hello&quot;</span><span style="color: #9399B2;">));</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #CBA6F7;"> unsafe</span><span style="color: #9399B2;"> {</span><span> slot</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">assume_init_read</span><span style="color: #9399B2;">() };</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">    println!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">{</span><span style="color: #A6E3A1;">value</span><span style="color: #9399B2;">}</span><span style="color: #A6E3A1;">&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p><code>assume_init_read()</code> 从已初始化的槽位读出值，不会析构源槽位里的对象。因为 <code>slot</code> 是 <code>MaybeUninit&lt;String&gt;</code>，它析构时本来也不会去析构内部的 <code>String</code>——清理责任就交给了返回的 <code>value</code>。</p>
+<p>这也说明 <code>MaybeUninit&lt;T&gt;</code> 不只用于延迟初始化，还能精确控制对象生命周期。</p>
+<h3 id="6-3-set-len-xiu-gai-you-xiao-yuan-su-shu-liang-de-ji-lu">6.3 set_len：修改「有效元素数量」的记录</h3>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    vec</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">set_len</span><span style="color: #9399B2;">(</span><span>new_len</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>它不初始化元素，不移动数据，只是改容器记录的长度。</p>
+<p>调用者要保证：</p>
+<ul>
+<li>新长度不超过容量；</li>
+<li>新长度范围内每个元素都已初始化；</li>
+<li>容器能合法拥有这些元素并在以后正确处理。</li>
+</ul>
+<p>所以这是错误示范：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> vec</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">with_capacity</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    vec</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">set_len</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>分配了够放 10 个 <code>String</code> 的空间，但这些位置没有被初始化。<code>set_len(10)</code> 不会凭空构造 10 个 <code>String</code>，它只是告诉 <code>Vec</code>「你现在拥有 10 个有效元素」——而这个声明是假的。</p>
+<p>后面容器一访问或析构，就是未定义行为。</p>
+<p>记住：<code>set_len()</code> 改的是记录，不是内存。</p>
+<hr />
+<h2 id="qi-yong-zhe-san-ge-cao-zuo-pin-chu-push">七、用这三个操作拼出 push</h2>
+<p>假设 <code>len = 3</code>、<code>capacity = 8</code>，要加一个 <code>String</code>：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>创建新 String</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>ptr::write 写入第 3 个槽位</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>确认元素已初始化</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>更新 len = 4</span></span></code></pre>
+<p>用原始指针写大概是：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #9399B2;font-style: italic;">// 仅为解释核心机制的伪代码，不是完整 Vec 实现</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">let</span><span> value</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> String</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">from</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;new&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    ptr</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">add</span><span style="color: #9399B2;">(</span><span>len</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">write</span><span style="color: #9399B2;">(</span><span>value</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 只有在写入成功、且新元素确实有效后，</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 才能更新容器记录的长度</span></span>
+<span class="giallo-l"><span>    len</span><span style="color: #94E2D5;"> +=</span><span style="color: #FAB387;"> 1</span><span style="color: #9399B2;">;</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>真实的 <code>Vec</code> 还要处理：容量不足时重新分配、内存布局与对齐、分配失败、指针有效性、与借用检查的配合、初始化中途失败的清理、零大小类型等特殊情况。</p>
+<p>但原理上它已经解释了为什么 <code>Vec</code> 必须区分「分配空间」和「已初始化元素」。</p>
+<hr />
+<h2 id="ba-set-len-zui-dian-xing-de-shi-yong-chang-jing-ffi-huan-chong-qu">八、set_len 最典型的使用场景：FFI 缓冲区</h2>
+<p>假设 C 函数负责把数据写进 Rust 提供的缓冲区：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="c"><span class="giallo-l"><span style="color: #CBA6F7;">int</span><span style="color: #89B4FA;font-style: italic;"> read_data</span><span style="color: #9399B2;">(</span><span style="color: #CBA6F7;">uint8_t</span><span style="color: #94E2D5;"> *</span><span style="color: #EBA0AC;font-style: italic;">buffer</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> size_t</span><span style="color: #EBA0AC;font-style: italic;"> capacity</span><span style="color: #9399B2;">,</span><span style="color: #CBA6F7;"> size_t</span><span style="color: #94E2D5;"> *</span><span style="color: #EBA0AC;font-style: italic;">written</span><span style="color: #9399B2;">);</span></span></code></pre>
+<ul>
+<li><code>buffer</code> 是目标缓冲区；</li>
+<li><code>capacity</code> 是容量；</li>
+<li><code>written</code> 返回实际写入的字节数。</li>
+</ul>
+<p><code>Vec::with_capacity(capacity)</code> 只保证容量，<strong>不意味着 <code>Vec</code> 已经有 <code>capacity</code> 个初始化元素</strong>。所以不能直接把 <code>len</code> 设成 <code>capacity</code> 然后让 C 去写。</p>
+<p>一种简单且安全的做法是先造出有效长度：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">fn</span><span style="color: #89B4FA;font-style: italic;"> read_from_c</span><span style="color: #9399B2;">(</span><span style="color: #EBA0AC;">capacity</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">)</span><span style="color: #94E2D5;"> -&gt;</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #CBA6F7;">u8</span><span style="color: #89DCEB;">&gt;</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    let mut</span><span> buffer</span><span style="color: #94E2D5;"> =</span><span style="color: #89B4FA;font-style: italic;"> vec!</span><span style="color: #9399B2;">[</span><span style="color: #FAB387;">0</span><span style="color: #CBA6F7;">u8</span><span style="color: #9399B2;">;</span><span> capacity</span><span style="color: #9399B2;">];</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 调用 FFI，让 C 在 buffer 的有效元素范围内写入</span></span>
+<span class="giallo-l"><span style="color: #9399B2;font-style: italic;">    // 实际调用要根据接口契约处理错误和 written</span></span>
+<span class="giallo-l"><span>    buffer</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>代价是先把缓冲区清零。</p>
+<p>如果确实要省掉这一步，就得用 <code>MaybeUninit&lt;u8&gt;</code> 或原始分配空间，并且严格按这个顺序：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>分配足够容量</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>外部函数写入数据</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>验证外部函数实际初始化的字节数</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>确认 written &lt;= capacity</span></span>
+<span class="giallo-l"><span>      │</span></span>
+<span class="giallo-l"><span>      ▼</span></span>
+<span class="giallo-l"><span>最后才把 len 设为 written</span></span></code></pre>
+<p>这里有个关键细节：<code>written &lt;= capacity</code> 只证明长度没越界，<strong>不能证明 C 真的初始化了这些字节</strong>。如果 C 的契约不保证它初始化前 <code>written</code> 个字节，Rust 侧就不能仅凭这个数字设置长度。</p>
+<p>这就是 FFI 里「类型信息」和「外部契约」的区别。</p>
+<hr />
+<h2 id="jiu-ru-guo-xi-gou-han-shu-zi-ji-panic-ni">九、如果析构函数自己 panic 呢</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">struct</span><span style="color: #F9E2AF;font-style: italic;"> Item</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    id</span><span style="color: #94E2D5;">:</span><span style="color: #CBA6F7;"> usize</span><span style="color: #9399B2;">,</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span>
+<span class="giallo-l"></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">impl</span><span style="color: #F9E2AF;font-style: italic;"> Drop</span><span style="color: #CBA6F7;"> for</span><span style="color: #F9E2AF;font-style: italic;"> Item</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">    fn</span><span style="color: #89B4FA;font-style: italic;"> drop</span><span style="color: #9399B2;">(</span><span style="color: #94E2D5;">&amp;</span><span style="color: #CBA6F7;">mut</span><span style="color: #F38BA8;"> self</span><span style="color: #9399B2;">) {</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">        if</span><span style="color: #F38BA8;"> self</span><span style="color: #94E2D5;">.</span><span>id </span><span style="color: #94E2D5;">==</span><span style="color: #FAB387;"> 2</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span style="color: #89B4FA;font-style: italic;">            panic!</span><span style="color: #9399B2;">(</span><span style="color: #A6E3A1;">&quot;drop failed&quot;</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">        }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">    }</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>假设容器逆序清理：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>Item 4</span></span>
+<span class="giallo-l"><span>Item 3</span></span>
+<span class="giallo-l"><span>Item 2  ← panic</span></span>
+<span class="giallo-l"><span>Item 1</span></span>
+<span class="giallo-l"><span>Item 0</span></span></code></pre>
+<p><code>Item 2</code> 的析构 panic 后，后续清理流程就被打断了。</p>
+<p>更糟的是，如果此时程序本来就在另一次 panic 的栈展开过程中，再次 panic 会导致进程直接 abort。所以「double panic」不是能被 catch 住的普通错误。</p>
+<p>要点：</p>
+<ul>
+<li><code>Drop</code> 接口本身没承诺析构函数绝不 panic；</li>
+<li><code>panic = "abort"</code> 下程序直接终止；</li>
+<li>栈展开期间再次 panic，进程会终止；</li>
+<li>复杂的清理逻辑必须明确自己的异常行为。</li>
+</ul>
+<p>实践上，析构函数应该尽量简单可靠，别在里面做容易失败的复杂业务。自定义容器如果要考虑「析构一个元素就中断后续清理」这种情况，就得明确设计是否接受、要不要额外的恢复策略。</p>
+<hr />
+<h2 id="shi-ba-ji-zhi-chuan-cheng-yi-zhang-tu">十、把机制串成一张图</h2>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>            MaybeUninit&lt;T&gt;</span></span>
+<span class="giallo-l"><span>                  │</span></span>
+<span class="giallo-l"><span>                  │ 表达存储空间可能未初始化</span></span>
+<span class="giallo-l"><span>                  ▼</span></span>
+<span class="giallo-l"><span>              初始化元素</span></span>
+<span class="giallo-l"><span>                  │</span></span>
+<span class="giallo-l"><span>                  │ ptr::write()</span></span>
+<span class="giallo-l"><span>                  ▼</span></span>
+<span class="giallo-l"><span>              有效的 T 对象</span></span>
+<span class="giallo-l"><span>                  │</span></span>
+<span class="giallo-l"><span>                  │ 记录初始化状态</span></span>
+<span class="giallo-l"><span>                  ▼</span></span>
+<span class="giallo-l"><span>               len / guard</span></span>
+<span class="giallo-l"><span>                  │</span></span>
+<span class="giallo-l"><span>                  │ 正确转移所有权</span></span>
+<span class="giallo-l"><span>                  ▼</span></span>
+<span class="giallo-l"><span>              容器接管对象</span></span>
+<span class="giallo-l"><span>                  │</span></span>
+<span class="giallo-l"><span>                  │ 正常析构或栈展开</span></span>
+<span class="giallo-l"><span>                  ▼</span></span>
+<span class="giallo-l"><span>                Drop&lt;T&gt;</span></span>
+<span class="giallo-l"><span>                  │</span></span>
+<span class="giallo-l"><span>                  ▼</span></span>
+<span class="giallo-l"><span>                释放资源</span></span></code></pre>
+<p><code>ptr::read()</code> 是另一条与所有权转移有关的路径：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>已初始化的 T</span></span>
+<span class="giallo-l"><span>     │</span></span>
+<span class="giallo-l"><span>     │ ptr::read()</span></span>
+<span class="giallo-l"><span>     ▼</span></span>
+<span class="giallo-l"><span>返回一个按值读取的 T</span></span></code></pre>
+<p>它不会改变源位置的状态，也不会更新 <code>len</code>。所以调用者必须保证不会出现两个所有者都认为自己拥有同一个非 <code>Copy</code> 对象。</p>
+<p><code>set_len()</code> 则是：</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>已有初始化事实</span></span>
+<span class="giallo-l"><span>       │</span></span>
+<span class="giallo-l"><span>       ▼</span></span>
+<span class="giallo-l"><span>更新容器对有效元素数量的记录</span></span></code></pre>
+<p>它不构造对象，也不验证外部函数是否守约。</p>
+<hr />
+<h2 id="shi-yi-wo-cong-zhe-jie-li-ti-lian-de-si-ge-bu-bian-liang">十一、我从这节里提炼的四个不变量</h2>
+<p>写到这里，我把这一节的内容压成四类可以拿去做代码审查的不变量。</p>
+<p><strong>1. 初始化不变量</strong></p>
+<p>任何控制流路径上，容器声明为有效的元素都必须真的初始化了。</p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="plain"><span class="giallo-l"><span>0 ≤ len ≤ capacity</span></span>
+<span class="giallo-l"><span>并且 [0, len) 中的元素都有效</span></span></code></pre>
+<p>只检查 <code>len &lt;= capacity</code> 不够，它证明不了元素确实初始化过。</p>
+<p><strong>2. 所有权不变量</strong></p>
+<p>每个需要析构的对象，都必须有明确的析构责任归属。重点看：</p>
+<ul>
+<li><code>ptr::read()</code> 之后源位置的状态；</li>
+<li>对象移出容器之后的清理责任；</li>
+<li>guard 提交之后是否仍会析构对象；</li>
+<li>FFI 返回的对象到底由谁释放。</li>
+</ul>
+<p><strong>3. 分配不变量</strong></p>
+<p>容器必须知道：哪个指针对应哪次分配、布局是什么、分配是否仍有效、释放时用的布局是否匹配、有没有重复释放。</p>
+<p><strong>4. 异常路径不变量</strong></p>
+<p>除了正常控制流，还要看：初始化中途 panic、重新分配失败、guard 在栈展开期间执行、析构函数自身 panic、外部 FFI 函数返回错误或违约。</p>
+<p>这也是原始内存分析和普通语法级检查的分界：不能只看每条指令「看起来安不安全」，还得看不同控制流路径怎么改变对象的初始化状态和所有权状态。</p>
+<hr />
+<h2 id="shi-er-xiao-jie">十二、小结</h2>
+<p>五句话说完这节：</p>
+<ol>
+<li>Unwinding 是 panic 时的栈展开机制，正常情况下会清理离开作用域的局部变量。</li>
+<li>异常安全要求失败路径也不能破坏内存安全和内部不变量。</li>
+<li>Guard 能把部分初始化的清理责任绑定到对象生命周期上。</li>
+<li><code>ptr::read()</code> 和 <code>ptr::write()</code> 只做底层内存操作，不管理容器状态。</li>
+<li><code>set_len()</code> 只改长度记录，调用者必须保证范围内元素已初始化。</li>
+</ol>
+<p>我后来给自己留了三道题，都是拿来检验有没有真懂的：</p>
+<p><strong>题一</strong></p>
+<pre class="giallo" style="color: #CDD6F4; background-color: #1E1E2E;" ><code data-lang="rust"><span class="giallo-l"><span style="color: #CBA6F7;">let mut</span><span> vec</span><span style="color: #94E2D5;">:</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #89DCEB;">&lt;</span><span style="color: #F9E2AF;font-style: italic;">String</span><span style="color: #89DCEB;">&gt;</span><span style="color: #94E2D5;"> =</span><span style="color: #F9E2AF;font-style: italic;"> Vec</span><span style="color: #94E2D5;">::</span><span style="color: #89B4FA;font-style: italic;">with_capacity</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">10</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #CBA6F7;">unsafe</span><span style="color: #9399B2;"> {</span></span>
+<span class="giallo-l"><span>    vec</span><span style="color: #94E2D5;">.</span><span style="color: #89B4FA;font-style: italic;">set_len</span><span style="color: #9399B2;">(</span><span style="color: #FAB387;">5</span><span style="color: #9399B2;">);</span></span>
+<span class="giallo-l"><span style="color: #9399B2;">}</span></span></code></pre>
+<p>为什么这段不安全？如果 <code>String</code> 换成 <code>u8</code>，结论会不会变？</p>
+<p><strong>题二</strong></p>
+<p>用 <code>ptr::write()</code> 把一个 <code>String</code> 写进原始内存，但还没加 <code>len</code>，此时后续操作 panic，谁负责析构这个 <code>String</code>？</p>
+<p><strong>题三</strong></p>
+<p>用 <code>ptr::read()</code> 从容器取出一个 <code>String</code>，但忘了减 <code>len</code>，容器析构时会发生什么？</p>
+<p>三题分别对应：未初始化内存、部分初始化的清理责任、所有权转移与重复析构。</p>
+<hr />
+<p>下一篇我会写 <code>Vec&lt;T&gt;</code> 的真实内存布局与扩容机制：RawVec、分配布局、重新分配、元素移动，以及零大小类型为什么让指针运算变得特殊。</p>
+
+    </div>
+            <div class="pagination">
+                <div class="pagination__title">
+                    <span class="pagination__title-h">Read other posts →</span>
+                    <hr />
+                </div>
+                <div class="pagination__buttons">
+                        <span class="button previous">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/08-rust-vec-internals/"><span class="button__icon">&#8592;</span>&nbsp;<span class="button__text">Rust Vec 的真实内存布局、扩容与 ZST</span></a>
+                        </span>
+                    
+                    
+                        <span class="button next">
+                            <a href="https://Timwood0x10.github.io/myblog/log/Insights-on-PL/06-rust-uninit-memory/"><span class="button__text">Rust 未初始化内存与 MaybeUninit</span>&nbsp;<span class="button__icon">&#8594;</span></a>
+                        </span>
+                    </div>
+            </div>
+        </article>
+  <aside class="toc-sidebar" id="toc">
+    <div class="toc-sticky">
+      <div class="toc-label">Contents</div>
+      <nav id="toc-nav"></nav>
+    </div>
+  </aside>
+</div>
+
+    </div>
+
+    
+    <footer class="footer">
+        <div class="footer__inner">
+                <div class="copyright">
+                        <span>&copy; 2026 Tim Wood</span>
+                    <span class="copyright-theme">
+                        <span class="copyright-theme-sep">:: </span>
+                        terminal-zen
+                    </span>
+                </div>
+            </div>
+    </footer>
+    
+
+</div>
+<script>
+document.addEventListener("DOMContentLoaded",function(){
+  var toc=document.getElementById("toc-nav");
+  if(toc){
+    var hs=document.querySelectorAll(".post-content h2,.post-content h3");
+    var html="";
+    hs.forEach(function(h){
+      var id=h.id||h.textContent.trim().toLowerCase().replace(/\s+/g,"-").replace(/[^\w-]/g,"");
+      if(!h.id){h.id=id}
+      html+='<a href="#'+id+'" class="'+(h.tagName==="H3"?"h3":"h2")+'">'+h.textContent.trim()+"</a>"
+    });
+    toc.innerHTML=html;
+    var links=toc.querySelectorAll("a");
+    window.addEventListener("scroll",function(){
+      var scrollY=window.scrollY+120;
+      var active=null;
+      hs.forEach(function(h,i){
+        if(h.offsetTop<=scrollY&&(!hs[i+1]||hs[i+1].offsetTop>scrollY)){active=links[i]}
+      });
+      links.forEach(function(l){l.classList.remove("active")});
+      if(active)active.classList.add("active")
+    })
+  }
+});
+</script>
+
+<canvas id="bg-canvas"></canvas>
+<div class="scan-overlay"></div>
+<div id="progress-bar"></div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/cyberpunk.js"></script>
+<script src="https://Timwood0x10.github.io/myblog/js/code-rain.js"></script>
+
+</body>
+
+</html>
