@@ -271,7 +271,7 @@ type DAGPatchExecutor struct {
 }
 ```
 
-Constructed via `NewDAGPatchExecutor(dag *MutableDAG)`, `Name()` returns `"workflow.dag"`, and `SetDAG(dag)` can rebind to a different live DAG. It is wired as the patch registry's fallback — per the source comment, so a workflow patch no longer dies on "no executor registered for target <nodeID>"; instead it mutates the real live DAG.
+Constructed via `NewDAGPatchExecutor(dag *MutableDAG)`, `Name()` returns `"workflow.dag"`, and `SetDAG(dag)` can rebind to a different live DAG. It is wired as the patch registry's fallback — per the source comment, so a workflow patch no longer dies on `"no executor registered for target <nodeID>"`; instead it mutates the real live DAG.
 
 Four core methods implement the `patch.Restorable` contract:
 

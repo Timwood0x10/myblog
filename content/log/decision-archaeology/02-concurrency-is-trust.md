@@ -121,8 +121,8 @@ memscope-rs 的并发策略不是随意选择的，而是一个分层的信任�
 |------|---------|---------|
 | ThreadLocalTracker | SegQueue + DashMap + AtomicU64 | 信任自己：单线程独占，零竞争 |
 | MemoryTracker (core) | DashMap + AtomicU64 | 半信任：多线程读写，但 key 天然去重 |
-| AsyncTracker | Arc<Mutex<HashMap>> | 不信任：多 tokio worker 线程共享 |
-| GlobalTracker | RwLock<Option<Arc>> | 极不信任：全局单例，写少读多 |
+| AsyncTracker | `Arc<Mutex<HashMap>>` | 不信任：多 tokio worker 线程共享 |
+| GlobalTracker | `RwLock<Option<Arc>>` | 极不信任：全局单例，写少读多 |
 
 信任层级从上到下递减，同步开销从上到下递增。这是正确的：你信任越多，你付出的同步代价越少。
 
